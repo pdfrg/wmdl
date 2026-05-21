@@ -273,3 +273,25 @@ func (s *SonarrClient) GetRootFolders(ctx context.Context) ([]SonarrRootFolder, 
 	}
 	return folders, nil
 }
+
+func (s *SonarrClient) GetSeries(ctx context.Context, seriesID int) (*SonarrSeries, error) {
+	u := fmt.Sprintf("%s/api/v3/series/%d", s.baseURL, seriesID)
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	req.Header.Set("X-Api-Key", s.apiKey)
+
+	resp, err := s.http.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("sonarr get series: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("sonarr get series returned %d", resp.StatusCode)
+	}
+
+	var series SonarrSeries
+	if err := json.NewDecoder(resp.Body).Decode(&series); err != nil {
+		return nil, err
+	}
+	return &series, nil
+}

@@ -275,10 +275,37 @@ func (e *Executor) addToSonarr(ctx context.Context, evt db.EventWithTitle) error
 }
 
 func (e *Executor) checkEarlierSeasons(ctx context.Context, tvdbID, seriesID int) {
-	// We can only check seasons from the series we just added.
-	// For earlier seasons, we'd need the existing series data.
-	// For simplicity, this is a placeholder that can be enhanced later.
-	log.Printf("  (Earlier season checking not yet implemented)")
+	series, err := e.sonarr.GetSeries(ctx, seriesID)
+	if err != nil {
+		log.Printf("  Warning: cannot fetch series details: %v", err)
+		return
+	}
+
+	var missingSeasons []library.SonarrSeason
+	for _, s := range series.Seasons {
+		if s.SeasonNumber == 0 {
+			continue // skip "All Seasons" / Specials
+		}
+		// Check if this season has 0 files (completely missing)
+		if s.Statistics != nil && s.Statistics.EpisodeFileCount == 0 && s.Statistics.EpisodeCount > 0 {
+			missingSeasons = append(missingSeasons, s)
+		}
+	}
+
+	if len(missingSeasons) == 0 {
+		return
+	}
+
+	log.Printf("  Series has %d season(s) with no files", len(missingSeasons))
+	for _, s := range missingSeasons {
+		if promptYesNo(fmt.Sprintf("    Search for Season %d?", s.SeasonNumber)) {
+			if err := e.sonarr.TriggerSeasonSearch(ctx, seriesID, s.SeasonNumber); err != nil {
+				log.Printf("    Error searching Season %d: %v", s.SeasonNumber, err)
+			} else {
+				log.Printf("    Searching Season %d", s.SeasonNumber)
+			}
+		}
+	}
 }
 
 func (e *Executor) checkCollectionGaps(ctx context.Context, tmdbID int) {
