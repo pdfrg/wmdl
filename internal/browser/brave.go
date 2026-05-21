@@ -1,0 +1,53 @@
+package browser
+
+import (
+	"context"
+	"fmt"
+	"time"
+
+	"github.com/chromedp/chromedp"
+)
+
+func ListTabs(ctx context.Context, debugURL string) ([]Tab, error) {
+	allocCtx, allocCancel := chromedp.NewRemoteAllocator(ctx, debugURL)
+	defer allocCancel()
+
+	// Need at least a short-lived context to trigger the target listing
+	ct, cancel := chromedp.NewContext(allocCtx)
+	defer cancel()
+
+	// Give the allocator time to discover targets
+	time.Sleep(500 * time.Millisecond)
+
+	targets, err := chromedp.Targets(ct)
+	if err != nil {
+		return nil, fmt.Errorf("listing targets: %w", err)
+	}
+
+	var tabs []Tab
+	for _, t := range targets {
+		// Only page tabs, not DevTools, extensions, etc.
+		if !isPageTarget(t.Type) {
+			continue
+		}
+		url := t.URL
+		if url == "about:blank" || url == "chrome://newtab/" {
+			continue
+		}
+		tabs = append(tabs, Tab{
+			Title: t.Title,
+			URL:   url,
+		})
+	}
+
+	return tabs, nil
+}
+
+func isPageTarget(targetType string) bool {
+	return targetType == "page"
+}
+
+type Tab struct {
+	Title string
+	URL   string
+}

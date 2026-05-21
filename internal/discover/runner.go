@@ -14,11 +14,11 @@ import (
 )
 
 type Runner struct {
-	cfg     *config.Config
-	db      *db.DB
-	tmdb    *TMDBClient
-	rt      *RTFinder
-	notify  *notifier.Gotify
+	cfg    *config.Config
+	db     *db.DB
+	tmdb   *TMDBClient
+	rt     *RTFinder
+	notify *notifier.Gotify
 }
 
 func NewRunner(cfg *config.Config, database *db.DB) *Runner {

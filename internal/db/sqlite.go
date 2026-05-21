@@ -309,6 +309,53 @@ func (d *DB) ListPendingWithTitles(ctx context.Context) ([]EventWithTitle, error
 	return results, rows.Err()
 }
 
+func (d *DB) ListApprovedWithTitles(ctx context.Context) ([]EventWithTitle, error) {
+	rows, err := d.db.QueryContext(ctx, `
+		SELECT e.id, e.title_id, e.source, e.release_type, e.release_date,
+		       e.status, e.previous_status, e.created_at,
+		       t.id, t.tmdb_id, t.title, t.year, t.media_type, t.imdb_id,
+		       t.rt_url, t.rt_critics_score, t.rt_audience_score, t.tmdb_rating, t.created_at
+		FROM release_events e
+		JOIN titles t ON t.id = e.title_id
+		WHERE e.status = 'approved'
+		ORDER BY e.created_at DESC
+	`)
+	if err != nil {
+		return nil, fmt.Errorf("listing approved events with titles: %w", err)
+	}
+	defer rows.Close()
+
+	var results []EventWithTitle
+	for rows.Next() {
+		var ev model.ReleaseEvent
+		var tl model.Title
+		var evRelType, evStatus, evPrevStatus, evCreated string
+		var tlMediaType, tlCreated string
+
+		err := rows.Scan(
+			&ev.ID, &ev.TitleID, &ev.Source, &evRelType, &ev.ReleaseDate,
+			&evStatus, &evPrevStatus, &evCreated,
+			&tl.ID, &tl.TmdbID, &tl.Title, &tl.Year, &tlMediaType,
+			&tl.ImdbID, &tl.RTURL, &tl.RTCriticsScore, &tl.RTAudienceScore,
+			&tl.TmdbRating, &tlCreated,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("scanning approved event with title: %w", err)
+		}
+
+		ev.ReleaseType = model.ReleaseType(evRelType)
+		ev.Status = model.ReleaseStatus(evStatus)
+		ev.PreviousStatus = model.ReleaseStatus(evPrevStatus)
+		ev.CreatedAt = evCreated
+
+		tl.MediaType = model.MediaType(tlMediaType)
+		tl.CreatedAt = tlCreated
+
+		results = append(results, EventWithTitle{Event: &ev, Title: &tl})
+	}
+	return results, rows.Err()
+}
+
 func (d *DB) UpdateReleaseEventStatus(ctx context.Context, id int64, status model.ReleaseStatus) error {
 	_, err := d.db.ExecContext(ctx, `UPDATE release_events SET status = ? WHERE id = ?`, string(status), id)
 	return err
@@ -350,5 +397,3 @@ func (d *DB) GetDownloadByTitleID(ctx context.Context, titleID int64) (*model.Do
 	dl.CreatedAt = createdAt
 	return &dl, nil
 }
-
-

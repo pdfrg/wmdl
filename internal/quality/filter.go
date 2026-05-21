@@ -18,8 +18,8 @@ type ParsedRelease struct {
 	Score        int
 
 	// Prowlarr-specific
-	IndexerID  int
-	Guid       string
+	IndexerID   int
+	Guid        string
 	DownloadURL string
 	MagnetURL   string
 	InfoHash    string
@@ -35,10 +35,10 @@ type QualityPrefs struct {
 }
 
 var (
-	resPattern = regexp.MustCompile(`(?i)(\d{3,4}p|4k|uhd)`)
-	srcPattern = regexp.MustCompile(`(?i)(BluRay|WEB-DL|WebRip|WEBRip|HDTV|REMUX|BDRip|BRRip)`)
+	resPattern   = regexp.MustCompile(`(?i)(\d{3,4}p|4k|uhd)`)
+	srcPattern   = regexp.MustCompile(`(?i)(BluRay|WEB-DL|WebRip|WEBRip|HDTV|REMUX|BDRip|BRRip)`)
 	codecPattern = regexp.MustCompile(`(?i)(x265|x264|h\.?265|h\.?264|hevc|av1)`)
-	hdrPattern = regexp.MustCompile(`(?i)(HDR(?:10)?|Dolby[.\s]?Vision|DV[.\s]?HDR|DoVi|HLG)`)
+	hdrPattern   = regexp.MustCompile(`(?i)(HDR(?:10)?|Dolby[.\s]?Vision|DV[.\s]?HDR|DoVi|HLG)`)
 	groupPattern = regexp.MustCompile(`-([a-zA-Z0-9]+(?:\[[^\]]+\])?)$`)
 )
 

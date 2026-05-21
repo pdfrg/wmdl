@@ -29,19 +29,19 @@ func NewProwlarrClient(baseURL, apiKey string) *ProwlarrClient {
 }
 
 type prowlarrRelease struct {
-	Title        string  `json:"title"`
-	Guid         string  `json:"guid"`
-	IndexerID    int     `json:"indexerId"`
-	Indexer      string  `json:"indexer"`
-	DownloadURL  string  `json:"downloadUrl"`
-	MagnetURL    string  `json:"magnetUrl"`
-	InfoHash     string  `json:"infoHash"`
-	Seeders      int     `json:"seeders"`
-	Leechers     int     `json:"leechers"`
-	Size         int64   `json:"size"`
-	Protocol     string  `json:"protocol"`
-	PublishDate  string  `json:"publishDate"`
-	Categories   []struct {
+	Title       string `json:"title"`
+	Guid        string `json:"guid"`
+	IndexerID   int    `json:"indexerId"`
+	Indexer     string `json:"indexer"`
+	DownloadURL string `json:"downloadUrl"`
+	MagnetURL   string `json:"magnetUrl"`
+	InfoHash    string `json:"infoHash"`
+	Seeders     int    `json:"seeders"`
+	Leechers    int    `json:"leechers"`
+	Size        int64  `json:"size"`
+	Protocol    string `json:"protocol"`
+	PublishDate string `json:"publishDate"`
+	Categories  []struct {
 		ID   int    `json:"id"`
 		Name string `json:"name"`
 	} `json:"categories"`
@@ -162,5 +162,3 @@ func convertToReleases(pr []prowlarrRelease) []quality.ParsedRelease {
 	}
 	return releases
 }
-
-

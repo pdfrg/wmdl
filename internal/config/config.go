@@ -7,16 +7,16 @@ import (
 )
 
 type Config struct {
-	Notifier         NotifierConfig   `mapstructure:"notifier"`
-	Browser          BrowserConfig    `mapstructure:"browser"`
-	Prowlarr         ProwlarrConfig   `mapstructure:"prowlarr"`
-	TMDB             TMDBConfig       `mapstructure:"tmdb"`
-	Downloader       DownloaderConfig `mapstructure:"downloader"`
-	Library          LibraryConfig    `mapstructure:"library"`
-	Quality          QualityConfig    `mapstructure:"quality"`
-	ShowTopN         int              `mapstructure:"show_top_n"`
-	MinSeeders       int              `mapstructure:"min_seeders"`
-	PreferredGroups  []string         `mapstructure:"preferred_release_groups"`
+	Notifier        NotifierConfig   `mapstructure:"notifier"`
+	Browser         BrowserConfig    `mapstructure:"browser"`
+	Prowlarr        ProwlarrConfig   `mapstructure:"prowlarr"`
+	TMDB            TMDBConfig       `mapstructure:"tmdb"`
+	Downloader      DownloaderConfig `mapstructure:"downloader"`
+	Library         LibraryConfig    `mapstructure:"library"`
+	Quality         QualityConfig    `mapstructure:"quality"`
+	ShowTopN        int              `mapstructure:"show_top_n"`
+	MinSeeders      int              `mapstructure:"min_seeders"`
+	PreferredGroups []string         `mapstructure:"preferred_release_groups"`
 }
 
 type NotifierConfig struct {
@@ -40,11 +40,11 @@ type TMDBConfig struct {
 }
 
 type DownloaderConfig struct {
-	Type        string           `mapstructure:"type"`
-	Qbittorrent QbittorrentConfig `mapstructure:"qbittorrent"`
+	Type         string             `mapstructure:"type"`
+	Qbittorrent  QbittorrentConfig  `mapstructure:"qbittorrent"`
 	Transmission TransmissionConfig `mapstructure:"transmission"`
-	Deluge      DelugeConfig      `mapstructure:"deluge"`
-	Categories  CategoryConfig    `mapstructure:"categories"`
+	Deluge       DelugeConfig       `mapstructure:"deluge"`
+	Categories   CategoryConfig     `mapstructure:"categories"`
 }
 
 type QbittorrentConfig struct {
@@ -75,11 +75,11 @@ type LibraryConfig struct {
 }
 
 type RadarrConfig struct {
-	URL              string `mapstructure:"url"`
-	APIKey           string `mapstructure:"api_key"`
-	RootFolder       string `mapstructure:"root_folder"`
-	QualityProfile   string `mapstructure:"quality_profile"`
-	Monitor          bool   `mapstructure:"monitor"`
+	URL            string `mapstructure:"url"`
+	APIKey         string `mapstructure:"api_key"`
+	RootFolder     string `mapstructure:"root_folder"`
+	QualityProfile string `mapstructure:"quality_profile"`
+	Monitor        bool   `mapstructure:"monitor"`
 }
 
 type SonarrConfig struct {
@@ -97,10 +97,10 @@ type QualityConfig struct {
 }
 
 type MediaQualityConfig struct {
-	Resolution      string   `mapstructure:"resolution"`
-	PreferHDR       bool     `mapstructure:"prefer_hdr"`
-	SourcePriority  []string `mapstructure:"source_priority"`
-	CodecPriority   []string `mapstructure:"codec_priority"`
+	Resolution     string   `mapstructure:"resolution"`
+	PreferHDR      bool     `mapstructure:"prefer_hdr"`
+	SourcePriority []string `mapstructure:"source_priority"`
+	CodecPriority  []string `mapstructure:"codec_priority"`
 }
 
 const configName = "config"

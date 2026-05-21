@@ -165,7 +165,7 @@ func (t *TUI) View() tea.View {
 			notes = append(notes, "previously downloaded — upgrade available")
 		}
 		if len(notes) > 0 {
-			line += "\n" + noteStyle.Render("  " + strings.Join(notes, ", "))
+			line += "\n" + noteStyle.Render("  "+strings.Join(notes, ", "))
 		}
 
 		if i == t.cursor {

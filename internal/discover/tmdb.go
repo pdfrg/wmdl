@@ -28,18 +28,18 @@ func NewTMDBClient(apiKey, accessToken string) *TMDBClient {
 type TMDBMultiResult struct {
 	Page    int `json:"page"`
 	Results []struct {
-		ID            int      `json:"id"`
-		MediaType     string   `json:"media_type"` // "movie" or "tv"
-		Title         string   `json:"title,omitempty"`
-		Name          string   `json:"name,omitempty"`
-		ReleaseDate   string   `json:"release_date,omitempty"`
-		FirstAirDate  string   `json:"first_air_date,omitempty"`
-		VoteAverage   float64  `json:"vote_average"`
-		GenreIDs      []int    `json:"genre_ids"`
-		OriginalTitle string   `json:"original_title,omitempty"`
-		OriginalName  string   `json:"original_name,omitempty"`
-		Overview      string   `json:"overview"`
-		PosterPath    string   `json:"poster_path"`
+		ID            int     `json:"id"`
+		MediaType     string  `json:"media_type"` // "movie" or "tv"
+		Title         string  `json:"title,omitempty"`
+		Name          string  `json:"name,omitempty"`
+		ReleaseDate   string  `json:"release_date,omitempty"`
+		FirstAirDate  string  `json:"first_air_date,omitempty"`
+		VoteAverage   float64 `json:"vote_average"`
+		GenreIDs      []int   `json:"genre_ids"`
+		OriginalTitle string  `json:"original_title,omitempty"`
+		OriginalName  string  `json:"original_name,omitempty"`
+		Overview      string  `json:"overview"`
+		PosterPath    string  `json:"poster_path"`
 	} `json:"results"`
 }
 
@@ -50,8 +50,8 @@ type TMDBExternalIDs struct {
 }
 
 type TMDBTVExternalIDs struct {
-	IMDbID     string `json:"imdb_id"`
-	TVDBID     int    `json:"tvdb_id,omitempty"`
+	IMDbID string `json:"imdb_id"`
+	TVDBID int    `json:"tvdb_id,omitempty"`
 }
 
 type TMDBEnrichment struct {
