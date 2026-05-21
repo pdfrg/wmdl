@@ -141,19 +141,31 @@ func (r *Runner) processItem(ctx context.Context, item ScrapedItem) error {
 
 	rtURL := r.rt.FindURL(item.Title, item.Year, string(mediaType))
 
+	// Best-effort RT rating scrape
+	rtCritics, rtAudience := 0.0, 0.0
+	if rtURL != "" {
+		if ratings, err := ScrapeRTRatings(ctx, rtURL); err == nil {
+			rtCritics = ratings.CriticsScore
+			rtAudience = ratings.AudienceScore
+		}
+	}
+
 	tvdbID := 0
 	if enrich != nil {
 		tvdbID = enrich.TVDBID
 	}
 
 	title := &model.Title{
-		TmdbID:     tmdbID,
-		TvdbID:     tvdbID,
-		Title:      item.Title,
-		Year:       item.Year,
-		MediaType:  mediaType,
-		TmdbRating: rating,
-		RTURL:      rtURL,
+		TmdbID:          tmdbID,
+		TvdbID:          tvdbID,
+		Title:           item.Title,
+		Year:            item.Year,
+		MediaType:       mediaType,
+		ImdbID:          "",
+		RTURL:           rtURL,
+		RTCriticsScore:  rtCritics,
+		RTAudienceScore: rtAudience,
+		TmdbRating:      rating,
 	}
 
 	titleID, err := r.db.UpsertTitle(ctx, title)
