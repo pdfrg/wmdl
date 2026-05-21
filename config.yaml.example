@@ -1,0 +1,64 @@
+notifier:
+  gotify_url: "http://gotify.local:8080"
+  gotify_token: ""
+
+browser:
+  debug_port: 9222
+  profile: "wmd-review"
+
+prowlarr:
+  url: "http://prowlarr.local:9696"
+  api_key: ""
+
+tmdb:
+  # Get a free API key at https://www.themoviedb.org/settings/api
+  api_key: ""
+  access_token: ""
+
+downloader:
+  type: "qbittorrent"  # qbittorrent, transmission, deluge
+  qbittorrent:
+    url: "http://qb.local:8080"
+    username: "admin"
+    password: ""
+  transmission:
+    url: "http://transmission.local:9091"
+    username: ""
+    password: ""
+  deluge:
+    url: "http://deluge.local:8112"
+    password: ""
+  categories:
+    movies: "Movies"
+    tv: "TV"
+
+library:
+  radarr:
+    url: "http://radarr.local:7878"
+    api_key: ""
+    root_folder: "/media/movies"
+    quality_profile: "1080p"
+    monitor: false
+  sonarr:
+    url: "http://sonarr.local:8989"
+    api_key: ""
+    root_folder: "/media/tv"
+    quality_profile: "1080p"
+    monitor_new_episodes: true
+    season_folders: true
+
+quality:
+  movies:
+    resolution: "2160p"
+    prefer_hdr: true
+    source_priority: ["bluray", "web-dl", "webrip"]
+    codec_priority: ["h265", "x265", "h264", "av1"]
+  tv:
+    resolution: "1080p"
+    prefer_hdr: false
+    source_priority: ["bluray", "web-dl", "webrip"]
+    codec_priority: ["h265", "x265", "h264", "av1"]
+
+show_top_n: 10
+min_seeders: 3
+preferred_release_groups: []

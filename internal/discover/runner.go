@@ -269,6 +269,23 @@ func isUpgrade(prevSource string, newReleaseType model.ReleaseType) bool {
 }
 
 func weekStateFromItems(items []ScrapedItem) *model.WeekState {
+	// Prefer physical items for week state, then fall back to streaming
+	for _, item := range items {
+		if item.ReleaseType != model.ReleasePhysical || item.ReleaseDate == "" {
+			continue
+		}
+		t, err := time.Parse("2006-01-02", item.ReleaseDate)
+		if err != nil {
+			continue
+		}
+		y, w := t.ISOWeek()
+		return &model.WeekState{
+			Year:     y,
+			Week:     w,
+			WeekDate: item.ReleaseDate,
+		}
+	}
+	// Fall back to streaming date (not ideal but better than nothing)
 	for _, item := range items {
 		if item.ReleaseDate == "" {
 			continue

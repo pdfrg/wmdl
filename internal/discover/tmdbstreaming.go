@@ -22,15 +22,14 @@ func (t *TMDBStreamingProvider) Name() string {
 
 func (t *TMDBStreamingProvider) Scrape() ([]ScrapedItem, error) {
 	now := time.Now()
-	twoMonthsAgo := now.AddDate(0, -2, 0)
 
-	// Find the Tuesday that starts the target week (two months back)
-	streamStart := mostRecentTuesday(twoMonthsAgo)
-	// Go back one more week to handle month boundaries
-	if streamStart.After(twoMonthsAgo) {
-		streamStart = streamStart.AddDate(0, 0, -7)
-	}
-	streamEnd := streamStart.AddDate(0, 0, 6)
+	// Physical releases are grouped by Tuesday.
+	// Streaming releases mirror the same week shifted back 2 months.
+	// e.g. physical week May 13-19 → streaming week March 13-19
+	physicalTue := mostRecentTuesday(now)
+	streamTue := physicalTue.AddDate(0, -2, 0)
+	streamStart := streamTue.AddDate(0, 0, -6) // previous Wednesday
+	streamEnd := streamTue                       // this Tuesday
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()

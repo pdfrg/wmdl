@@ -212,13 +212,13 @@ func (t *TUI) View() tea.View {
 }
 
 var (
-	headerStyle    = lipgloss.NewStyle().Bold(true).Padding(0, 1)
-	selectedStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("212")).Padding(0, 1)
-	itemStyle      = lipgloss.NewStyle().Padding(0, 1)
-	infoStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("226")).Padding(0, 2)
-	overviewStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("250")).Padding(0, 2).Width(70)
-	noteStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Padding(0, 2)
-	helpStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
+	headerStyle   = lipgloss.NewStyle().Bold(true).Padding(0, 1)
+	selectedStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("212")).Padding(0, 1)
+	itemStyle     = lipgloss.NewStyle().Padding(0, 1)
+	infoStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("226")).Padding(0, 2)
+	overviewStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("250")).Padding(0, 2).Width(70)
+	noteStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Padding(0, 2)
+	helpStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
 )
 
 func styleRating(rating float64) string {

@@ -182,14 +182,14 @@ func (c *TMDBClient) discoverStream(ctx context.Context, u *url.URL, mediaType s
 }
 
 type TMDBDetails struct {
-	Overview string  `json:"overview"`
+	Overview string `json:"overview"`
 	Genres   []struct {
 		ID   int    `json:"id"`
 		Name string `json:"name"`
 	} `json:"genres"`
-	Runtime    int     `json:"runtime"`
+	Runtime     int     `json:"runtime"`
 	VoteAverage float64 `json:"vote_average"`
-	IMDbID     string  `json:"imdb_id,omitempty"`
+	IMDbID      string  `json:"imdb_id,omitempty"`
 }
 
 func (c *TMDBClient) GetMovieDetails(ctx context.Context, tmdbID int) (*TMDBDetails, error) {
