@@ -155,17 +155,31 @@ func (r *Runner) processItem(ctx context.Context, item ScrapedItem) error {
 		tvdbID = enrich.TVDBID
 	}
 
+	overview := ""
+	genres := ""
+	runtime := 0
+	imdbID := ""
+	if enrich != nil {
+		overview = enrich.Overview
+		genres = enrich.Genres
+		runtime = enrich.Runtime
+		imdbID = enrich.IMDbID
+	}
+
 	title := &model.Title{
 		TmdbID:          tmdbID,
 		TvdbID:          tvdbID,
 		Title:           item.Title,
 		Year:            item.Year,
 		MediaType:       mediaType,
-		ImdbID:          "",
+		ImdbID:          imdbID,
 		RTURL:           rtURL,
 		RTCriticsScore:  rtCritics,
 		RTAudienceScore: rtAudience,
 		TmdbRating:      rating,
+		Overview:        overview,
+		Genres:          genres,
+		Runtime:         runtime,
 	}
 
 	titleID, err := r.db.UpsertTitle(ctx, title)

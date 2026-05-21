@@ -42,6 +42,9 @@ func (d *DB) Migrate(ctx context.Context) error {
 		rt_critics_score REAL DEFAULT 0,
 		rt_audience_score REAL DEFAULT 0,
 		tmdb_rating     REAL DEFAULT 0,
+		overview        TEXT DEFAULT '',
+		genres          TEXT DEFAULT '',
+		runtime         INTEGER DEFAULT 0,
 		created_at      TEXT NOT NULL DEFAULT (datetime('now')),
 		UNIQUE(tmdb_id)
 	);
@@ -102,6 +105,9 @@ func (d *DB) Migrate(ctx context.Context) error {
 	d.db.ExecContext(ctx, `ALTER TABLE release_events ADD COLUMN iso_year INTEGER DEFAULT 0`)
 	d.db.ExecContext(ctx, `ALTER TABLE release_events ADD COLUMN iso_week INTEGER DEFAULT 0`)
 	d.db.ExecContext(ctx, `ALTER TABLE release_events ADD COLUMN notes TEXT DEFAULT ''`)
+	d.db.ExecContext(ctx, `ALTER TABLE titles ADD COLUMN overview TEXT DEFAULT ''`)
+	d.db.ExecContext(ctx, `ALTER TABLE titles ADD COLUMN genres TEXT DEFAULT ''`)
+	d.db.ExecContext(ctx, `ALTER TABLE titles ADD COLUMN runtime INTEGER DEFAULT 0`)
 
 	return nil
 }
@@ -109,8 +115,9 @@ func (d *DB) Migrate(ctx context.Context) error {
 func (d *DB) UpsertTitle(ctx context.Context, t *model.Title) (int64, error) {
 	res, err := d.db.ExecContext(ctx, `
 		INSERT INTO titles (tmdb_id, tvdb_id, title, year, media_type, imdb_id, rt_url,
-		                    rt_critics_score, rt_audience_score, tmdb_rating, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		                    rt_critics_score, rt_audience_score, tmdb_rating,
+		                    overview, genres, runtime, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(tmdb_id) DO UPDATE SET
 			title             = excluded.title,
 			year              = excluded.year,
@@ -120,10 +127,14 @@ func (d *DB) UpsertTitle(ctx context.Context, t *model.Title) (int64, error) {
 			rt_url            = excluded.rt_url,
 			rt_critics_score  = excluded.rt_critics_score,
 			rt_audience_score = excluded.rt_audience_score,
-			tmdb_rating       = excluded.tmdb_rating
+			tmdb_rating       = excluded.tmdb_rating,
+			overview          = excluded.overview,
+			genres            = excluded.genres,
+			runtime           = excluded.runtime
 	`,
 		t.TmdbID, t.TvdbID, t.Title, t.Year, string(t.MediaType), t.ImdbID, t.RTURL,
-		t.RTCriticsScore, t.RTAudienceScore, t.TmdbRating, t.CreatedAt,
+		t.RTCriticsScore, t.RTAudienceScore, t.TmdbRating,
+		t.Overview, t.Genres, t.Runtime, t.CreatedAt,
 	)
 	if err != nil {
 		return 0, fmt.Errorf("upserting title: %w", err)
@@ -146,7 +157,7 @@ func (d *DB) GetTitleByTmdbID(ctx context.Context, tmdbID int) (*model.Title, er
 	`, tmdbID).Scan(
 		&t.ID, &t.TmdbID, &t.TvdbID, &t.Title, &t.Year, &mediaType,
 		&t.ImdbID, &t.RTURL, &t.RTCriticsScore, &t.RTAudienceScore,
-		&t.TmdbRating, &createdAt,
+		&t.TmdbRating, &t.Overview, &t.Genres, &t.Runtime, &createdAt,
 	)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -165,12 +176,13 @@ func (d *DB) GetTitleByID(ctx context.Context, id int64) (*model.Title, error) {
 	var createdAt string
 	err := d.db.QueryRowContext(ctx, `
 		SELECT id, tmdb_id, tvdb_id, title, year, media_type, imdb_id,
-		       rt_url, rt_critics_score, rt_audience_score, tmdb_rating, created_at
+		       rt_url, rt_critics_score, rt_audience_score, tmdb_rating,
+		       overview, genres, runtime, created_at
 		FROM titles WHERE id = ?
 	`, id).Scan(
 		&t.ID, &t.TmdbID, &t.TvdbID, &t.Title, &t.Year, &mediaType,
 		&t.ImdbID, &t.RTURL, &t.RTCriticsScore, &t.RTAudienceScore,
-		&t.TmdbRating, &createdAt,
+		&t.TmdbRating, &t.Overview, &t.Genres, &t.Runtime, &createdAt,
 	)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -186,7 +198,8 @@ func (d *DB) GetTitleByID(ctx context.Context, id int64) (*model.Title, error) {
 func (d *DB) ListTitles(ctx context.Context) ([]*model.Title, error) {
 	rows, err := d.db.QueryContext(ctx, `
 		SELECT id, tmdb_id, tvdb_id, title, year, media_type, imdb_id,
-		       rt_url, rt_critics_score, rt_audience_score, tmdb_rating, created_at
+		       rt_url, rt_critics_score, rt_audience_score, tmdb_rating,
+		       overview, genres, runtime, created_at
 		FROM titles ORDER BY created_at DESC
 	`)
 	if err != nil {
@@ -202,7 +215,7 @@ func (d *DB) ListTitles(ctx context.Context) ([]*model.Title, error) {
 		if err := rows.Scan(
 			&t.ID, &t.TmdbID, &t.TvdbID, &t.Title, &t.Year, &mediaType,
 			&t.ImdbID, &t.RTURL, &t.RTCriticsScore, &t.RTAudienceScore,
-			&t.TmdbRating, &createdAt,
+			&t.TmdbRating, &t.Overview, &t.Genres, &t.Runtime, &createdAt,
 		); err != nil {
 			return nil, fmt.Errorf("scanning title row: %w", err)
 		}
@@ -288,7 +301,8 @@ func (d *DB) ListPendingWithTitles(ctx context.Context) ([]EventWithTitle, error
 		SELECT e.id, e.title_id, e.source, e.release_type, e.release_date,
 		       e.status, e.previous_status, e.notes, e.created_at,
 		       t.id, t.tmdb_id, t.tvdb_id, t.title, t.year, t.media_type, t.imdb_id,
-		       t.rt_url, t.rt_critics_score, t.rt_audience_score, t.tmdb_rating, t.created_at
+		       t.rt_url, t.rt_critics_score, t.rt_audience_score, t.tmdb_rating,
+		       t.overview, t.genres, t.runtime, t.created_at
 		FROM release_events e
 		JOIN titles t ON t.id = e.title_id
 		WHERE e.status = 'pending'
@@ -311,7 +325,7 @@ func (d *DB) ListPendingWithTitles(ctx context.Context) ([]EventWithTitle, error
 			&evStatus, &evPrevStatus, &ev.Notes, &evCreated,
 			&tl.ID, &tl.TmdbID, &tl.TvdbID, &tl.Title, &tl.Year, &tlMediaType,
 			&tl.ImdbID, &tl.RTURL, &tl.RTCriticsScore, &tl.RTAudienceScore,
-			&tl.TmdbRating, &tlCreated,
+			&tl.TmdbRating, &tl.Overview, &tl.Genres, &tl.Runtime, &tlCreated,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("scanning event with title: %w", err)
@@ -335,7 +349,8 @@ func (d *DB) ListApprovedWithTitles(ctx context.Context) ([]EventWithTitle, erro
 		SELECT e.id, e.title_id, e.source, e.release_type, e.release_date,
 		       e.status, e.previous_status, e.notes, e.created_at,
 		       t.id, t.tmdb_id, t.tvdb_id, t.title, t.year, t.media_type, t.imdb_id,
-		       t.rt_url, t.rt_critics_score, t.rt_audience_score, t.tmdb_rating, t.created_at
+		       t.rt_url, t.rt_critics_score, t.rt_audience_score, t.tmdb_rating,
+		       t.overview, t.genres, t.runtime, t.created_at
 		FROM release_events e
 		JOIN titles t ON t.id = e.title_id
 		WHERE e.status = 'approved'
@@ -358,7 +373,7 @@ func (d *DB) ListApprovedWithTitles(ctx context.Context) ([]EventWithTitle, erro
 			&evStatus, &evPrevStatus, &ev.Notes, &evCreated,
 			&tl.ID, &tl.TmdbID, &tl.TvdbID, &tl.Title, &tl.Year, &tlMediaType,
 			&tl.ImdbID, &tl.RTURL, &tl.RTCriticsScore, &tl.RTAudienceScore,
-			&tl.TmdbRating, &tlCreated,
+			&tl.TmdbRating, &tl.Overview, &tl.Genres, &tl.Runtime, &tlCreated,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("scanning approved event with title: %w", err)

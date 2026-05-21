@@ -44,6 +44,9 @@ type Title struct {
 	RTCriticsScore  float64
 	RTAudienceScore float64
 	TmdbRating      float64
+	Overview        string
+	Genres          string
+	Runtime         int
 	CreatedAt       string
 }
 

@@ -146,16 +146,43 @@ func (t *TUI) View() tea.View {
 			mediaType = "tv"
 		}
 
+		line := fmt.Sprintf("%s[%s] %s",
+			prefix, mediaType, title,
+		)
+
+		// Second line: ratings and metadata
+		var metaParts []string
+		if r := styleRating(it.Title.TmdbRating); r != "" {
+			metaParts = append(metaParts, "TMDB: "+r)
+		}
+		if it.Title.Genres != "" {
+			metaParts = append(metaParts, it.Title.Genres)
+		}
+		if it.Title.Runtime > 0 {
+			metaParts = append(metaParts, fmt.Sprintf("%dh %dm", it.Title.Runtime/60, it.Title.Runtime%60))
+		}
+		if it.Title.ImdbID != "" {
+			metaParts = append(metaParts, "IMDb: "+it.Title.ImdbID)
+		}
+		if len(metaParts) > 0 {
+			line += "\n" + infoStyle.Render("  "+strings.Join(metaParts, "  ·  "))
+		}
+
+		// Third line: overview
+		if it.Title.Overview != "" {
+			overview := it.Title.Overview
+			if len(overview) > 120 {
+				overview = overview[:117] + "..."
+			}
+			line += "\n" + overviewStyle.Render("  "+overview)
+		}
+
+		// Fourth line: release type + notes
 		releaseType := "physical"
 		if it.Event.ReleaseType == model.ReleaseStreaming {
 			releaseType = "streaming"
 		}
-
-		line := fmt.Sprintf("%s[%s] %s  %s  ▸ %s",
-			prefix, mediaType, title,
-			styleRating(it.Title.TmdbRating),
-			releaseType,
-		)
+		extra := "▸ " + releaseType
 
 		var notes []string
 		if it.Event.Notes != "" {
@@ -166,14 +193,9 @@ func (t *TUI) View() tea.View {
 			notes = append(notes, "previously downloaded")
 		}
 		if len(notes) > 0 {
-			line += "\n" + noteStyle.Render("  " + strings.Join(notes, ", "))
+			extra += "  (" + strings.Join(notes, ", ") + ")"
 		}
-		if it.Event.PreviousStatus == model.StatusDownloaded {
-			notes = append(notes, "previously downloaded — upgrade available")
-		}
-		if len(notes) > 0 {
-			line += "\n" + noteStyle.Render("  "+strings.Join(notes, ", "))
-		}
+		line += "\n" + noteStyle.Render("  "+extra)
 
 		if i == t.cursor {
 			b.WriteString(selectedStyle.Render(line))
@@ -190,11 +212,13 @@ func (t *TUI) View() tea.View {
 }
 
 var (
-	headerStyle   = lipgloss.NewStyle().Bold(true).Padding(0, 1)
-	selectedStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("212")).Padding(0, 1)
-	itemStyle     = lipgloss.NewStyle().Padding(0, 1)
-	noteStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Padding(0, 2)
-	helpStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
+	headerStyle    = lipgloss.NewStyle().Bold(true).Padding(0, 1)
+	selectedStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("212")).Padding(0, 1)
+	itemStyle      = lipgloss.NewStyle().Padding(0, 1)
+	infoStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("226")).Padding(0, 2)
+	overviewStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("250")).Padding(0, 2).Width(70)
+	noteStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Padding(0, 2)
+	helpStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
 )
 
 func styleRating(rating float64) string {

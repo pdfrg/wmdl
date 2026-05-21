@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 )
 
@@ -62,6 +63,9 @@ type TMDBEnrichment struct {
 	Rating    float64
 	IMDbID    string
 	TVDBID    int
+	Overview  string
+	Genres    string // comma-separated
+	Runtime   int
 }
 
 type TMDBDiscoverResult struct {
@@ -177,6 +181,49 @@ func (c *TMDBClient) discoverStream(ctx context.Context, u *url.URL, mediaType s
 	return items, nil
 }
 
+type TMDBDetails struct {
+	Overview string  `json:"overview"`
+	Genres   []struct {
+		ID   int    `json:"id"`
+		Name string `json:"name"`
+	} `json:"genres"`
+	Runtime    int     `json:"runtime"`
+	VoteAverage float64 `json:"vote_average"`
+	IMDbID     string  `json:"imdb_id,omitempty"`
+}
+
+func (c *TMDBClient) GetMovieDetails(ctx context.Context, tmdbID int) (*TMDBDetails, error) {
+	return c.getDetails(ctx, fmt.Sprintf("%s/movie/%d", tmdbBase, tmdbID))
+}
+
+func (c *TMDBClient) GetTVDetails(ctx context.Context, tmdbID int) (*TMDBDetails, error) {
+	return c.getDetails(ctx, fmt.Sprintf("%s/tv/%d", tmdbBase, tmdbID))
+}
+
+func (c *TMDBClient) getDetails(ctx context.Context, url string) (*TMDBDetails, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
+	}
+	c.setAuth(req)
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("fetching TMDB details: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("TMDB details returned %d", resp.StatusCode)
+	}
+
+	var details TMDBDetails
+	if err := json.NewDecoder(resp.Body).Decode(&details); err != nil {
+		return nil, err
+	}
+	return &details, nil
+}
+
 const tmdbBase = "https://api.themoviedb.org/3"
 
 func (c *TMDBClient) SearchMulti(ctx context.Context, query string, year int) (*TMDBMultiResult, error) {
@@ -248,6 +295,23 @@ func (c *TMDBClient) Enrich(ctx context.Context, query string, year int) (*TMDBE
 		if err == nil {
 			enrich.IMDbID = extIDs.IMDbID
 			enrich.TVDBID = extIDs.TVDBID
+		}
+
+		// Fetch details (overview, genres, runtime)
+		var details *TMDBDetails
+		if r.MediaType == "movie" {
+			details, err = c.GetMovieDetails(ctx, r.ID)
+		} else {
+			details, err = c.GetTVDetails(ctx, r.ID)
+		}
+		if err == nil && details != nil {
+			enrich.Overview = details.Overview
+			var genreNames []string
+			for _, g := range details.Genres {
+				genreNames = append(genreNames, g.Name)
+			}
+			enrich.Genres = strings.Join(genreNames, ", ")
+			enrich.Runtime = details.Runtime
 		}
 
 		return enrich, nil
