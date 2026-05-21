@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -131,15 +132,18 @@ func (r *Runner) Run(ctx context.Context) error {
 }
 
 func (r *Runner) processItem(ctx context.Context, item ScrapedItem) error {
-	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
-	defer cancel()
+	// Clean title: remove parenthetical suffixes like "(season 6)", "(weekly, ...)"
+	searchTitle := cleanTitleForSearch(item.Title)
+
+	// API calls get their own timeout
+	apiCtx, apiCancel := context.WithTimeout(ctx, 20*time.Second)
 
 	mediaType := item.MediaType
-
 	var tmdbID int
 	var rating float64
+	var enrich *TMDBEnrichment
 
-	enrich, err := r.tmdb.Enrich(ctx, item.Title, item.Year)
+	enrich, err := r.tmdb.Enrich(apiCtx, searchTitle, item.Year)
 	if err == nil {
 		mediaType = model.MediaType(enrich.MediaType)
 		tmdbID = enrich.TMDBID
@@ -148,7 +152,10 @@ func (r *Runner) processItem(ctx context.Context, item ScrapedItem) error {
 		log.Printf("  TMDB lookup failed for %q: %v", item.Title, err)
 	}
 
-	rtURL := r.rt.FindURL(item.Title, item.Year, string(mediaType))
+	rtURL := r.rt.FindURL(searchTitle, item.Year, string(mediaType))
+	apiCancel()
+
+	// DB operations use parent context — no aggressive timeout
 
 	// Best-effort RT rating scrape
 	rtCritics, rtAudience := 0.0, 0.0
@@ -271,6 +278,13 @@ func isUpgrade(prevSource string, newReleaseType model.ReleaseType) bool {
 	}
 	// Streaming to physical is always an upgrade
 	return newReleaseType == model.ReleasePhysical
+}
+
+var parenSuffix = regexp.MustCompile(`\s*\([^)]*\)`)
+
+func cleanTitleForSearch(title string) string {
+	cleaned := parenSuffix.ReplaceAllString(title, "")
+	return strings.TrimSpace(cleaned)
 }
 
 func weekStateFromItems(items []ScrapedItem) *model.WeekState {

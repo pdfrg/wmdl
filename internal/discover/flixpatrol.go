@@ -93,7 +93,13 @@ func (f *FlixPatrolProvider) scrapePage(page int) ([]flixItem, error) {
 	allocCtx, allocCancel := chromedp.NewRemoteAllocator(context.Background(), f.debugURL)
 	defer allocCancel()
 
-	ct, cancel := chromedp.NewContext(allocCtx)
+	// Suppress noisy CDP events like EventAdoptedStyleSheetsModified
+	ct, cancel := chromedp.NewContext(allocCtx, chromedp.WithLogf(func(format string, args ...interface{}) {
+		msg := fmt.Sprintf(format, args...)
+		if !strings.Contains(msg, "EventAdoptedStyleSheetsModified") {
+			log.Printf(format, args...)
+		}
+	}))
 	defer cancel()
 
 	ctx, cancel := context.WithTimeout(ct, 30*time.Second)
