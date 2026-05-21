@@ -134,6 +134,18 @@ func (e *Executor) ProcessApproved(ctx context.Context, evt db.EventWithTitle) e
 		}
 	}
 
+	// Mark previous download as upgraded if this is an upgrade
+	if evt.Event.Notes != "" && strings.Contains(evt.Event.Notes, "upgrade:") {
+		oldDL, err := e.db.GetDownloadByTitleID(ctx, title.ID)
+		if err == nil && oldDL != nil {
+			if err := e.db.UpdateDownloadStatus(ctx, oldDL.ID, model.DownloadUpgraded); err != nil {
+				log.Printf("  Warning: marking old download as upgraded: %v", err)
+			} else {
+				log.Printf("  Marked previous download as upgraded")
+			}
+		}
+	}
+
 	// Add to library
 	if err := e.addToLibrary(ctx, evt); err != nil {
 		log.Printf("  Warning: library add failed: %v", err)

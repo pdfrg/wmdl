@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"strings"
 	"sync"
 	"time"
 
@@ -166,18 +167,34 @@ func (r *Runner) processItem(ctx context.Context, item ScrapedItem) error {
 	}
 
 	var prevStatus model.ReleaseStatus
+	var notes string
+
 	if existing != nil {
 		prevStatus = existing.Status
+
+		// Check for upgrade: was it previously downloaded with a lower source type?
+		if existing.Status == model.StatusDownloaded {
+			dl, err := r.db.GetDownloadByTitleID(ctx, titleID)
+			if err == nil && dl != nil && dl.SourceType != "" {
+				if isUpgrade(dl.SourceType, item.ReleaseType) {
+					notes = fmt.Sprintf("upgrade: %s → %s", dl.SourceType, item.ReleaseType)
+				}
+			}
+		}
 	}
 
 	status := model.StatusPending
-	if existing != nil {
+	if existing != nil && notes == "" {
 		switch existing.Status {
 		case model.StatusRejected:
 			status = model.StatusPending
 		case model.StatusDownloaded:
 			status = model.StatusPending
 		}
+	}
+	// If upgrade, always show as pending
+	if notes != "" {
+		status = model.StatusPending
 	}
 
 	event := &model.ReleaseEvent{
@@ -187,6 +204,12 @@ func (r *Runner) processItem(ctx context.Context, item ScrapedItem) error {
 		ReleaseDate:    item.ReleaseDate,
 		Status:         status,
 		PreviousStatus: prevStatus,
+		Notes:          notes,
+	}
+
+	// If previous event was downloaded and this is new, mark the old as "upgraded"
+	if existing != nil && existing.Status == model.StatusDownloaded && notes != "" {
+		_ = r.db.UpdateReleaseEventStatus(ctx, existing.ID, model.StatusDownloaded)
 	}
 
 	if _, err := r.db.CreateReleaseEvent(ctx, event); err != nil {
@@ -194,6 +217,25 @@ func (r *Runner) processItem(ctx context.Context, item ScrapedItem) error {
 	}
 
 	return nil
+}
+
+// isUpgrade checks if a new release type is an upgrade over a previous download's source type.
+// Physical (BluRay) is an upgrade over streaming (Web-DL/WebRip).
+// A higher-quality source within the same category is also an upgrade.
+func isUpgrade(prevSource string, newReleaseType model.ReleaseType) bool {
+	if newReleaseType != model.ReleasePhysical {
+		return false
+	}
+	prev := string(prevSource)
+	prev = strings.ToLower(prev)
+	switch prev {
+	case "webrip", "web-dl", "hdtv":
+		return true
+	case "bluray", "remux":
+		return false
+	}
+	// Streaming to physical is always an upgrade
+	return newReleaseType == model.ReleasePhysical
 }
 
 func weekStateFromItems(items []ScrapedItem) *model.WeekState {

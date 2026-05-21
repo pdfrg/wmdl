@@ -55,6 +55,7 @@ type ReleaseEvent struct {
 	ReleaseDate    string
 	Status         ReleaseStatus
 	PreviousStatus ReleaseStatus
+	Notes          string
 	CreatedAt      string
 }
 

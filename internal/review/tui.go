@@ -158,8 +158,15 @@ func (t *TUI) View() tea.View {
 		)
 
 		var notes []string
-		if it.Event.PreviousStatus == model.StatusRejected {
+		if it.Event.Notes != "" {
+			notes = append(notes, it.Event.Notes)
+		} else if it.Event.PreviousStatus == model.StatusRejected {
 			notes = append(notes, "previously rejected")
+		} else if it.Event.PreviousStatus == model.StatusDownloaded {
+			notes = append(notes, "previously downloaded")
+		}
+		if len(notes) > 0 {
+			line += "\n" + noteStyle.Render("  " + strings.Join(notes, ", "))
 		}
 		if it.Event.PreviousStatus == model.StatusDownloaded {
 			notes = append(notes, "previously downloaded — upgrade available")

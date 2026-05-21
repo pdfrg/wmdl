@@ -56,6 +56,7 @@ func (d *DB) Migrate(ctx context.Context) error {
 		status          TEXT NOT NULL DEFAULT 'pending'
 		                CHECK(status IN ('pending','approved','rejected','downloaded')),
 		previous_status TEXT DEFAULT '',
+		notes           TEXT DEFAULT '',
 		created_at      TEXT NOT NULL DEFAULT (datetime('now'))
 	);
 
@@ -100,6 +101,7 @@ func (d *DB) Migrate(ctx context.Context) error {
 	d.db.ExecContext(ctx, `ALTER TABLE titles ADD COLUMN tvdb_id INTEGER NOT NULL DEFAULT 0`)
 	d.db.ExecContext(ctx, `ALTER TABLE release_events ADD COLUMN iso_year INTEGER DEFAULT 0`)
 	d.db.ExecContext(ctx, `ALTER TABLE release_events ADD COLUMN iso_week INTEGER DEFAULT 0`)
+	d.db.ExecContext(ctx, `ALTER TABLE release_events ADD COLUMN notes TEXT DEFAULT ''`)
 
 	return nil
 }
@@ -213,9 +215,9 @@ func (d *DB) ListTitles(ctx context.Context) ([]*model.Title, error) {
 
 func (d *DB) CreateReleaseEvent(ctx context.Context, e *model.ReleaseEvent) (int64, error) {
 	res, err := d.db.ExecContext(ctx, `
-		INSERT INTO release_events (title_id, source, release_type, release_date, status, previous_status)
-		VALUES (?, ?, ?, ?, ?, ?)
-	`, e.TitleID, e.Source, string(e.ReleaseType), e.ReleaseDate, string(e.Status), string(e.PreviousStatus))
+		INSERT INTO release_events (title_id, source, release_type, release_date, status, previous_status, notes)
+		VALUES (?, ?, ?, ?, ?, ?, ?)
+	`, e.TitleID, e.Source, string(e.ReleaseType), e.ReleaseDate, string(e.Status), string(e.PreviousStatus), e.Notes)
 	if err != nil {
 		return 0, fmt.Errorf("creating release event: %w", err)
 	}
@@ -224,7 +226,7 @@ func (d *DB) CreateReleaseEvent(ctx context.Context, e *model.ReleaseEvent) (int
 
 func (d *DB) ListReleaseEvents(ctx context.Context, status model.ReleaseStatus) ([]*model.ReleaseEvent, error) {
 	rows, err := d.db.QueryContext(ctx, `
-		SELECT id, title_id, source, release_type, release_date, status, previous_status, created_at
+		SELECT id, title_id, source, release_type, release_date, status, previous_status, notes, created_at
 		FROM release_events WHERE status = ?
 		ORDER BY created_at DESC
 	`, string(status))
@@ -239,7 +241,7 @@ func (d *DB) ListReleaseEvents(ctx context.Context, status model.ReleaseStatus) 
 		var releaseType, status, prevStatus, createdAt string
 		if err := rows.Scan(
 			&e.ID, &e.TitleID, &e.Source, &releaseType, &e.ReleaseDate,
-			&status, &prevStatus, &createdAt,
+			&status, &prevStatus, &e.Notes, &createdAt,
 		); err != nil {
 			return nil, fmt.Errorf("scanning release event row: %w", err)
 		}
@@ -256,12 +258,12 @@ func (d *DB) GetLatestReleaseEvent(ctx context.Context, titleID int64) (*model.R
 	var e model.ReleaseEvent
 	var releaseType, status, prevStatus, createdAt string
 	err := d.db.QueryRowContext(ctx, `
-		SELECT id, title_id, source, release_type, release_date, status, previous_status, created_at
+		SELECT id, title_id, source, release_type, release_date, status, previous_status, notes, created_at
 		FROM release_events WHERE title_id = ?
 		ORDER BY created_at DESC LIMIT 1
 	`, titleID).Scan(
 		&e.ID, &e.TitleID, &e.Source, &releaseType, &e.ReleaseDate,
-		&status, &prevStatus, &createdAt,
+		&status, &prevStatus, &e.Notes, &createdAt,
 	)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -284,7 +286,7 @@ type EventWithTitle struct {
 func (d *DB) ListPendingWithTitles(ctx context.Context) ([]EventWithTitle, error) {
 	rows, err := d.db.QueryContext(ctx, `
 		SELECT e.id, e.title_id, e.source, e.release_type, e.release_date,
-		       e.status, e.previous_status, e.created_at,
+		       e.status, e.previous_status, e.notes, e.created_at,
 		       t.id, t.tmdb_id, t.tvdb_id, t.title, t.year, t.media_type, t.imdb_id,
 		       t.rt_url, t.rt_critics_score, t.rt_audience_score, t.tmdb_rating, t.created_at
 		FROM release_events e
@@ -306,7 +308,7 @@ func (d *DB) ListPendingWithTitles(ctx context.Context) ([]EventWithTitle, error
 
 		err := rows.Scan(
 			&ev.ID, &ev.TitleID, &ev.Source, &evRelType, &ev.ReleaseDate,
-			&evStatus, &evPrevStatus, &evCreated,
+			&evStatus, &evPrevStatus, &ev.Notes, &evCreated,
 			&tl.ID, &tl.TmdbID, &tl.TvdbID, &tl.Title, &tl.Year, &tlMediaType,
 			&tl.ImdbID, &tl.RTURL, &tl.RTCriticsScore, &tl.RTAudienceScore,
 			&tl.TmdbRating, &tlCreated,
@@ -331,7 +333,7 @@ func (d *DB) ListPendingWithTitles(ctx context.Context) ([]EventWithTitle, error
 func (d *DB) ListApprovedWithTitles(ctx context.Context) ([]EventWithTitle, error) {
 	rows, err := d.db.QueryContext(ctx, `
 		SELECT e.id, e.title_id, e.source, e.release_type, e.release_date,
-		       e.status, e.previous_status, e.created_at,
+		       e.status, e.previous_status, e.notes, e.created_at,
 		       t.id, t.tmdb_id, t.tvdb_id, t.title, t.year, t.media_type, t.imdb_id,
 		       t.rt_url, t.rt_critics_score, t.rt_audience_score, t.tmdb_rating, t.created_at
 		FROM release_events e
@@ -353,7 +355,7 @@ func (d *DB) ListApprovedWithTitles(ctx context.Context) ([]EventWithTitle, erro
 
 		err := rows.Scan(
 			&ev.ID, &ev.TitleID, &ev.Source, &evRelType, &ev.ReleaseDate,
-			&evStatus, &evPrevStatus, &evCreated,
+			&evStatus, &evPrevStatus, &ev.Notes, &evCreated,
 			&tl.ID, &tl.TmdbID, &tl.TvdbID, &tl.Title, &tl.Year, &tlMediaType,
 			&tl.ImdbID, &tl.RTURL, &tl.RTCriticsScore, &tl.RTAudienceScore,
 			&tl.TmdbRating, &tlCreated,
@@ -391,6 +393,11 @@ func (d *DB) CreateDownload(ctx context.Context, dl *model.Download) (int64, err
 		return 0, fmt.Errorf("creating download: %w", err)
 	}
 	return res.LastInsertId()
+}
+
+func (d *DB) UpdateDownloadStatus(ctx context.Context, id int64, status model.DownloadStatus) error {
+	_, err := d.db.ExecContext(ctx, `UPDATE downloads SET status = ? WHERE id = ?`, string(status), id)
+	return err
 }
 
 func (d *DB) UpsertWeekState(ctx context.Context, ws *model.WeekState) error {
