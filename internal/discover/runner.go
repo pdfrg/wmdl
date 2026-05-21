@@ -175,12 +175,15 @@ func (r *Runner) processItem(ctx context.Context, item ScrapedItem) error {
 	overview := ""
 	genres := ""
 	runtime := 0
-	imdbID := ""
+	imdbID := item.ImdbID
+	imdbRating := item.ImdbRating
 	if enrich != nil {
 		overview = enrich.Overview
 		genres = enrich.Genres
 		runtime = enrich.Runtime
-		imdbID = enrich.IMDbID
+		if imdbID == "" {
+			imdbID = enrich.IMDbID
+		}
 	}
 
 	title := &model.Title{
@@ -190,6 +193,7 @@ func (r *Runner) processItem(ctx context.Context, item ScrapedItem) error {
 		Year:            item.Year,
 		MediaType:       mediaType,
 		ImdbID:          imdbID,
+		ImdbRating:      imdbRating,
 		RTURL:           rtURL,
 		RTCriticsScore:  rtCritics,
 		RTAudienceScore: rtAudience,

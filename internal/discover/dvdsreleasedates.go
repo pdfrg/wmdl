@@ -74,12 +74,32 @@ func (d *DVDReleaseDates) Scrape() ([]ScrapedItem, error) {
 				mediaType = model.MediaTypeTV
 			}
 
+			// Extract IMDb ID and rating
+			imdbID := ""
+			var imdbRating float64
+			if imdbLink := cell.Find("td.imdblink a[href*='imdb.com']"); imdbLink.Length() > 0 {
+				href, _ := imdbLink.Attr("href")
+				if parts := strings.Split(href, "/"); len(parts) > 0 {
+					for i, p := range parts {
+						if strings.HasPrefix(p, "tt") && i > 0 {
+							imdbID = p
+							break
+						}
+					}
+				}
+				if r, err := strconv.ParseFloat(strings.TrimSpace(imdbLink.Text()), 64); err == nil {
+					imdbRating = r
+				}
+			}
+
 			items = append(items, ScrapedItem{
 				Title:       cleanTitle(title),
 				Year:        year,
+				MediaType:   mediaType,
 				ReleaseType: model.ReleasePhysical,
 				ReleaseDate: targetDate.Format("2006-01-02"),
-				MediaType:   mediaType,
+				ImdbID:      imdbID,
+				ImdbRating:  imdbRating,
 			})
 		})
 

@@ -155,6 +155,9 @@ func (t *TUI) View() tea.View {
 		if r := styleRating(it.Title.TmdbRating); r != "" {
 			metaParts = append(metaParts, "TMDB: "+r)
 		}
+		if it.Title.ImdbRating > 0 {
+			metaParts = append(metaParts, fmt.Sprintf("IMDb: %.1f", it.Title.ImdbRating))
+		}
 		if it.Title.Genres != "" {
 			metaParts = append(metaParts, it.Title.Genres)
 		}

@@ -40,6 +40,7 @@ type Title struct {
 	Year            int
 	MediaType       MediaType
 	ImdbID          string
+	ImdbRating      float64
 	RTURL           string
 	RTCriticsScore  float64
 	RTAudienceScore float64

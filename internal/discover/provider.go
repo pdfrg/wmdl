@@ -13,4 +13,6 @@ type ScrapedItem struct {
 	MediaType   model.MediaType
 	ReleaseType model.ReleaseType
 	ReleaseDate string
+	ImdbID      string
+	ImdbRating  float64
 }
