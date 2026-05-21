@@ -1,7 +1,5 @@
 package download
 
-import "fmt"
-
 type Option func(*AddOptions)
 
 type AddOptions struct {
@@ -34,6 +32,6 @@ type Client interface {
 	AddMagnet(uri string, opts ...Option) (torrentID string, err error)
 }
 
-func New(cfg interface{}) (Client, error) {
-	return nil, fmt.Errorf("not implemented")
-}
+
+
+

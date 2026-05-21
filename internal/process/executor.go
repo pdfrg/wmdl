@@ -7,6 +7,7 @@ import (
 
 	"github.com/pdfrg/wmd/internal/config"
 	"github.com/pdfrg/wmd/internal/db"
+	"github.com/pdfrg/wmd/internal/download"
 	"github.com/pdfrg/wmd/internal/model"
 	"github.com/pdfrg/wmd/internal/quality"
 	"github.com/pdfrg/wmd/internal/search"
@@ -16,23 +17,41 @@ type Executor struct {
 	cfg    *config.Config
 	db     *db.DB
 	prowl  *search.ProwlarrClient
-	dl     downloadClient
-	radarr libraryClient
-	sonarr libraryClient
+	dl     download.Client
 }
-
-type downloadClient interface {
-	AddTorrent(url string, opts ...interface{}) (string, error)
-	AddMagnet(uri string, opts ...interface{}) (string, error)
-}
-
-type libraryClient interface{}
 
 func NewExecutor(cfg *config.Config, database *db.DB) *Executor {
+	dl := createDownloadClient(cfg)
 	return &Executor{
 		cfg:   cfg,
 		db:    database,
 		prowl: search.NewProwlarrClient(cfg.Prowlarr.URL, cfg.Prowlarr.APIKey),
+		dl:    dl,
+	}
+}
+
+func createDownloadClient(cfg *config.Config) download.Client {
+	switch cfg.Downloader.Type {
+	case "qbittorrent":
+		return download.NewQbittorrentClient(
+			cfg.Downloader.Qbittorrent.URL,
+			cfg.Downloader.Qbittorrent.Username,
+			cfg.Downloader.Qbittorrent.Password,
+		)
+	case "transmission":
+		return download.NewTransmissionClient(
+			cfg.Downloader.Transmission.URL,
+			cfg.Downloader.Transmission.Username,
+			cfg.Downloader.Transmission.Password,
+		)
+	case "deluge":
+		return download.NewDelugeClient(
+			cfg.Downloader.Deluge.URL,
+			cfg.Downloader.Deluge.Password,
+		)
+	default:
+		log.Printf("Warning: unknown downloader type %q, downloads disabled", cfg.Downloader.Type)
+		return nil
 	}
 }
 
@@ -82,9 +101,27 @@ func (e *Executor) ProcessApproved(ctx context.Context, evt db.EventWithTitle) e
 
 	log.Printf("  Selected: %s (score %d)", chosen.RawTitle, chosen.Score)
 
-	// Grab via Prowlarr
+	// Grab via Prowlarr (sends to Prowlarr's configured download client)
 	if err := e.prowl.Grab(ctx, chosen.IndexerID, chosen.Guid); err != nil {
 		return fmt.Errorf("prowlarr grab: %w", err)
+	}
+
+	// Also add directly to our download client for proper category tagging
+	if e.dl != nil {
+		category := e.cfg.Downloader.Categories.Movies
+		if title.MediaType == model.MediaTypeTV {
+			category = e.cfg.Downloader.Categories.TV
+		}
+
+		uri := chosen.DownloadURL
+		if uri == "" {
+			uri = chosen.MagnetURL
+		}
+		if uri != "" {
+			if _, err := e.dl.AddTorrent(uri, download.WithCategory(category)); err != nil {
+				log.Printf("  Warning: direct add failed (Prowlarr grab may have succeeded): %v", err)
+			}
+		}
 	}
 
 	return nil
