@@ -1,9 +1,12 @@
 package process
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"log"
+	"os"
+	"strings"
 
 	"github.com/pdfrg/wmd/internal/config"
 	"github.com/pdfrg/wmd/internal/db"
@@ -185,6 +188,12 @@ func (e *Executor) addToRadarr(ctx context.Context, evt db.EventWithTitle) error
 		return err
 	}
 	log.Printf("  Added to Radarr: %s (ID %d)", added.Title, added.ID)
+
+	// Check for collection gaps
+	if added.Collection != nil && added.Collection.TMDBID > 0 {
+		e.checkCollectionGaps(ctx, tmdbID)
+	}
+
 	return nil
 }
 
@@ -244,7 +253,75 @@ func (e *Executor) addToSonarr(ctx context.Context, evt db.EventWithTitle) error
 		return err
 	}
 	log.Printf("  Added to Sonarr: %s (ID %d)", added.Title, added.ID)
+
+	// Check for earlier missing seasons
+	if added.ID > 0 {
+		e.checkEarlierSeasons(ctx, added.TVDBID, added.ID)
+	}
+
 	return nil
+}
+
+func (e *Executor) checkEarlierSeasons(ctx context.Context, tvdbID, seriesID int) {
+	// We can only check seasons from the series we just added.
+	// For earlier seasons, we'd need the existing series data.
+	// For simplicity, this is a placeholder that can be enhanced later.
+	log.Printf("  (Earlier season checking not yet implemented)")
+}
+
+func (e *Executor) checkCollectionGaps(ctx context.Context, tmdbID int) {
+	collections, err := e.radarr.GetCollections(ctx)
+	if err != nil {
+		log.Printf("  Warning: cannot check collections: %v", err)
+		return
+	}
+
+	profileID := 1
+	profiles, _ := e.radarr.GetQualityProfiles(ctx)
+	for _, p := range profiles {
+		if p.Name == e.cfg.Library.Radarr.QualityProfile {
+			profileID = p.ID
+			break
+		}
+	}
+
+	for _, col := range collections {
+		var missing []library.RadarrMovie
+		for _, m := range col.Movies {
+			if !m.HasFile && m.TMDBID != tmdbID {
+				missing = append(missing, m)
+			}
+		}
+		if len(missing) == 0 {
+			continue
+		}
+		log.Printf("  Collection %q has %d missing movies", col.Name, len(missing))
+		for _, m := range missing {
+			if promptYesNo(fmt.Sprintf("    Add %s (%d)?", m.Title, m.Year)) {
+				if _, err := e.radarr.Add(ctx, m.TMDBID, m.Title, m.Year, library.AddMovieOptions{
+					Monitored:           e.cfg.Library.Radarr.Monitor,
+					MinimumAvailability: "released",
+					QualityProfileID:    profileID,
+					RootFolderPath:      e.cfg.Library.Radarr.RootFolder,
+					SearchNow:           true,
+				}); err != nil {
+					log.Printf("    Error adding %s: %v", m.Title, err)
+				} else {
+					log.Printf("    Added and searching: %s", m.Title)
+				}
+			}
+		}
+	}
+}
+
+func promptYesNo(prompt string) bool {
+	fmt.Printf("%s [y/N] ", prompt)
+	scanner := bufio.NewScanner(os.Stdin)
+	if scanner.Scan() {
+		ans := strings.ToLower(strings.TrimSpace(scanner.Text()))
+		return ans == "y" || ans == "yes"
+	}
+	return false
 }
 
 func buildQualityPrefs(cfg *config.Config, mediaType model.MediaType) quality.QualityPrefs {

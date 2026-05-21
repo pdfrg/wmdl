@@ -74,6 +74,16 @@ type Download struct {
 	CreatedAt       string
 }
 
+type WeekState struct {
+	Year       int
+	Week       int
+	WeekDate   string
+	Discovered bool
+	Reviewed   bool
+	Processed  bool
+	UpdatedAt  string
+}
+
 type ParsedRelease struct {
 	RawTitle     string
 	Resolution   int

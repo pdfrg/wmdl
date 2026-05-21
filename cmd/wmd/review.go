@@ -1,13 +1,16 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/spf13/cobra"
 
 	"github.com/pdfrg/wmd/internal/db"
+	"github.com/pdfrg/wmd/internal/model"
 	"github.com/pdfrg/wmd/internal/review"
 )
 
@@ -40,6 +43,23 @@ func newReviewCmd() *cobra.Command {
 			if len(approved) > 0 {
 				fmt.Fprintf(os.Stderr, "\nApproved %d titles for processing.\n", len(approved))
 				fmt.Fprintf(os.Stderr, "Run 'wmd process' to search and download.\n")
+
+				// Track week state as reviewed
+				for _, ev := range approved {
+					if t, err := time.Parse("2006-01-02", ev.Event.ReleaseDate); err == nil {
+						y, w := t.ISOWeek()
+						ws := &model.WeekState{
+							Year:     y,
+							Week:     w,
+							WeekDate: ev.Event.ReleaseDate,
+							Reviewed: true,
+						}
+						if err := database.UpsertWeekState(context.Background(), ws); err != nil {
+							fmt.Fprintf(os.Stderr, "Warning: tracking week state: %v\n", err)
+						}
+						break
+					}
+				}
 			}
 			return nil
 		},

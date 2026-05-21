@@ -80,13 +80,26 @@ func (d *DB) Migrate(ctx context.Context) error {
 	CREATE INDEX IF NOT EXISTS idx_release_events_title_id ON release_events(title_id);
 	CREATE INDEX IF NOT EXISTS idx_release_events_status ON release_events(status);
 	CREATE INDEX IF NOT EXISTS idx_downloads_title_id ON downloads(title_id);
+
+	CREATE TABLE IF NOT EXISTS week_state (
+		year        INTEGER NOT NULL,
+		week        INTEGER NOT NULL,
+		week_date   TEXT NOT NULL DEFAULT '',
+		discovered  INTEGER NOT NULL DEFAULT 0,
+		reviewed    INTEGER NOT NULL DEFAULT 0,
+		processed   INTEGER NOT NULL DEFAULT 0,
+		updated_at  TEXT NOT NULL DEFAULT (datetime('now')),
+		UNIQUE(year, week)
+	);
 	`
 	if _, err := d.db.ExecContext(ctx, schema); err != nil {
 		return fmt.Errorf("migrating schema: %w", err)
 	}
 
-	// Migration: add tvdb_id column if missing
+	// Migrations for existing databases
 	d.db.ExecContext(ctx, `ALTER TABLE titles ADD COLUMN tvdb_id INTEGER NOT NULL DEFAULT 0`)
+	d.db.ExecContext(ctx, `ALTER TABLE release_events ADD COLUMN iso_year INTEGER DEFAULT 0`)
+	d.db.ExecContext(ctx, `ALTER TABLE release_events ADD COLUMN iso_week INTEGER DEFAULT 0`)
 
 	return nil
 }
@@ -378,6 +391,55 @@ func (d *DB) CreateDownload(ctx context.Context, dl *model.Download) (int64, err
 		return 0, fmt.Errorf("creating download: %w", err)
 	}
 	return res.LastInsertId()
+}
+
+func (d *DB) UpsertWeekState(ctx context.Context, ws *model.WeekState) error {
+	_, err := d.db.ExecContext(ctx, `
+		INSERT INTO week_state (year, week, week_date, discovered, reviewed, processed, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
+		ON CONFLICT(year, week) DO UPDATE SET
+			discovered = MAX(week_state.discovered, excluded.discovered),
+			reviewed   = MAX(week_state.reviewed, excluded.reviewed),
+			processed  = MAX(week_state.processed, excluded.processed),
+			updated_at = datetime('now')
+	`, ws.Year, ws.Week, ws.WeekDate,
+		boolToInt(ws.Discovered), boolToInt(ws.Reviewed), boolToInt(ws.Processed))
+	return err
+}
+
+func (d *DB) GetWeekStates(ctx context.Context, limit int) ([]*model.WeekState, error) {
+	if limit <= 0 {
+		limit = 12
+	}
+	rows, err := d.db.QueryContext(ctx, `
+		SELECT year, week, week_date, discovered, reviewed, processed, updated_at
+		FROM week_state ORDER BY year DESC, week DESC LIMIT ?
+	`, limit)
+	if err != nil {
+		return nil, fmt.Errorf("querying week states: %w", err)
+	}
+	defer rows.Close()
+
+	var states []*model.WeekState
+	for rows.Next() {
+		var ws model.WeekState
+		var disc, rev, proc int
+		if err := rows.Scan(&ws.Year, &ws.Week, &ws.WeekDate, &disc, &rev, &proc, &ws.UpdatedAt); err != nil {
+			return nil, fmt.Errorf("scanning week state: %w", err)
+		}
+		ws.Discovered = disc > 0
+		ws.Reviewed = rev > 0
+		ws.Processed = proc > 0
+		states = append(states, &ws)
+	}
+	return states, rows.Err()
+}
+
+func boolToInt(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
 }
 
 func (d *DB) GetDownloadByTitleID(ctx context.Context, titleID int64) (*model.Download, error) {

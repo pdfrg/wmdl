@@ -11,6 +11,7 @@ import (
 
 	"github.com/pdfrg/wmd/internal/config"
 	"github.com/pdfrg/wmd/internal/db"
+	"github.com/pdfrg/wmd/internal/model"
 	"github.com/pdfrg/wmd/internal/process"
 )
 
@@ -51,6 +52,7 @@ and send it to the download client.`,
 
 			exec := process.NewExecutor(cfg, database)
 
+			processed := 0
 			for _, ev := range events {
 				select {
 				case <-ctx.Done():
@@ -61,6 +63,26 @@ and send it to the download client.`,
 				if err := exec.ProcessApproved(ctx, ev); err != nil {
 					log.Printf("Error processing %q: %v", ev.Title.Title, err)
 					continue
+				}
+				processed++
+			}
+
+			// Track week state as processed
+			if processed > 0 {
+				for _, ev := range events[processed-1:] {
+					if t, err := time.Parse("2006-01-02", ev.Event.ReleaseDate); err == nil {
+						y, w := t.ISOWeek()
+						ws := &model.WeekState{
+							Year:      y,
+							Week:      w,
+							WeekDate:  ev.Event.ReleaseDate,
+							Processed: true,
+						}
+						if err := database.UpsertWeekState(ctx, ws); err != nil {
+							log.Printf("Warning: tracking week state: %v", err)
+						}
+						break
+					}
 				}
 			}
 

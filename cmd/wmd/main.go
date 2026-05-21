@@ -29,6 +29,8 @@ weekly DVD/streaming releases via Prowlarr, qBittorrent, and Radarr/Sonarr.`,
 	cmd.AddCommand(newDiscoverCmd())
 	cmd.AddCommand(newReviewCmd())
 	cmd.AddCommand(newProcessCmd())
+	cmd.AddCommand(newStatusCmd())
+	cmd.AddCommand(newCatchupCmd())
 
 	if err := cmd.Execute(); err != nil {
 		log.Fatal().Err(err).Msg("command failed")

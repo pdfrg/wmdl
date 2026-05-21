@@ -70,7 +70,7 @@ func (r *Runner) Run(ctx context.Context) error {
 	var processed int
 	var mu sync.Mutex
 	var wg sync.WaitGroup
-	sem := make(chan struct{}, 3) // limit concurrency
+	sem := make(chan struct{}, 3)
 
 	for _, item := range unique {
 		wg.Add(1)
@@ -91,6 +91,14 @@ func (r *Runner) Run(ctx context.Context) error {
 
 	wg.Wait()
 	log.Printf("Processed %d/%d items", processed, len(unique))
+
+	// Track week state
+	if ws := weekStateFromItems(unique); ws != nil {
+		ws.Discovered = true
+		if err := r.db.UpsertWeekState(ctx, ws); err != nil {
+			log.Printf("Warning: tracking week state: %v", err)
+		}
+	}
 
 	// Send notification
 	if r.notify != nil && processed > 0 {
@@ -118,7 +126,6 @@ func (r *Runner) processItem(ctx context.Context, item ScrapedItem) error {
 
 	mediaType := item.MediaType
 
-	// Enrich with TMDB
 	var tmdbID int
 	var rating float64
 
@@ -131,10 +138,8 @@ func (r *Runner) processItem(ctx context.Context, item ScrapedItem) error {
 		log.Printf("  TMDB lookup failed for %q: %v", item.Title, err)
 	}
 
-	// Get RT URL
 	rtURL := r.rt.FindURL(item.Title, item.Year, string(mediaType))
 
-	// Upsert title
 	tvdbID := 0
 	if enrich != nil {
 		tvdbID = enrich.TVDBID
@@ -155,7 +160,6 @@ func (r *Runner) processItem(ctx context.Context, item ScrapedItem) error {
 		return fmt.Errorf("saving title: %w", err)
 	}
 
-	// Check for existing release events
 	existing, err := r.db.GetLatestReleaseEvent(ctx, titleID)
 	if err != nil {
 		return fmt.Errorf("checking existing events: %w", err)
@@ -166,15 +170,12 @@ func (r *Runner) processItem(ctx context.Context, item ScrapedItem) error {
 		prevStatus = existing.Status
 	}
 
-	// Determine new status
 	status := model.StatusPending
 	if existing != nil {
 		switch existing.Status {
 		case model.StatusRejected:
-			// Previously rejected — still show with note
 			status = model.StatusPending
 		case model.StatusDownloaded:
-			// Previously downloaded — pending for upgrade consideration
 			status = model.StatusPending
 		}
 	}
@@ -192,5 +193,24 @@ func (r *Runner) processItem(ctx context.Context, item ScrapedItem) error {
 		return fmt.Errorf("saving release event: %w", err)
 	}
 
+	return nil
+}
+
+func weekStateFromItems(items []ScrapedItem) *model.WeekState {
+	for _, item := range items {
+		if item.ReleaseDate == "" {
+			continue
+		}
+		t, err := time.Parse("2006-01-02", item.ReleaseDate)
+		if err != nil {
+			continue
+		}
+		y, w := t.ISOWeek()
+		return &model.WeekState{
+			Year:     y,
+			Week:     w,
+			WeekDate: item.ReleaseDate,
+		}
+	}
 	return nil
 }
