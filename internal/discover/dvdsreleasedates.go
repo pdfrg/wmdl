@@ -9,7 +9,7 @@ import (
 
 	"github.com/gocolly/colly/v2"
 
-	"github.com/mds/wmd/internal/model"
+	"github.com/pdfrg/wmd/internal/model"
 )
 
 type DVDReleaseDates struct{}

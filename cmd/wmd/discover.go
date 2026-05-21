@@ -8,9 +8,9 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/mds/wmd/internal/config"
-	"github.com/mds/wmd/internal/db"
-	"github.com/mds/wmd/internal/discover"
+	"github.com/pdfrg/wmd/internal/config"
+	"github.com/pdfrg/wmd/internal/db"
+	"github.com/pdfrg/wmd/internal/discover"
 )
 
 func newDiscoverCmd() *cobra.Command {

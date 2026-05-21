@@ -1,6 +1,6 @@
 package discover
 
-import "github.com/mds/wmd/internal/model"
+import "github.com/pdfrg/wmd/internal/model"
 
 type ReleaseProvider interface {
 	Name() string

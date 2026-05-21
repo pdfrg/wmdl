@@ -7,7 +7,7 @@ import (
 
 	_ "modernc.org/sqlite"
 
-	"github.com/mds/wmd/internal/model"
+	"github.com/pdfrg/wmd/internal/model"
 )
 
 type DB struct {

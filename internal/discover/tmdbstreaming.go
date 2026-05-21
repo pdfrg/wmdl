@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/mds/wmd/internal/model"
+	"github.com/pdfrg/wmd/internal/model"
 )
 
 type TMDBStreamingProvider struct {

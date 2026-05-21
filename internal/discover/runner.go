@@ -7,10 +7,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/mds/wmd/internal/config"
-	"github.com/mds/wmd/internal/db"
-	"github.com/mds/wmd/internal/model"
-	"github.com/mds/wmd/internal/notifier"
+	"github.com/pdfrg/wmd/internal/config"
+	"github.com/pdfrg/wmd/internal/db"
+	"github.com/pdfrg/wmd/internal/model"
+	"github.com/pdfrg/wmd/internal/notifier"
 )
 
 type Runner struct {
