@@ -3,6 +3,7 @@ package discover
 import (
 	"context"
 	"fmt"
+	"html"
 	"log"
 	"regexp"
 	"strings"
@@ -283,7 +284,8 @@ func isUpgrade(prevSource string, newReleaseType model.ReleaseType) bool {
 var parenSuffix = regexp.MustCompile(`\s*\([^)]*\)`)
 
 func cleanTitleForSearch(title string) string {
-	cleaned := parenSuffix.ReplaceAllString(title, "")
+	cleaned := html.UnescapeString(title)
+	cleaned = parenSuffix.ReplaceAllString(cleaned, "")
 	return strings.TrimSpace(cleaned)
 }
 

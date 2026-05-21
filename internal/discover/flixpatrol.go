@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/chromedp/cdproto/dom"
 	"github.com/chromedp/chromedp"
 
 	"github.com/pdfrg/wmd/internal/model"
@@ -93,14 +94,15 @@ func (f *FlixPatrolProvider) scrapePage(page int) ([]flixItem, error) {
 	allocCtx, allocCancel := chromedp.NewRemoteAllocator(context.Background(), f.debugURL)
 	defer allocCancel()
 
-	// Suppress noisy CDP events like EventAdoptedStyleSheetsModified
-	ct, cancel := chromedp.NewContext(allocCtx, chromedp.WithLogf(func(format string, args ...interface{}) {
-		msg := fmt.Sprintf(format, args...)
-		if !strings.Contains(msg, "EventAdoptedStyleSheetsModified") {
-			log.Printf(format, args...)
-		}
-	}))
+	ct, cancel := chromedp.NewContext(allocCtx)
 	defer cancel()
+
+	// Discard noisy CDP events like EventAdoptedStyleSheetsModified
+	chromedp.ListenTarget(ct, func(ev interface{}) {
+		if _, ok := ev.(*dom.EventAdoptedStyleSheetsModified); ok {
+			return
+		}
+	})
 
 	ctx, cancel := context.WithTimeout(ct, 30*time.Second)
 	defer cancel()
