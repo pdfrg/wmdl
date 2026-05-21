@@ -2,20 +2,27 @@ package discover
 
 import (
 	"fmt"
+	"net/http"
 	"regexp"
 	"strconv"
 	"strings"
 	"time"
 
-	"github.com/gocolly/colly/v2"
+	"github.com/PuerkitoBio/goquery"
 
 	"github.com/pdfrg/wmd/internal/model"
 )
 
-type DVDReleaseDates struct{}
+type DVDReleaseDates struct {
+	http *http.Client
+}
 
 func NewDVDReleaseDates() *DVDReleaseDates {
-	return &DVDReleaseDates{}
+	return &DVDReleaseDates{
+		http: &http.Client{
+			Timeout: 15 * time.Second,
+		},
+	}
 }
 
 func (d *DVDReleaseDates) Name() string {
@@ -24,57 +31,60 @@ func (d *DVDReleaseDates) Name() string {
 
 func (d *DVDReleaseDates) Scrape() ([]ScrapedItem, error) {
 	now := time.Now()
-	// Physical releases come out on Tuesdays. On Wednesday we want "this week" = today's
-	// or most recent Tuesday. The page has sections with "(this week)", "(last week)", etc.
 	targetDate := mostRecentTuesday(now)
+	targetStr := targetDate.Format("January 2, 2006")
 
-	c := colly.NewCollector(
-		colly.AllowedDomains("www.dvdsreleasedates.com", "dvdsreleasedates.com"),
-	)
+	resp, err := d.http.Get("https://www.dvdsreleasedates.com/releases/")
+	if err != nil {
+		return nil, fmt.Errorf("fetching dvdsreleasedates: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("dvdsreleasedates returned %d", resp.StatusCode)
+	}
+
+	doc, err := goquery.NewDocumentFromReader(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("parsing dvdsreleasedates: %w", err)
+	}
 
 	var items []ScrapedItem
-	var foundTarget bool
 
-	c.OnHTML("td.reldate", func(e *colly.HTMLElement) {
-		text := e.Text
-		// Check if this section is "(this week)" or matches our target
-		distance := e.ChildText("div.distance")
-		foundTarget = strings.Contains(distance, "this week") || strings.Contains(text, targetDate.Format("January 2, 2006"))
-	})
-
-	c.OnHTML("td.dvdcell", func(e *colly.HTMLElement) {
-		if !foundTarget {
-			return
+	// Find the "this week" section and extract dvdcells from its parent table
+	doc.Find("td.reldate").EachWithBreak(func(_ int, sel *goquery.Selection) bool {
+		distance := sel.Find("div.distance").Text()
+		if !strings.Contains(distance, "this week") && !strings.Contains(sel.Text(), targetStr) {
+			return true
 		}
 
-		title := strings.TrimSpace(e.ChildText("a[style*='color:#000']"))
-		if title == "" {
-			return
-		}
+		// Found the target — find dvdcell elements within the same table
+		sel.Closest("table").Find("td.dvdcell").Each(func(_ int, cell *goquery.Selection) {
+			title := strings.TrimSpace(cell.Find("a[style*='color:#000']").Text())
+			if title == "" {
+				return
+			}
 
-		imgAlt := e.ChildAttr("img.movieimg", "alt")
-		year := extractYear(imgAlt, title)
+			imgAlt, _ := cell.Find("img.movieimg").Attr("alt")
+			year := extractYear(imgAlt, title)
 
-		// Determine media type from title patterns
-		mediaType := model.MediaTypeMovie
-		lower := strings.ToLower(title)
-		if strings.Contains(lower, "season") || strings.Contains(lower, "complete") {
-			mediaType = model.MediaTypeTV
-		}
+			mediaType := model.MediaTypeMovie
+			lower := strings.ToLower(title)
+			if strings.Contains(lower, "season") || strings.Contains(lower, "complete") {
+				mediaType = model.MediaTypeTV
+			}
 
-		items = append(items, ScrapedItem{
-			Title:       cleanTitle(title),
-			Year:        year,
-			ReleaseType: model.ReleasePhysical,
-			ReleaseDate: targetDate.Format("2006-01-02"),
-			MediaType:   mediaType,
+			items = append(items, ScrapedItem{
+				Title:       cleanTitle(title),
+				Year:        year,
+				ReleaseType: model.ReleasePhysical,
+				ReleaseDate: targetDate.Format("2006-01-02"),
+				MediaType:   mediaType,
+			})
 		})
-	})
 
-	url := fmt.Sprintf("https://www.dvdsreleasedates.com/releases/")
-	if err := c.Visit(url); err != nil {
-		return nil, fmt.Errorf("scraping dvdsreleasedates: %w", err)
-	}
+		return false
+	})
 
 	return items, nil
 }
