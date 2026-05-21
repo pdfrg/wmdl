@@ -285,11 +285,22 @@ func isUpgrade(prevSource string, newReleaseType model.ReleaseType) bool {
 	return newReleaseType == model.ReleasePhysical
 }
 
-var parenSuffix = regexp.MustCompile(`\s*\([^)]*\)`)
+var (
+	parenSuffix = regexp.MustCompile(`\s*\([^)]*\)`)
+	trailingFmt = regexp.MustCompile(`(?i)\s+(season\s+\d+|dvd|blu-ray|4k)\s*$`)
+)
 
 func cleanTitleForSearch(title string) string {
 	cleaned := html.UnescapeString(title)
 	cleaned = parenSuffix.ReplaceAllString(cleaned, "")
+	// Strip colon-suffixes that look like season descriptors
+	if parts := strings.SplitN(cleaned, ":", 2); len(parts) == 2 {
+		suffix := strings.ToLower(strings.TrimSpace(parts[1]))
+		if strings.Contains(suffix, "season") || strings.Contains(suffix, "complete") {
+			cleaned = parts[0]
+		}
+	}
+	cleaned = trailingFmt.ReplaceAllString(cleaned, "")
 	return strings.TrimSpace(cleaned)
 }
 
