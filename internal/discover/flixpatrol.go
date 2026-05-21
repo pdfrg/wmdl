@@ -79,11 +79,13 @@ func (f *FlixPatrolProvider) Scrape() ([]ScrapedItem, error) {
 	for _, item := range keep {
 		releaseDate := fmt.Sprintf("2026-%02d-%02d", 3, parseDay(item.Date))
 		results = append(results, ScrapedItem{
-			Title:       cleanTitle(item.Title),
-			Year:        item.Year,
-			MediaType:   item.MediaType,
-			ReleaseType: model.ReleaseStreaming,
-			ReleaseDate: releaseDate,
+			Title:        cleanTitle(item.Title),
+			Year:         item.Year,
+			MediaType:    item.MediaType,
+			ReleaseType:  model.ReleaseStreaming,
+			ReleaseDate:  releaseDate,
+			ImdbRating:   item.IMDbRating,
+			YoutubeViews: item.YoutubeView,
 		})
 	}
 

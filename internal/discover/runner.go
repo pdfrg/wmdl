@@ -198,6 +198,7 @@ func (r *Runner) processItem(ctx context.Context, item ScrapedItem) error {
 		RTCriticsScore:  rtCritics,
 		RTAudienceScore: rtAudience,
 		TmdbRating:      rating,
+		YoutubeViews:    item.YoutubeViews,
 		Overview:        overview,
 		Genres:          genres,
 		Runtime:         runtime,
@@ -211,6 +212,11 @@ func (r *Runner) processItem(ctx context.Context, item ScrapedItem) error {
 	existing, err := r.db.GetLatestReleaseEvent(ctx, titleID)
 	if err != nil {
 		return fmt.Errorf("checking existing events: %w", err)
+	}
+
+	// Skip if already pending — don't stack duplicate events
+	if existing != nil && existing.Status == model.StatusPending {
+		return nil
 	}
 
 	var prevStatus model.ReleaseStatus

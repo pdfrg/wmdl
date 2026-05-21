@@ -15,4 +15,5 @@ type ScrapedItem struct {
 	ReleaseDate string
 	ImdbID      string
 	ImdbRating  float64
+	YoutubeViews int64
 }

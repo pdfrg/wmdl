@@ -135,7 +135,9 @@ func (s *Selector) View() tea.View {
 	)
 	b.WriteString(footer)
 
-	return tea.NewView(b.String())
+	v := tea.NewView(b.String())
+	v.AltScreen = true
+	return v
 }
 
 var (
