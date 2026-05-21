@@ -153,6 +153,10 @@ prowlarr:
   url: "http://prowlarr.local:9696"
   api_key: ""
 
+tmdb:
+  api_key: "your_tmdb_api_key"       # Get at https://www.themoviedb.org/settings/api
+  access_token: ""                     # Alternative: use v4 bearer token instead of api_key
+
 downloader:
   type: "qbittorrent"  # qbittorrent, transmission, deluge
   qbittorrent:

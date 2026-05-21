@@ -33,6 +33,10 @@ func NewRunner(cfg *config.Config, database *db.DB) *Runner {
 }
 
 func (r *Runner) Run(ctx context.Context) error {
+	if r.cfg.TMDB.APIKey == "" && r.cfg.TMDB.AccessToken == "" {
+		return fmt.Errorf("TMDB not configured: set tmdb.api_key or tmdb.access_token in config\n  Get a free API key at https://www.themoviedb.org/settings/api")
+	}
+
 	providers := []ReleaseProvider{
 		NewDVDReleaseDates(),
 		NewTMDBStreamingProvider(r.tmdb),
