@@ -5,3 +5,6 @@
 *.out
 *.test
 vendor/
+
+# notes
+*.txt

@@ -7,15 +7,16 @@ import (
 )
 
 type Config struct {
-	Notifier         NotifierConfig  `mapstructure:"notifier"`
-	Browser          BrowserConfig   `mapstructure:"browser"`
-	Prowlarr         ProwlarrConfig  `mapstructure:"prowlarr"`
+	Notifier         NotifierConfig   `mapstructure:"notifier"`
+	Browser          BrowserConfig    `mapstructure:"browser"`
+	Prowlarr         ProwlarrConfig   `mapstructure:"prowlarr"`
+	TMDB             TMDBConfig       `mapstructure:"tmdb"`
 	Downloader       DownloaderConfig `mapstructure:"downloader"`
-	Library          LibraryConfig   `mapstructure:"library"`
-	Quality          QualityConfig   `mapstructure:"quality"`
-	ShowTopN         int             `mapstructure:"show_top_n"`
-	MinSeeders       int             `mapstructure:"min_seeders"`
-	PreferredGroups  []string        `mapstructure:"preferred_release_groups"`
+	Library          LibraryConfig    `mapstructure:"library"`
+	Quality          QualityConfig    `mapstructure:"quality"`
+	ShowTopN         int              `mapstructure:"show_top_n"`
+	MinSeeders       int              `mapstructure:"min_seeders"`
+	PreferredGroups  []string         `mapstructure:"preferred_release_groups"`
 }
 
 type NotifierConfig struct {
@@ -31,6 +32,11 @@ type BrowserConfig struct {
 type ProwlarrConfig struct {
 	URL    string `mapstructure:"url"`
 	APIKey string `mapstructure:"api_key"`
+}
+
+type TMDBConfig struct {
+	APIKey      string `mapstructure:"api_key"`
+	AccessToken string `mapstructure:"access_token"`
 }
 
 type DownloaderConfig struct {

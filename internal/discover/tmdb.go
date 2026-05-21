@@ -1,0 +1,292 @@
+package discover
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/url"
+	"time"
+)
+
+type TMDBClient struct {
+	apiKey      string
+	accessToken string
+	http        *http.Client
+}
+
+func NewTMDBClient(apiKey, accessToken string) *TMDBClient {
+	return &TMDBClient{
+		apiKey:      apiKey,
+		accessToken: accessToken,
+		http: &http.Client{
+			Timeout: 10 * time.Second,
+		},
+	}
+}
+
+type TMDBMultiResult struct {
+	Page    int `json:"page"`
+	Results []struct {
+		ID            int      `json:"id"`
+		MediaType     string   `json:"media_type"` // "movie" or "tv"
+		Title         string   `json:"title,omitempty"`
+		Name          string   `json:"name,omitempty"`
+		ReleaseDate   string   `json:"release_date,omitempty"`
+		FirstAirDate  string   `json:"first_air_date,omitempty"`
+		VoteAverage   float64  `json:"vote_average"`
+		GenreIDs      []int    `json:"genre_ids"`
+		OriginalTitle string   `json:"original_title,omitempty"`
+		OriginalName  string   `json:"original_name,omitempty"`
+		Overview      string   `json:"overview"`
+		PosterPath    string   `json:"poster_path"`
+	} `json:"results"`
+}
+
+type TMDBExternalIDs struct {
+	IMDbID     string `json:"imdb_id"`
+	TVDBID     int    `json:"tvdb_id,omitempty"`
+	FacebookID string `json:"facebook_id,omitempty"`
+}
+
+type TMDBTVExternalIDs struct {
+	IMDbID     string `json:"imdb_id"`
+	TVDBID     int    `json:"tvdb_id,omitempty"`
+}
+
+type TMDBEnrichment struct {
+	TMDBID    int
+	MediaType string // "movie" or "tv"
+	Title     string
+	Year      int
+	Rating    float64
+	IMDbID    string
+	TVDBID    int
+}
+
+type TMDBDiscoverResult struct {
+	Page    int `json:"page"`
+	Results []struct {
+		ID           int     `json:"id"`
+		Title        string  `json:"title,omitempty"`
+		Name         string  `json:"name,omitempty"`
+		ReleaseDate  string  `json:"release_date,omitempty"`
+		FirstAirDate string  `json:"first_air_date,omitempty"`
+		VoteAverage  float64 `json:"vote_average"`
+		Overview     string  `json:"overview"`
+		GenreIDs     []int   `json:"genre_ids"`
+	} `json:"results"`
+	TotalPages int `json:"total_pages"`
+}
+
+type StreamingItem struct {
+	TMDBID    int
+	Title     string
+	Year      int
+	MediaType string
+	Rating    float64
+	Date      string
+}
+
+func (c *TMDBClient) DiscoverStreamingMovies(ctx context.Context, startDate, endDate string) ([]StreamingItem, error) {
+	u, _ := url.Parse(tmdbBase + "/discover/movie")
+	q := u.Query()
+	q.Set("primary_release_date.gte", startDate)
+	q.Set("primary_release_date.lte", endDate)
+	q.Set("with_watch_monetization_types", "flatrate|free|ads")
+	q.Set("watch_region", "US")
+	q.Set("sort_by", "primary_release_date.desc")
+	q.Set("vote_count.gte", "20")
+	u.RawQuery = q.Encode()
+
+	return c.discoverStream(ctx, u, "movie")
+}
+
+func (c *TMDBClient) DiscoverStreamingTV(ctx context.Context, startDate, endDate string) ([]StreamingItem, error) {
+	u, _ := url.Parse(tmdbBase + "/discover/tv")
+	q := u.Query()
+	q.Set("first_air_date.gte", startDate)
+	q.Set("first_air_date.lte", endDate)
+	q.Set("with_watch_monetization_types", "flatrate|free|ads")
+	q.Set("watch_region", "US")
+	q.Set("sort_by", "first_air_date.desc")
+	q.Set("vote_count.gte", "20")
+	u.RawQuery = q.Encode()
+
+	return c.discoverStream(ctx, u, "tv")
+}
+
+func (c *TMDBClient) discoverStream(ctx context.Context, u *url.URL, mediaType string) ([]StreamingItem, error) {
+	var items []StreamingItem
+
+	for page := 1; page <= 3; page++ {
+		q := u.Query()
+		q.Set("page", fmt.Sprintf("%d", page))
+		u.RawQuery = q.Encode()
+
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
+		if err != nil {
+			return nil, err
+		}
+		c.setAuth(req)
+
+		resp, err := c.http.Do(req)
+		if err != nil {
+			return nil, err
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			return nil, fmt.Errorf("TMDB discover returned %d", resp.StatusCode)
+		}
+
+		var result TMDBDiscoverResult
+		if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+			return nil, err
+		}
+
+		for _, r := range result.Results {
+			title := r.Title
+			if title == "" {
+				title = r.Name
+			}
+			date := r.ReleaseDate
+			if date == "" {
+				date = r.FirstAirDate
+			}
+			year := 0
+			if len(date) >= 4 {
+				fmt.Sscanf(date[:4], "%d", &year)
+			}
+
+			items = append(items, StreamingItem{
+				TMDBID:    r.ID,
+				Title:     title,
+				Year:      year,
+				MediaType: mediaType,
+				Rating:    r.VoteAverage,
+				Date:      date,
+			})
+		}
+
+		if page >= result.TotalPages {
+			break
+		}
+	}
+
+	return items, nil
+}
+
+const tmdbBase = "https://api.themoviedb.org/3"
+
+func (c *TMDBClient) SearchMulti(ctx context.Context, query string, year int) (*TMDBMultiResult, error) {
+	u, _ := url.Parse(tmdbBase + "/search/multi")
+	q := u.Query()
+	q.Set("query", query)
+	if year > 0 {
+		q.Set("year", fmt.Sprintf("%d", year))
+	}
+	u.RawQuery = q.Encode()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
+	if err != nil {
+		return nil, fmt.Errorf("creating request: %w", err)
+	}
+	c.setAuth(req)
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("searching TMDB: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("TMDB search returned %d", resp.StatusCode)
+	}
+
+	var result TMDBMultiResult
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decoding TMDB response: %w", err)
+	}
+	return &result, nil
+}
+
+func (c *TMDBClient) Enrich(ctx context.Context, query string, year int) (*TMDBEnrichment, error) {
+	res, err := c.SearchMulti(ctx, query, year)
+	if err != nil {
+		return nil, err
+	}
+
+	// Filter to movie/tv results and find best match
+	for _, r := range res.Results {
+		if r.MediaType != "movie" && r.MediaType != "tv" {
+			continue
+		}
+		title := r.Title
+		if title == "" {
+			title = r.Name
+		}
+		releaseDate := r.ReleaseDate
+		if releaseDate == "" {
+			releaseDate = r.FirstAirDate
+		}
+		releaseYear := 0
+		if len(releaseDate) >= 4 {
+			fmt.Sscanf(releaseDate[:4], "%d", &releaseYear)
+		}
+
+		enrich := &TMDBEnrichment{
+			TMDBID:    r.ID,
+			MediaType: r.MediaType,
+			Title:     title,
+			Year:      releaseYear,
+			Rating:    r.VoteAverage,
+		}
+
+		// Fetch external IDs for IMDb/TVDB
+		extIDs, err := c.getExternalIDs(ctx, r.ID, r.MediaType)
+		if err == nil {
+			enrich.IMDbID = extIDs.IMDbID
+			enrich.TVDBID = extIDs.TVDBID
+		}
+
+		return enrich, nil
+	}
+
+	return nil, fmt.Errorf("no TMDB results for %q (%d)", query, year)
+}
+
+func (c *TMDBClient) getExternalIDs(ctx context.Context, tmdbID int, mediaType string) (*TMDBExternalIDs, error) {
+	u := fmt.Sprintf("%s/%s/%d/external_ids", tmdbBase, mediaType, tmdbID)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	if err != nil {
+		return nil, err
+	}
+	c.setAuth(req)
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("external_ids returned %d", resp.StatusCode)
+	}
+
+	var ext TMDBExternalIDs
+	if err := json.NewDecoder(resp.Body).Decode(&ext); err != nil {
+		return nil, err
+	}
+	return &ext, nil
+}
+
+func (c *TMDBClient) setAuth(req *http.Request) {
+	if c.accessToken != "" {
+		req.Header.Set("Authorization", "Bearer "+c.accessToken)
+	} else if c.apiKey != "" {
+		q := req.URL.Query()
+		q.Set("api_key", c.apiKey)
+		req.URL.RawQuery = q.Encode()
+	}
+}

@@ -1,7 +1,5 @@
 package model
 
-import "time"
-
 type MediaType string
 
 const (
@@ -45,7 +43,7 @@ type Title struct {
 	RTCriticsScore  float64
 	RTAudienceScore float64
 	TmdbRating      float64
-	CreatedAt       time.Time
+	CreatedAt       string
 }
 
 type ReleaseEvent struct {
@@ -56,7 +54,7 @@ type ReleaseEvent struct {
 	ReleaseDate    string
 	Status         ReleaseStatus
 	PreviousStatus ReleaseStatus
-	CreatedAt      time.Time
+	CreatedAt      string
 }
 
 type Download struct {
@@ -72,7 +70,7 @@ type Download struct {
 	ClientTorrentID string
 	RadarrID        int64
 	SonarrID        int64
-	CreatedAt       time.Time
+	CreatedAt       string
 }
 
 type ParsedRelease struct {
@@ -84,7 +82,7 @@ type ParsedRelease struct {
 	ReleaseGroup string
 	Seeders      int
 	SizeBytes    int64
-	PublishedAt  time.Time
+	PublishedAt  string
 	DownloadURL  string
 	MagnetURL    string
 	InfoHash     string

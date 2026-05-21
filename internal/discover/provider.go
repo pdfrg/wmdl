@@ -10,6 +10,7 @@ type ReleaseProvider interface {
 type ScrapedItem struct {
 	Title       string
 	Year        int
+	MediaType   model.MediaType
 	ReleaseType model.ReleaseType
 	ReleaseDate string
 }
