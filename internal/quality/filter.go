@@ -16,6 +16,13 @@ type ParsedRelease struct {
 	Seeders      int
 	SizeBytes    int64
 	Score        int
+
+	// Prowlarr-specific
+	IndexerID  int
+	Guid       string
+	DownloadURL string
+	MagnetURL   string
+	InfoHash    string
 }
 
 type QualityPrefs struct {
