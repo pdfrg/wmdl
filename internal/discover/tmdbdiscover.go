@@ -29,7 +29,7 @@ func (t *TMDBDiscoverProvider) Scrape() ([]ScrapedItem, error) {
 	physicalTue := mostRecentTuesday(now)
 	streamTue := physicalTue.AddDate(0, -2, 0)
 	streamStart := streamTue.AddDate(0, 0, -6) // previous Wednesday
-	streamEnd := streamTue                       // this Tuesday
+	streamEnd := streamTue                     // this Tuesday
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()

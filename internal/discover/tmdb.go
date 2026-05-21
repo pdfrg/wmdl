@@ -341,6 +341,93 @@ func (c *TMDBClient) getExternalIDs(ctx context.Context, tmdbID int, mediaType s
 	return &ext, nil
 }
 
+type TMDBContentRatings struct {
+	Results []struct {
+		Iso3166_1 string `json:"iso_3166_1"`
+		Rating    string `json:"rating"`
+	} `json:"results"`
+}
+
+func (c *TMDBClient) GetTVRating(ctx context.Context, tmdbID int) string {
+	path := fmt.Sprintf("%s/tv/%d/content_ratings", tmdbBase, tmdbID)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, path, nil)
+	if err != nil {
+		return ""
+	}
+	c.setAuth(req)
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return ""
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return ""
+	}
+
+	var result TMDBContentRatings
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return ""
+	}
+
+	for _, r := range result.Results {
+		if r.Iso3166_1 == "US" && r.Rating != "" {
+			return r.Rating
+		}
+	}
+	return ""
+}
+
+type TMDBReleaseDateResult struct {
+	Results []TMDBReleaseDateEntry `json:"results"`
+}
+
+type TMDBReleaseDateEntry struct {
+	Iso3166_1    string            `json:"iso_3166_1"`
+	ReleaseDates []TMDBReleaseDate `json:"release_dates"`
+}
+
+type TMDBReleaseDate struct {
+	Certification string `json:"certification"`
+	Type          int    `json:"type"`
+}
+
+func (c *TMDBClient) GetUSCertification(ctx context.Context, tmdbID int, mediaType string) string {
+	path := fmt.Sprintf("%s/%s/%d/release_dates", tmdbBase, mediaType, tmdbID)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, path, nil)
+	if err != nil {
+		return ""
+	}
+	c.setAuth(req)
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return ""
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return ""
+	}
+
+	var result TMDBReleaseDateResult
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return ""
+	}
+
+	for _, entry := range result.Results {
+		if entry.Iso3166_1 == "US" {
+			for _, rd := range entry.ReleaseDates {
+				if rd.Certification != "" {
+					return rd.Certification
+				}
+			}
+		}
+	}
+	return ""
+}
+
 func (c *TMDBClient) setAuth(req *http.Request) {
 	if c.accessToken != "" {
 		req.Header.Set("Authorization", "Bearer "+c.accessToken)

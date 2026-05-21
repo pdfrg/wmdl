@@ -110,11 +110,9 @@ func (d *DVDReleaseDates) Scrape() ([]ScrapedItem, error) {
 }
 
 func mostRecentTuesday(t time.Time) time.Time {
-	daysSinceTuesday := int(t.Weekday() - time.Tuesday)
-	if daysSinceTuesday < 0 {
-		daysSinceTuesday += 7
-	}
-	return t.AddDate(0, 0, -daysSinceTuesday)
+	offset := (int(t.Weekday()) - 2 + 7) % 7 // Tuesday = 2
+	t2 := t.AddDate(0, 0, -offset)
+	return time.Date(t2.Year(), t2.Month(), t2.Day(), 0, 0, 0, 0, time.UTC)
 }
 
 var yearPattern = regexp.MustCompile(`(\d{4})`)

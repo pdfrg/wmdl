@@ -8,12 +8,14 @@ type ReleaseProvider interface {
 }
 
 type ScrapedItem struct {
-	Title       string
-	Year        int
-	MediaType   model.MediaType
-	ReleaseType model.ReleaseType
-	ReleaseDate string
-	ImdbID      string
-	ImdbRating  float64
-	YoutubeViews int64
+	Title           string
+	Year            int
+	MediaType       model.MediaType
+	ReleaseType     model.ReleaseType
+	ReleaseDate     string
+	ImdbID          string
+	ImdbRating      float64
+	RTCriticsScore  float64
+	RTAudienceScore float64
+	YoutubeViews    int64
 }

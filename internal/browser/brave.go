@@ -3,10 +3,55 @@ package browser
 import (
 	"context"
 	"fmt"
+	"net"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"time"
 
 	"github.com/chromedp/chromedp"
 )
+
+func EnsureRunning(debugPort int, profile string) (func() error, error) {
+	addr := fmt.Sprintf("127.0.0.1:%d", debugPort)
+	conn, err := net.DialTimeout("tcp", addr, 500*time.Millisecond)
+	if err == nil {
+		conn.Close()
+		return nil, nil
+	}
+
+	userDataDir := filepath.Join(os.ExpandEnv("$HOME/.local/share/wmd/brave"), profile)
+	if err := os.MkdirAll(userDataDir, 0755); err != nil {
+		return nil, fmt.Errorf("creating brave data dir: %w", err)
+	}
+
+	cmd := exec.Command("brave",
+		fmt.Sprintf("--remote-debugging-port=%d", debugPort),
+		fmt.Sprintf("--user-data-dir=%s", userDataDir),
+		"--no-first-run",
+		"--new-window",
+		"about:blank",
+	)
+	cmd.Stdout = os.Stderr
+	cmd.Stderr = os.Stderr
+
+	if err := cmd.Start(); err != nil {
+		return nil, fmt.Errorf("launching brave: %w", err)
+	}
+
+	// Wait for it to start listening
+	for i := 0; i < 30; i++ {
+		conn, err := net.DialTimeout("tcp", addr, 500*time.Millisecond)
+		if err == nil {
+			conn.Close()
+			return cmd.Process.Kill, nil
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+
+	cmd.Process.Kill()
+	return nil, fmt.Errorf("brave started but not listening on %s within 15s", addr)
+}
 
 func ListTabs(ctx context.Context, debugURL string) ([]Tab, error) {
 	allocCtx, allocCancel := chromedp.NewRemoteAllocator(ctx, debugURL)

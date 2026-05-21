@@ -10,6 +10,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/chromedp/chromedp"
+
+	"github.com/pdfrg/wmd/internal/browser"
 	"github.com/pdfrg/wmd/internal/config"
 	"github.com/pdfrg/wmd/internal/db"
 	"github.com/pdfrg/wmd/internal/model"
@@ -17,20 +20,26 @@ import (
 )
 
 type Runner struct {
-	cfg    *config.Config
-	db     *db.DB
-	tmdb   *TMDBClient
-	rt     *RTFinder
-	notify *notifier.Gotify
+	cfg         *config.Config
+	db          *db.DB
+	tmdb        *TMDBClient
+	rt          *RTFinder
+	imdb        *IMDbAPIClient
+	notify      *notifier.Gotify
+	debugURL    string
+	allocCtx    context.Context
+	allocCancel context.CancelFunc
 }
 
 func NewRunner(cfg *config.Config, database *db.DB) *Runner {
 	return &Runner{
-		cfg:    cfg,
-		db:     database,
-		tmdb:   NewTMDBClient(cfg.TMDB.APIKey, cfg.TMDB.AccessToken),
-		rt:     NewRTFinder(),
-		notify: notifier.NewGotify(cfg.Notifier.GotifyURL, cfg.Notifier.GotifyToken),
+		cfg:      cfg,
+		db:       database,
+		tmdb:     NewTMDBClient(cfg.TMDB.APIKey, cfg.TMDB.AccessToken),
+		rt:       NewRTFinder(),
+		imdb:     NewIMDbAPIClient(),
+		notify:   notifier.NewGotify(cfg.Notifier.GotifyURL, cfg.Notifier.GotifyToken),
+		debugURL: fmt.Sprintf("http://127.0.0.1:%d", cfg.Browser.DebugPort),
 	}
 }
 
@@ -39,14 +48,29 @@ func (r *Runner) Run(ctx context.Context) error {
 		return fmt.Errorf("TMDB not configured: set tmdb.api_key or tmdb.access_token in config\n  Get a free API key at https://www.themoviedb.org/settings/api")
 	}
 
+	// Auto-launch Brave if not already running on the debug port
+	killBrave, err := browser.EnsureRunning(r.cfg.Browser.DebugPort, r.cfg.Browser.Profile)
+	if err != nil {
+		log.Printf("Warning: browser unavailable (some features disabled): %v", err)
+	} else if killBrave != nil {
+		log.Printf("Launched Brave on port %d (profile: %s)", r.cfg.Browser.DebugPort, r.cfg.Browser.Profile)
+	} else {
+		log.Printf("Connected to Brave on port %d", r.cfg.Browser.DebugPort)
+	}
+
+	// Shared chromedp allocator for all RT page scraping (single WebSocket connection)
+	r.allocCtx, r.allocCancel = chromedp.NewRemoteAllocator(ctx, r.debugURL)
+	if r.allocCancel != nil {
+		defer r.allocCancel()
+	}
+
 	providers := []ReleaseProvider{
 		NewDVDReleaseDates(),
 		NewTMDBDiscoverProvider(r.tmdb),
 	}
 
 	// FlixPatrol via chromedp (best-effort, requires Brave running on debug port)
-	debugURL := fmt.Sprintf("http://127.0.0.1:%d", r.cfg.Browser.DebugPort)
-	fp := NewFlixPatrolProvider(debugURL)
+	fp := NewFlixPatrolProvider(r.debugURL)
 	providers = append(providers, fp)
 
 	var allItems []ScrapedItem
@@ -121,7 +145,11 @@ func (r *Runner) Run(ctx context.Context) error {
 				msg += fmt.Sprintf("\n+ %d more", processed-count)
 				break
 			}
-			msg += fmt.Sprintf("\n- %s (%d)", item.Title, item.Year)
+			if item.Year > 0 {
+				msg += fmt.Sprintf("\n- %s (%d)", item.Title, item.Year)
+			} else {
+				msg += fmt.Sprintf("\n- %s", item.Title)
+			}
 			count++
 		}
 		if err := r.notify.Send("wmd: New Releases", msg, 5); err != nil {
@@ -133,57 +161,105 @@ func (r *Runner) Run(ctx context.Context) error {
 }
 
 func (r *Runner) processItem(ctx context.Context, item ScrapedItem) error {
-	// Clean title: remove parenthetical suffixes like "(season 6)", "(weekly, ...)"
 	searchTitle := cleanTitleForSearch(item.Title)
+	log.Printf("Processing %q (%d)...", item.Title, item.Year)
 
-	// API calls get their own timeout
+	// Phase 1: TMDB enrichment (gets us tmdb_id, imdb_id, rating, metadata)
 	apiCtx, apiCancel := context.WithTimeout(ctx, 20*time.Second)
 
 	mediaType := item.MediaType
 	var tmdbID int
 	var rating float64
 	var enrich *TMDBEnrichment
+	var imdbID string
 
 	enrich, err := r.tmdb.Enrich(apiCtx, searchTitle, item.Year)
 	if err == nil {
 		mediaType = model.MediaType(enrich.MediaType)
 		tmdbID = enrich.TMDBID
 		rating = enrich.Rating
+		imdbID = enrich.IMDbID
+		log.Printf("  TMDB: ID=%d rating=%.1f", tmdbID, rating)
 	} else {
-		log.Printf("  TMDB lookup failed for %q: %v", item.Title, err)
+		log.Printf("  TMDB lookup failed: %v", err)
+		imdbID = item.ImdbID
 	}
 
-	rtURL := r.rt.FindURL(searchTitle, item.Year, string(mediaType))
-	apiCancel()
+	// Use TMDB year when scraper couldn't determine it
+	if enrich != nil && enrich.Year > 0 {
+		item.Year = enrich.Year
+	}
 
-	// DB operations use parent context — no aggressive timeout
+	// Phase 2: IMDbAPI ratings (IMDb score + Metacritic) using imdb_id
+	var imdbRating float64
+	var metacriticScore float64
+	if imdbID != "" {
+		ratings, err := r.imdb.FetchRatings(apiCtx, imdbID)
+		if err == nil && ratings != nil {
+			imdbRating = ratings.ImdbRating
+			metacriticScore = ratings.MetacriticScore
+			log.Printf("  IMDbAPI: rating=%.1f MC=%.0f", imdbRating, metacriticScore)
+		} else if err != nil {
+			log.Printf("  IMDbAPI failed: %v", err)
+		}
+	}
+	// Fall back to scraped IMDb rating if API returned nothing
+	if imdbRating == 0 && item.ImdbRating > 0 {
+		imdbRating = item.ImdbRating
+		log.Printf("  IMDb: using scraped rating %.1f", imdbRating)
+	}
 
-	// Best-effort RT rating scrape
-	rtCritics, rtAudience := 0.0, 0.0
-	if rtURL != "" {
-		if ratings, err := ScrapeRTRatings(ctx, rtURL); err == nil {
-			rtCritics = ratings.CriticsScore
-			rtAudience = ratings.AudienceScore
+	// Phase 3: US content rating from TMDB
+	var usRating string
+	if tmdbID > 0 {
+		if mediaType == model.MediaTypeTV {
+			usRating = r.tmdb.GetTVRating(apiCtx, tmdbID)
+		} else {
+			usRating = r.tmdb.GetUSCertification(apiCtx, tmdbID, string(mediaType))
+		}
+		if usRating != "" {
+			log.Printf("  US rating: %s", usRating)
 		}
 	}
 
-	tvdbID := 0
-	if enrich != nil {
-		tvdbID = enrich.TVDBID
+	// Use TMDB title for RT URL slug when available (cleaner than scraped title)
+	rtTitle := searchTitle
+	if enrich != nil && enrich.Title != "" {
+		rtTitle = enrich.Title
+	}
+	rtURL := r.rt.FindURL(rtTitle, item.Year, string(mediaType))
+	apiCancel()
+
+	// Phase 4: Best-effort RT rating scrape via chromedp
+	rtCritics, rtAudience := 0.0, 0.0
+	if rtURL != "" {
+		log.Printf("  RT URL: %s", rtURL)
+		ratings := ScrapeRTRatings(ctx, r.allocCtx, rtURL)
+		rtCritics = ratings.CriticsScore
+		rtAudience = ratings.AudienceScore
+		if rtCritics > 0 || rtAudience > 0 {
+			log.Printf("  RT scrape: critics=%.0f%% audience=%.0f%%", rtCritics, rtAudience)
+		} else {
+			log.Printf("  RT scrape: no scores found")
+		}
+	} else {
+		log.Printf("  RT URL: not found")
+	}
+	// Fall back to FlixPatrol RT scores if chromedp returned nothing
+	if rtCritics == 0 && item.RTCriticsScore > 0 {
+		rtCritics = item.RTCriticsScore
+		log.Printf("  RT: using FlixPatrol critics score %.0f%%", rtCritics)
 	}
 
 	overview := ""
 	genres := ""
 	runtime := 0
-	imdbID := item.ImdbID
-	imdbRating := item.ImdbRating
+	tvdbID := 0
 	if enrich != nil {
+		tvdbID = enrich.TVDBID
 		overview = enrich.Overview
 		genres = enrich.Genres
 		runtime = enrich.Runtime
-		if imdbID == "" {
-			imdbID = enrich.IMDbID
-		}
 	}
 
 	title := &model.Title{
@@ -194,10 +270,12 @@ func (r *Runner) processItem(ctx context.Context, item ScrapedItem) error {
 		MediaType:       mediaType,
 		ImdbID:          imdbID,
 		ImdbRating:      imdbRating,
+		MetacriticScore: metacriticScore,
 		RTURL:           rtURL,
 		RTCriticsScore:  rtCritics,
 		RTAudienceScore: rtAudience,
 		TmdbRating:      rating,
+		USRating:        usRating,
 		YoutubeViews:    item.YoutubeViews,
 		Overview:        overview,
 		Genres:          genres,

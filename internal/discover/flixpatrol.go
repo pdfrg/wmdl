@@ -1,26 +1,27 @@
 package discover
 
 import (
-	"context"
 	"fmt"
+	"html"
+	"io"
 	"log"
+	"net/http"
 	"regexp"
 	"strconv"
 	"strings"
 	"time"
 
-	"github.com/chromedp/cdproto/dom"
-	"github.com/chromedp/chromedp"
-
 	"github.com/pdfrg/wmd/internal/model"
 )
 
 type FlixPatrolProvider struct {
-	debugURL string
+	http *http.Client
 }
 
-func NewFlixPatrolProvider(debugURL string) *FlixPatrolProvider {
-	return &FlixPatrolProvider{debugURL: debugURL}
+func NewFlixPatrolProvider(_ string) *FlixPatrolProvider {
+	return &FlixPatrolProvider{
+		http: &http.Client{Timeout: 10 * time.Second},
+	}
 }
 
 func (f *FlixPatrolProvider) Name() string {
@@ -28,62 +29,83 @@ func (f *FlixPatrolProvider) Name() string {
 }
 
 type flixItem struct {
-	Date        string // "Mar 20"
+	Date        string
 	Title       string
 	Year        int
 	MediaType   model.MediaType
-	Country     string
-	Platform    string
 	IMDbRating  float64
-	RTScores    float64 // percentage 0-100
 	YoutubeView int64
-	Ranking     int
 }
 
-func (f *FlixPatrolProvider) Scrape() ([]ScrapedItem, error) {
-	// Scan pages 15-17 to find the target date window
-	// The date range we want is approximately March 13-19
-	var allItems []flixItem
+var (
+	flixDatePat    = regexp.MustCompile(`text-sm sm:text-base">([^<]+)`)
+	flixTitlePat   = regexp.MustCompile(`group-hover:underline">\s*([^<]+?)\s*</div>`)
+	flixIMDbPat    = regexp.MustCompile(`(\d+\.\d+)/10`)
+	flixYTViewsPat = regexp.MustCompile(`title="([\d,]+) views"`)
+	flixTVPat      = regexp.MustCompile(`TV Show`)
+	flixMoviePat   = regexp.MustCompile(`Movie`)
+	flixTitleYear  = regexp.MustCompile(`\((\d{4})\)`)
+)
 
-	for page := 15; page <= 17; page++ {
-		items, err := f.scrapePage(page)
+func (f *FlixPatrolProvider) Scrape() ([]ScrapedItem, error) {
+	now := time.Now()
+	physicalTue := mostRecentTuesday(now)
+	streamTue := truncateToDay(physicalTue.AddDate(0, -2, 0))
+	streamStart := truncateToDay(streamTue.AddDate(0, 0, -6))
+
+	startStr := streamStart.Format("Jan 2")
+	endStr := streamTue.Format("Jan 2")
+	log.Printf("  FlixPatrol target: %s – %s", startStr, endStr)
+
+	var allItems []flixItem
+pageLoop:
+	for page := 1; page <= 30; page++ {
+		items, err := f.fetchPage(page, streamStart, streamTue)
 		if err != nil {
 			log.Printf("  FlixPatrol page %d: %v", page, err)
 			continue
 		}
+		if len(items) == 0 {
+			break
+		}
 		allItems = append(allItems, items...)
+
+		// Pages go newest-to-oldest. Once we hit any pre-window date,
+		// remaining pages will all be older — stop.
+		for _, it := range items {
+			d := parseFlixDate(it.Date)
+			if !d.IsZero() && d.Before(streamStart) {
+				log.Printf("  FlixPatrol: found pre-window date %s on page %d, stopping", it.Date, page)
+				break pageLoop
+			}
+		}
 	}
 
-	// Filter by date range: March 13-19
+	// Filter to the target date range
 	var filtered []flixItem
 	for _, item := range allItems {
-		month := parseMonth(item.Date)
-		day := parseDay(item.Date)
-		if month == 3 && day >= 13 && day <= 19 {
-			filtered = append(filtered, item)
+		d := parseFlixDate(item.Date)
+		if !d.IsZero() && (d.Before(streamStart) || d.After(streamTue)) {
+			continue
 		}
+		filtered = append(filtered, item)
 	}
 
-	// Keep items that have at least one rating signal present (even low scores).
-	// Entries with 0/3 metrics (no IMDb, no RT, no YouTube) are fringe content.
-	var keep []flixItem
-	for _, item := range filtered {
-		if item.IMDbRating > 0 || item.RTScores > 0 || item.YoutubeView > 0 {
-			keep = append(keep, item)
-		}
-	}
-
-	log.Printf("  FlixPatrol: %d total, %d in date range, %d with ratings", len(allItems), len(filtered), len(keep))
+	log.Printf("  FlixPatrol: %d in target range", len(filtered))
 
 	var results []ScrapedItem
-	for _, item := range keep {
-		releaseDate := fmt.Sprintf("2026-%02d-%02d", 3, parseDay(item.Date))
+	for _, item := range filtered {
+		d := parseFlixDate(item.Date)
+		dateStr := ""
+		if !d.IsZero() {
+			dateStr = d.Format("2006-01-02")
+		}
 		results = append(results, ScrapedItem{
-			Title:        cleanTitle(item.Title),
+			Title:        cleanFlixTitle(item.Title),
 			Year:         item.Year,
 			MediaType:    item.MediaType,
 			ReleaseType:  model.ReleaseStreaming,
-			ReleaseDate:  releaseDate,
+			ReleaseDate:  dateStr,
 			ImdbRating:   item.IMDbRating,
 			YoutubeViews: item.YoutubeView,
 		})
@@ -92,138 +114,93 @@ func (f *FlixPatrolProvider) Scrape() ([]ScrapedItem, error) {
 	return results, nil
 }
 
-func (f *FlixPatrolProvider) scrapePage(page int) ([]flixItem, error) {
-	allocCtx, allocCancel := chromedp.NewRemoteAllocator(context.Background(), f.debugURL)
-	defer allocCancel()
-
-	ct, cancel := chromedp.NewContext(allocCtx)
-	defer cancel()
-
-	// Discard noisy CDP events like EventAdoptedStyleSheetsModified
-	chromedp.ListenTarget(ct, func(ev interface{}) {
-		if _, ok := ev.(*dom.EventAdoptedStyleSheetsModified); ok {
-			return
-		}
-	})
-
-	ctx, cancel := context.WithTimeout(ct, 30*time.Second)
-	defer cancel()
-
+func (f *FlixPatrolProvider) fetchPage(page int, windowStart, windowEnd time.Time) ([]flixItem, error) {
 	url := fmt.Sprintf("https://flixpatrol.com/calendar/new/titles/streaming/right-now/%d/", page)
 
-	var html string
-	if err := chromedp.Run(ctx,
-		chromedp.Navigate(url),
-		chromedp.WaitReady("body"),
-		chromedp.Sleep(4*time.Second),
-		chromedp.OuterHTML("html", &html),
-	); err != nil {
-		return nil, fmt.Errorf("loading page: %w", err)
+	req, err := http.NewRequest(http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("User-Agent", "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36")
+
+	resp, err := f.http.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("HTTP %d", resp.StatusCode)
 	}
 
-	return parseFlixRows(html), nil
-}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
 
-var imdbRatingPattern = regexp.MustCompile(`(\d+\.\d+)/10`)
-var rtScorePattern = regexp.MustCompile(`(\d+)%`)
-var youtubeViewPattern = regexp.MustCompile(`title="(\d+) views"`)
+	return parseFlixRows(string(body)), nil
+}
 
 func parseFlixRows(html string) []flixItem {
 	var items []flixItem
-
 	rows := strings.Split(html, `<tr class="table-group">`)
-	for _, row := range rows[1:] { // Skip first split part (before first row)
+	for _, row := range rows[1:] {
 		item := parseFlixRow(row)
 		if item.Title != "" {
 			items = append(items, item)
 		}
 	}
-
 	return items
 }
 
 func parseFlixRow(row string) flixItem {
 	var item flixItem
 
-	// Extract date: <div class="text-sm sm:text-base">Mar 20</div>
-	item.Date = extractBetween(row, `text-sm sm:text-base">`, `</div>`)
-
-	// Extract title
-	item.Title = extractBetween(row, `group-hover:underline">`, `</div>`)
-	item.Title = strings.TrimSpace(item.Title)
-
-	// Determine media type
-	if strings.Contains(row, `TV Show`) {
+	if m := flixDatePat.FindStringSubmatch(row); len(m) > 1 {
+		item.Date = strings.TrimSpace(m[1])
+	}
+	if m := flixTitlePat.FindStringSubmatch(row); len(m) > 1 {
+		item.Title = strings.TrimSpace(m[1])
+	}
+	if flixTVPat.MatchString(row) {
 		item.MediaType = model.MediaTypeTV
-	} else if strings.Contains(row, `Movie`) {
+	} else if flixMoviePat.MatchString(row) {
 		item.MediaType = model.MediaTypeMovie
 	}
-
-	// Extract year from title or date
-	item.Year = extractYearFromTitle(item.Title)
-
-	// Extract IMDb rating
-	if m := imdbRatingPattern.FindStringSubmatch(row); len(m) > 1 {
+	if m := flixTitleYear.FindStringSubmatch(item.Title); len(m) > 1 {
+		if y, err := strconv.Atoi(m[1]); err == nil && y >= 1900 && y <= 2100 {
+			item.Year = y
+		}
+	}
+	// Fall back to year from date
+	if item.Year == 0 {
+		item.Year = time.Now().Year()
+	}
+	if m := flixIMDbPat.FindStringSubmatch(row); len(m) > 1 {
 		item.IMDbRating, _ = strconv.ParseFloat(m[1], 64)
 	}
-
-	// Extract RT score
-	if m := rtScorePattern.FindStringSubmatch(row); len(m) > 1 {
-		score, _ := strconv.ParseFloat(m[1], 64)
-		item.RTScores = score
-	}
-
-	// Extract YouTube views
-	if m := youtubeViewPattern.FindStringSubmatch(row); len(m) > 1 {
-		item.YoutubeView, _ = strconv.ParseInt(m[1], 10, 64)
+	if m := flixYTViewsPat.FindStringSubmatch(row); len(m) > 1 {
+		cleaned := strings.ReplaceAll(m[1], ",", "")
+		item.YoutubeView, _ = strconv.ParseInt(cleaned, 10, 64)
 	}
 
 	return item
 }
 
-func extractBetween(s, open, close string) string {
-	i := strings.Index(s, open)
-	if i == -1 {
-		return ""
-	}
-	start := i + len(open)
-	j := strings.Index(s[start:], close)
-	if j == -1 {
-		return ""
-	}
-	return strings.TrimSpace(s[start : start+j])
+func cleanFlixTitle(title string) string {
+	title = html.UnescapeString(title)
+	title = flixTitleYear.ReplaceAllString(title, "")
+	return strings.TrimSpace(title)
 }
 
-var titleYearPattern = regexp.MustCompile(`\((\d{4})\)`)
-
-func extractYearFromTitle(title string) int {
-	if m := titleYearPattern.FindStringSubmatch(title); len(m) > 1 {
-		if y, err := strconv.Atoi(m[1]); err == nil && y >= 1900 && y <= 2100 {
-			return y
-		}
+func parseFlixDate(dateStr string) time.Time {
+	t, err := time.Parse("Jan 2", dateStr)
+	if err != nil {
+		return time.Time{}
 	}
-	return 0
+	return truncateToDay(t.AddDate(time.Now().Year(), 0, 0))
 }
 
-var monthNames = map[string]int{
-	"jan": 1, "feb": 2, "mar": 3, "apr": 4, "may": 5, "jun": 6,
-	"jul": 7, "aug": 8, "sep": 9, "oct": 10, "nov": 11, "dec": 12,
-}
-
-func parseMonth(date string) int {
-	parts := strings.Fields(date)
-	if len(parts) < 1 {
-		return 0
-	}
-	m := strings.ToLower(parts[0][:3])
-	return monthNames[m]
-}
-
-func parseDay(date string) int {
-	parts := strings.Fields(date)
-	if len(parts) < 2 {
-		return 0
-	}
-	day, _ := strconv.Atoi(parts[1])
-	return day
+func truncateToDay(t time.Time) time.Time {
+	return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, time.UTC)
 }
