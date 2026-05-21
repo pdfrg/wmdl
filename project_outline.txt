@@ -1,0 +1,65 @@
+wmd - weekly media downloader
+
+Every Wednesday AM
+	find new DVD/Bluray releases from the past week (usually released on Tuesdays)
+	find streaming releases for the past week, but timeshifted 2 months earlier
+		e.g. Today is Wed May 20 > physical releases May 13-19, streaming March 13-19
+			need to be sure not to miss any days during weeks that bridge 2 months
+	currently used sites
+		physical: dvdsreleasedates.com/releases
+			all
+		stream: flixpatrol.com/calendar/new/titles/streaming
+			filter by entries with any of
+				youtube play counts, imdb rating, rotten tomatoes rating
+	can use other sources if better exist
+		find Rotten Tomatoes URL for each
+		get critics rating and user rating for each
+		save titles, urls, ratings
+	send notification that these are ready for review
+		I have gotify
+
+user sits down at computer
+	reviews data
+	perhaps some titles will be approved even before opening url to review
+	opens interesting urls in browser (currently Brave debug mode with dedicated profile)
+	closes ones not interested in
+	leaves interesting tabs open
+	tells program ready to process
+		grabs open tabs
+
+program searches for torrents for each selected title
+	movies: prefer 2160p HDR releases, BluRay > Web-DL > webrip, h265|x265 > 264 > av1
+	tv: prefer 1080p releases, same quality prefs, same codec prefs
+
+torrent source
+	can use Prowlarr
+	can use any configured private tracker
+		here: prefer Seedpool, which is on Prowlarr
+	can fall back to public trackers as needed
+
+torrent client
+	configurable, qbittorrent, transmission, deluge
+		here: qbittorrent on home server (may be different machine than program, but on LAN)	
+	adds to proper category: TV or Movies (user config)
+
+library management
+	add to Radarr or Sonarr
+		with appropriate settings
+		e.g. monitoring, etc
+			here: TV monitor new episodes only, use season folders, movies no monitoring
+		If adding TV season where earlier seasons not present
+			offer to search for them also
+		if adding movies that are part of a collection and there are missing movies			
+			offer to search for them also
+
+target: arch linux > all other major linux distros
+prefer go: compiles fast, worked well with other projects
+
+tasks:
+research
+make suggestions for improvements/refinements
+as lots of questions where uncertain
+plan interactive session with me before developing initial formal plan
+
+
+

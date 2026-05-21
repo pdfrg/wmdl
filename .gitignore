@@ -1,0 +1,7 @@
+/wmd
+/wmd.exe
+/.vscode
+/.idea
+*.out
+*.test
+vendor/
