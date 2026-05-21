@@ -97,9 +97,7 @@ func (c *TMDBClient) DiscoverStreamingMovies(ctx context.Context, startDate, end
 	q := u.Query()
 	q.Set("primary_release_date.gte", startDate)
 	q.Set("primary_release_date.lte", endDate)
-	q.Set("with_watch_monetization_types", "flatrate|free|ads")
-	q.Set("watch_region", "US")
-	q.Set("sort_by", "primary_release_date.desc")
+	q.Set("sort_by", "popularity.desc")
 	q.Set("vote_count.gte", "20")
 	u.RawQuery = q.Encode()
 
@@ -111,9 +109,7 @@ func (c *TMDBClient) DiscoverStreamingTV(ctx context.Context, startDate, endDate
 	q := u.Query()
 	q.Set("first_air_date.gte", startDate)
 	q.Set("first_air_date.lte", endDate)
-	q.Set("with_watch_monetization_types", "flatrate|free|ads")
-	q.Set("watch_region", "US")
-	q.Set("sort_by", "first_air_date.desc")
+	q.Set("sort_by", "popularity.desc")
 	q.Set("vote_count.gte", "20")
 	u.RawQuery = q.Encode()
 

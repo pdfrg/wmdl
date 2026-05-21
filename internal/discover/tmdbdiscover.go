@@ -8,19 +8,19 @@ import (
 	"github.com/pdfrg/wmd/internal/model"
 )
 
-type TMDBStreamingProvider struct {
+type TMDBDiscoverProvider struct {
 	client *TMDBClient
 }
 
-func NewTMDBStreamingProvider(client *TMDBClient) *TMDBStreamingProvider {
-	return &TMDBStreamingProvider{client: client}
+func NewTMDBDiscoverProvider(client *TMDBClient) *TMDBDiscoverProvider {
+	return &TMDBDiscoverProvider{client: client}
 }
 
-func (t *TMDBStreamingProvider) Name() string {
-	return "tmdb-streaming"
+func (t *TMDBDiscoverProvider) Name() string {
+	return "tmdb-discover"
 }
 
-func (t *TMDBStreamingProvider) Scrape() ([]ScrapedItem, error) {
+func (t *TMDBDiscoverProvider) Scrape() ([]ScrapedItem, error) {
 	now := time.Now()
 
 	// Physical releases are grouped by Tuesday.

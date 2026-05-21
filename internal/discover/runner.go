@@ -39,7 +39,7 @@ func (r *Runner) Run(ctx context.Context) error {
 
 	providers := []ReleaseProvider{
 		NewDVDReleaseDates(),
-		NewTMDBStreamingProvider(r.tmdb),
+		NewTMDBDiscoverProvider(r.tmdb),
 	}
 
 	var allItems []ScrapedItem
