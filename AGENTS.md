@@ -42,7 +42,7 @@ internal/config/    — viper config loader
 - `spf13/cobra` + `spf13/viper` — CLI + config
 - `modernc.org/sqlite` — SQLite (no CGo)
 - `chromedp/chromedp` — Brave CDP
-- `charmbracelet/bubbletea` — TUI
+- `charm.land/bubbletea/v2` + `charm.land/lipgloss/v2` — TUI (v2 series, import from charm.land)
 - `gocolly/colly` — scraping
 - Standard library HTTP client
 
