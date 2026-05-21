@@ -42,6 +42,11 @@ func (r *Runner) Run(ctx context.Context) error {
 		NewTMDBDiscoverProvider(r.tmdb),
 	}
 
+	// FlixPatrol via chromedp (best-effort, requires Brave running on debug port)
+	debugURL := fmt.Sprintf("http://127.0.0.1:%d", r.cfg.Browser.DebugPort)
+	fp := NewFlixPatrolProvider(debugURL)
+	providers = append(providers, fp)
+
 	var allItems []ScrapedItem
 
 	for _, p := range providers {
