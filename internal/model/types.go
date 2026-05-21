@@ -35,6 +35,7 @@ const (
 type Title struct {
 	ID              int64
 	TmdbID          int
+	TvdbID          int
 	Title           string
 	Year            int
 	MediaType       MediaType

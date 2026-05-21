@@ -32,9 +32,9 @@ type delugeRequest struct {
 }
 
 type delugeResponse struct {
-	Result interface{}     `json:"result"`
-	Error  *delugeError   `json:"error,omitempty"`
-	ID     int            `json:"id"`
+	Result interface{}  `json:"result"`
+	Error  *delugeError `json:"error,omitempty"`
+	ID     int          `json:"id"`
 }
 
 type delugeError struct {

@@ -135,8 +135,14 @@ func (r *Runner) processItem(ctx context.Context, item ScrapedItem) error {
 	rtURL := r.rt.FindURL(item.Title, item.Year, string(mediaType))
 
 	// Upsert title
+	tvdbID := 0
+	if enrich != nil {
+		tvdbID = enrich.TVDBID
+	}
+
 	title := &model.Title{
 		TmdbID:     tmdbID,
+		TvdbID:     tvdbID,
 		Title:      item.Title,
 		Year:       item.Year,
 		MediaType:  mediaType,

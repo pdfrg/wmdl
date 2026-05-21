@@ -31,7 +31,3 @@ type Client interface {
 	AddTorrent(url string, opts ...Option) (torrentID string, err error)
 	AddMagnet(uri string, opts ...Option) (torrentID string, err error)
 }
-
-
-
-
