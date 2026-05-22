@@ -84,18 +84,38 @@ and send it to the download client.`,
 			exec := process.NewExecutor(cfg, database)
 
 			processed := 0
-			for _, ev := range events {
-				select {
-				case <-ctx.Done():
-					return ctx.Err()
-				default:
-				}
+			if cfg.ProcessMode == "batch" {
+				results := exec.SearchAll(ctx, events)
+				for _, sr := range results {
+					select {
+					case <-ctx.Done():
+						return ctx.Err()
+					default:
+					}
 
-				if err := exec.ProcessApproved(ctx, ev); err != nil {
-					log.Printf("Error processing %q: %v", ev.Title.Title, err)
-					continue
+					if len(sr.Top) == 0 {
+						continue
+					}
+					if err := exec.PresentResult(ctx, sr); err != nil {
+						log.Printf("Error presenting %q: %v", sr.Event.Title.Title, err)
+						continue
+					}
+					processed++
 				}
-				processed++
+			} else {
+				for _, ev := range events {
+					select {
+					case <-ctx.Done():
+						return ctx.Err()
+					default:
+					}
+
+					if err := exec.ProcessApproved(ctx, ev); err != nil {
+						log.Printf("Error processing %q: %v", ev.Title.Title, err)
+						continue
+					}
+					processed++
+				}
 			}
 
 			// Mark the week as processed (user chose to run, so mark it done)

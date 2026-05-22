@@ -18,6 +18,7 @@ type Config struct {
 	MinSeeders      int              `mapstructure:"min_seeders"`
 	PreferredGroups []string         `mapstructure:"preferred_release_groups"`
 	PosterMode      string           `mapstructure:"poster_mode"`
+	ProcessMode     string           `mapstructure:"process_mode"`
 }
 
 type NotifierConfig struct {
@@ -140,6 +141,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("min_seeders", 3)
 	v.SetDefault("preferred_release_groups", []string{})
 	v.SetDefault("poster_mode", "auto")
+	v.SetDefault("process_mode", "batch")
 	v.SetDefault("quality.movies.resolution", "2160p")
 	v.SetDefault("quality.movies.prefer_hdr", true)
 	v.SetDefault("quality.movies.source_priority", []string{"bluray", "web-dl", "webrip"})

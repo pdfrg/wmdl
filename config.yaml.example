@@ -68,3 +68,6 @@ quality:
 show_top_n: 10
 min_seeders: 3
 preferred_release_groups: []
+# process_mode: "batch" searches all items before opening TUI (recommended)
+# process_mode: "interactive" searches each item just-in-time (original behavior)
+process_mode: batch

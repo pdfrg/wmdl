@@ -75,7 +75,23 @@ func createDownloadClient(cfg *config.Config) download.Client {
 	}
 }
 
+type SearchResult struct {
+	Event    db.EventWithTitle
+	Season   int
+	Stripped string
+	Top      []quality.ParsedRelease
+	Error    error
+}
+
 func (e *Executor) ProcessApproved(ctx context.Context, evt db.EventWithTitle) error {
+	sr := e.SearchEvent(ctx, evt)
+	if sr.Error != nil {
+		return sr.Error
+	}
+	return e.PresentResult(ctx, sr)
+}
+
+func (e *Executor) SearchEvent(ctx context.Context, evt db.EventWithTitle) *SearchResult {
 	title := evt.Title
 	log.Printf("Processing: %s (%d)", title.Title, title.Year)
 
@@ -84,17 +100,55 @@ func (e *Executor) ProcessApproved(ctx context.Context, evt db.EventWithTitle) e
 
 	releases, err := e.searchRelease(ctx, title, stripped, season)
 	if err != nil {
-		return fmt.Errorf("searching releases: %w", err)
+		return &SearchResult{Event: evt, Error: fmt.Errorf("searching releases: %w", err)}
 	}
 	if len(releases) == 0 {
 		e.Unfound = append(e.Unfound, fmt.Sprintf("%s (%d)", title.Title, title.Year))
-		return nil
+		return &SearchResult{Event: evt, Season: season, Stripped: stripped}
 	}
 
 	prefs := buildQualityPrefs(e.cfg, title.MediaType)
 	top := quality.SortAndTop(releases, prefs, e.cfg.ShowTopN)
 
-	sel := NewSelector(title.Title, top)
+	return &SearchResult{
+		Event:    evt,
+		Season:   season,
+		Stripped: stripped,
+		Top:      top,
+	}
+}
+
+func (e *Executor) SearchAll(ctx context.Context, events []db.EventWithTitle) []*SearchResult {
+	log.Printf("Searching %d items...", len(events))
+	results := make([]*SearchResult, 0, len(events))
+	for i, ev := range events {
+		log.Printf("  [%d/%d] %q", i+1, len(events), ev.Title.Title)
+		sr := e.SearchEvent(ctx, ev)
+		if sr.Error != nil {
+			log.Printf("    Error: %v", sr.Error)
+			sr.Error = nil // don't fail the whole batch for one error
+		} else if len(sr.Top) == 0 {
+			log.Printf("    No results")
+		} else {
+			log.Printf("    %d results", len(sr.Top))
+		}
+		results = append(results, sr)
+	}
+	return results
+}
+
+func (e *Executor) PresentResult(ctx context.Context, sr *SearchResult) error {
+	if sr.Error != nil {
+		return sr.Error
+	}
+	evt := sr.Event
+	title := evt.Title
+
+	if len(sr.Top) == 0 {
+		return nil
+	}
+
+	sel := NewSelector(title.Title, sr.Top)
 	chosen, err := sel.Run()
 	if err != nil {
 		return err
@@ -157,7 +211,7 @@ func (e *Executor) ProcessApproved(ctx context.Context, evt db.EventWithTitle) e
 		}
 	}
 
-	if err := e.addToLibrary(ctx, evt, season); err != nil {
+	if err := e.addToLibrary(ctx, evt, sr.Season); err != nil {
 		log.Printf("  Warning: library add failed: %v", err)
 	}
 
