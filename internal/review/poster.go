@@ -167,20 +167,32 @@ func renderTextPlaceholder(cols, rows int) string {
 	if cols < 10 {
 		cols = 10
 	}
+	if rows < 4 {
+		rows = 4
+	}
 	top := "┌" + strings.Repeat("─", cols-2) + "┐"
-	middle := "│" + centerText("POSTER", cols-2) + "│"
 	bottom := "└" + strings.Repeat("─", cols-2) + "┘"
+	blank := "│" + strings.Repeat(" ", cols-2) + "│"
+
+	words := []string{"POSTER", "NOT", "AVAILABLE"}
+	contentLines := rows - 2
 
 	lines := []string{top}
-	contentLines := rows - 2
-	if contentLines > 0 {
-		midLine := contentLines / 2
+	if contentLines <= len(words) {
 		for i := 0; i < contentLines; i++ {
-			if i == midLine {
-				lines = append(lines, middle)
-			} else {
-				lines = append(lines, "│"+strings.Repeat(" ", cols-2)+"│")
-			}
+			lines = append(lines, "│"+centerText(words[i], cols-2)+"│")
+		}
+	} else {
+		padBefore := (contentLines - len(words)) / 2
+		padAfter := contentLines - len(words) - padBefore
+		for i := 0; i < padBefore; i++ {
+			lines = append(lines, blank)
+		}
+		for _, w := range words {
+			lines = append(lines, "│"+centerText(w, cols-2)+"│")
+		}
+		for i := 0; i < padAfter; i++ {
+			lines = append(lines, blank)
 		}
 	}
 	lines = append(lines, bottom)
