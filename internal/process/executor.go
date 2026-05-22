@@ -99,12 +99,14 @@ func (e *Executor) ProcessApproved(ctx context.Context, evt db.EventWithTitle) e
 	if err != nil {
 		return err
 	}
-	if chosen == nil {
+	if len(chosen) == 0 {
 		log.Printf("  Skipped %q", title.Title)
 		return nil
 	}
 
-	log.Printf("  Selected: %s (score %d)", chosen.RawTitle, chosen.Score)
+	for _, release := range chosen {
+		log.Printf("  Selected: %s (score %d)", release.RawTitle, release.Score)
+	}
 
 	if e.dl != nil {
 		category := e.cfg.Downloader.Categories.Movies
@@ -112,33 +114,35 @@ func (e *Executor) ProcessApproved(ctx context.Context, evt db.EventWithTitle) e
 			category = e.cfg.Downloader.Categories.TV
 		}
 
-		uri := chosen.DownloadURL
-		if uri == "" {
-			uri = chosen.MagnetURL
-		}
-		var torrentID string
-		if uri != "" {
-			torrentID, err = e.dl.AddTorrent(uri, download.WithCategory(category))
-			if err != nil {
-				log.Printf("  Warning: direct add failed: %v", err)
-			} else {
-				log.Printf("  Added to %s (%s)", e.cfg.Downloader.Type, category)
+		for _, release := range chosen {
+			uri := release.DownloadURL
+			if uri == "" {
+				uri = release.MagnetURL
 			}
-		}
+			var torrentID string
+			if uri != "" {
+				torrentID, err = e.dl.AddTorrent(uri, download.WithCategory(category))
+				if err != nil {
+					log.Printf("  Warning: direct add failed: %v", err)
+				} else {
+					log.Printf("  Added to %s (%s)", e.cfg.Downloader.Type, category)
+				}
+			}
 
-		dl := &model.Download{
-			TitleID:         title.ID,
-			ReleaseEventID:  evt.Event.ID,
-			Quality:         fmt.Sprintf("%dp", chosen.Resolution),
-			SourceType:      chosen.Source,
-			Codec:           chosen.Codec,
-			InfoHash:        chosen.InfoHash,
-			Category:        category,
-			Status:          model.DownloadAdded,
-			ClientTorrentID: torrentID,
-		}
-		if _, err := e.db.CreateDownload(ctx, dl); err != nil {
-			log.Printf("  Warning: creating download record: %v", err)
+			dl := &model.Download{
+				TitleID:         title.ID,
+				ReleaseEventID:  evt.Event.ID,
+				Quality:         fmt.Sprintf("%dp", release.Resolution),
+				SourceType:      release.Source,
+				Codec:           release.Codec,
+				InfoHash:        release.InfoHash,
+				Category:        category,
+				Status:          model.DownloadAdded,
+				ClientTorrentID: torrentID,
+			}
+			if _, err := e.db.CreateDownload(ctx, dl); err != nil {
+				log.Printf("  Warning: creating download record: %v", err)
+			}
 		}
 	}
 

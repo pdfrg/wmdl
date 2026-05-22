@@ -16,7 +16,8 @@ type Selector struct {
 	cursor   int
 	width    int
 	height   int
-	chosen   *quality.ParsedRelease
+	selected []quality.ParsedRelease
+	toggles  map[int]bool
 	quit     bool
 }
 
@@ -24,17 +25,18 @@ func NewSelector(title string, releases []quality.ParsedRelease) *Selector {
 	return &Selector{
 		title:    title,
 		releases: releases,
+		toggles:  make(map[int]bool),
 	}
 }
 
-func (s *Selector) Run() (*quality.ParsedRelease, error) {
+func (s *Selector) Run() ([]quality.ParsedRelease, error) {
 	p := tea.NewProgram(s)
 	final, err := p.Run()
 	if err != nil {
 		return nil, err
 	}
 	m := final.(*Selector)
-	return m.chosen, nil
+	return m.selected, nil
 }
 
 func (s *Selector) Init() tea.Cmd {
@@ -49,7 +51,7 @@ func (s *Selector) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.KeyPressMsg:
 		switch msg.String() {
-		case "q", "ctrl+c":
+		case "s", "ctrl+c":
 			s.quit = true
 			return s, tea.Quit
 
@@ -63,9 +65,22 @@ func (s *Selector) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				s.cursor--
 			}
 
-		case "enter", " ":
-			if s.cursor < len(s.releases) {
-				s.chosen = &s.releases[s.cursor]
+		case " ":
+			s.toggles[s.cursor] = !s.toggles[s.cursor]
+
+		case "enter":
+			var toggled []int
+			for idx, on := range s.toggles {
+				if on {
+					toggled = append(toggled, idx)
+				}
+			}
+			if len(toggled) == 0 {
+				// nothing toggled, stay
+				break
+			}
+			for _, idx := range toggled {
+				s.selected = append(s.selected, s.releases[idx])
 			}
 			return s, tea.Quit
 		}
@@ -96,6 +111,11 @@ func (s *Selector) View() tea.View {
 	for i, r := range s.releases[start:end] {
 		idx := start + i
 
+		toggleMark := " "
+		if s.toggles[idx] {
+			toggleMark = "x"
+		}
+
 		prefix := "  "
 		if idx == s.cursor {
 			prefix = "▸ "
@@ -111,8 +131,9 @@ func (s *Selector) View() tea.View {
 		info = append(info, r.Source)
 		info = append(info, r.Codec)
 
-		line := fmt.Sprintf("%s%-4s %s\n     %s  S: %d  %s",
+		line := fmt.Sprintf("%s[%s] %-4s %s\n     %s  S: %d  %s",
 			prefix,
+			toggleMark,
 			fmt.Sprintf("[%d]", idx+1),
 			r.RawTitle,
 			strings.Join(info, " ┃ "),
@@ -135,9 +156,21 @@ func (s *Selector) View() tea.View {
 		b.WriteString("\n")
 	}
 
-	footer := fmt.Sprintf("\n%s [%d/%d]",
-		selHelpStyle.Render("[↑/↓] navigate  [enter] select  [q] skip"),
-		s.cursor+1, len(s.releases),
+	toggledCount := 0
+	for _, on := range s.toggles {
+		if on {
+			toggledCount++
+		}
+	}
+
+	footerExtra := ""
+	if toggledCount > 0 {
+		footerExtra = fmt.Sprintf("  %d selected", toggledCount)
+	}
+
+	footer := fmt.Sprintf("\n%s%s",
+		selHelpStyle.Render("[↑/↓] navigate  [space] toggle  [enter] confirm  [s] skip"),
+		selHelpStyle.Render(fmt.Sprintf("  [%d/%d]%s", s.cursor+1, len(s.releases), footerExtra)),
 	)
 	b.WriteString(footer)
 
