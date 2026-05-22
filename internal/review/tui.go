@@ -290,7 +290,10 @@ func (t *TUI) View() tea.View {
 	b.WriteString(content)
 
 	if t.flashMsg != "" {
-		b.WriteString("\n")
+		b.WriteString("\n\n")
+		if t.shouldPadForPoster() {
+			b.WriteString(strings.Repeat(" ", posterCols+1))
+		}
 		b.WriteString(warnStyle.Render(t.flashMsg))
 	}
 
