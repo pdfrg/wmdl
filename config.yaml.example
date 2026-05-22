@@ -3,6 +3,7 @@ notifier:
   gotify_token: ""
 
 browser:
+  binary: "brave"          # google-chrome, chromium, brave, microsoft-edge, vivaldi, opera
   debug_port: 9222
   profile: "wmd-review"
 

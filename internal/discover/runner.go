@@ -61,7 +61,7 @@ func (r *Runner) Run(ctx context.Context) error {
 	}
 
 	// Auto-launch Brave if not already running on the debug port
-	killBrave, err := browser.EnsureRunning(r.cfg.Browser.DebugPort, r.cfg.Browser.Profile, r.headless)
+	killBrave, err := browser.EnsureRunning(r.cfg.Browser.Binary, r.cfg.Browser.DebugPort, r.cfg.Browser.Profile, r.headless)
 	if err != nil {
 		log.Printf("Warning: browser unavailable (some features disabled): %v", err)
 	} else if killBrave != nil {

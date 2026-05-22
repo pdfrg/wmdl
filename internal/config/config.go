@@ -29,6 +29,7 @@ type NotifierConfig struct {
 type BrowserConfig struct {
 	DebugPort int    `mapstructure:"debug_port"`
 	Profile   string `mapstructure:"profile"`
+	Binary    string `mapstructure:"binary"`
 }
 
 type ProwlarrConfig struct {
@@ -134,6 +135,7 @@ func Load() (*Config, error) {
 func setDefaults(v *viper.Viper) {
 	v.SetDefault("browser.debug_port", 9222)
 	v.SetDefault("browser.profile", "wmd-review")
+	v.SetDefault("browser.binary", "brave")
 	v.SetDefault("downloader.type", "qbittorrent")
 	v.SetDefault("downloader.categories.movies", "Movies")
 	v.SetDefault("downloader.categories.tv", "TV")

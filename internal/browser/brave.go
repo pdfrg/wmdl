@@ -12,7 +12,7 @@ import (
 	"github.com/chromedp/chromedp"
 )
 
-func EnsureRunning(debugPort int, profile string, headless bool) (func() error, error) {
+func EnsureRunning(binary string, debugPort int, profile string, headless bool) (func() error, error) {
 	addr := fmt.Sprintf("127.0.0.1:%d", debugPort)
 	conn, err := net.DialTimeout("tcp", addr, 500*time.Millisecond)
 	if err == nil {
@@ -20,9 +20,9 @@ func EnsureRunning(debugPort int, profile string, headless bool) (func() error, 
 		return nil, nil
 	}
 
-	userDataDir := filepath.Join(os.ExpandEnv("$HOME/.local/share/wmd/brave"), profile)
+	userDataDir := filepath.Join(os.ExpandEnv("$HOME/.local/share/wmd/browser"), profile)
 	if err := os.MkdirAll(userDataDir, 0755); err != nil {
-		return nil, fmt.Errorf("creating brave data dir: %w", err)
+		return nil, fmt.Errorf("creating %s data dir: %w", binary, err)
 	}
 
 	args := []string{
@@ -35,12 +35,12 @@ func EnsureRunning(debugPort int, profile string, headless bool) (func() error, 
 	}
 	args = append(args, "--new-window", "about:blank")
 
-	cmd := exec.Command("brave", args...)
+	cmd := exec.Command(binary, args...)
 	cmd.Stdout = os.Stderr
 	cmd.Stderr = os.Stderr
 
 	if err := cmd.Start(); err != nil {
-		return nil, fmt.Errorf("launching brave: %w", err)
+		return nil, fmt.Errorf("launching %s: %w", binary, err)
 	}
 
 	// Wait for it to start listening
@@ -54,7 +54,7 @@ func EnsureRunning(debugPort int, profile string, headless bool) (func() error, 
 	}
 
 	cmd.Process.Kill()
-	return nil, fmt.Errorf("brave started but not listening on %s within 15s", addr)
+	return nil, fmt.Errorf("%s started but not listening on %s within 15s", binary, addr)
 }
 
 func ListTabs(ctx context.Context, debugURL string) ([]Tab, error) {
