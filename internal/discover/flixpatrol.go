@@ -29,18 +29,20 @@ func (f *FlixPatrolProvider) Name() string {
 }
 
 type flixItem struct {
-	Date        string
-	Title       string
-	Year        int
-	MediaType   model.MediaType
-	IMDbRating  float64
-	YoutubeView int64
+	Date           string
+	Title          string
+	Year           int
+	MediaType      model.MediaType
+	IMDbRating     float64
+	RTCriticsScore float64
+	YoutubeView    int64
 }
 
 var (
 	flixDatePat    = regexp.MustCompile(`text-sm sm:text-base">([^<]+)`)
 	flixTitlePat   = regexp.MustCompile(`group-hover:underline">\s*([^<]+?)\s*</div>`)
 	flixIMDbPat    = regexp.MustCompile(`(\d+\.\d+)/10`)
+	flixRTPat      = regexp.MustCompile(`<span>(\d+)%</span>`)
 	flixYTViewsPat = regexp.MustCompile(`title="([\d,]+) views"`)
 	flixTVPat      = regexp.MustCompile(`TV Show`)
 	flixMoviePat   = regexp.MustCompile(`Movie`)
@@ -95,19 +97,23 @@ pageLoop:
 
 	var results []ScrapedItem
 	for _, item := range filtered {
+		if item.IMDbRating == 0 && item.RTCriticsScore == 0 && item.YoutubeView == 0 {
+			continue
+		}
 		d := parseFlixDate(item.Date)
 		dateStr := ""
 		if !d.IsZero() {
 			dateStr = d.Format("2006-01-02")
 		}
 		results = append(results, ScrapedItem{
-			Title:        cleanFlixTitle(item.Title),
-			Year:         item.Year,
-			MediaType:    item.MediaType,
-			ReleaseType:  model.ReleaseStreaming,
-			ReleaseDate:  dateStr,
-			ImdbRating:   item.IMDbRating,
-			YoutubeViews: item.YoutubeView,
+			Title:          cleanFlixTitle(item.Title),
+			Year:           item.Year,
+			MediaType:      item.MediaType,
+			ReleaseType:    model.ReleaseStreaming,
+			ReleaseDate:    dateStr,
+			ImdbRating:     item.IMDbRating,
+			RTCriticsScore: item.RTCriticsScore,
+			YoutubeViews:   item.YoutubeView,
 		})
 	}
 
@@ -178,6 +184,9 @@ func parseFlixRow(row string) flixItem {
 	}
 	if m := flixIMDbPat.FindStringSubmatch(row); len(m) > 1 {
 		item.IMDbRating, _ = strconv.ParseFloat(m[1], 64)
+	}
+	if m := flixRTPat.FindStringSubmatch(row); len(m) > 1 {
+		item.RTCriticsScore, _ = strconv.ParseFloat(m[1], 64)
 	}
 	if m := flixYTViewsPat.FindStringSubmatch(row); len(m) > 1 {
 		cleaned := strings.ReplaceAll(m[1], ",", "")

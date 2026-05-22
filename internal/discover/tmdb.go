@@ -56,16 +56,17 @@ type TMDBTVExternalIDs struct {
 }
 
 type TMDBEnrichment struct {
-	TMDBID    int
-	MediaType string // "movie" or "tv"
-	Title     string
-	Year      int
-	Rating    float64
-	IMDbID    string
-	TVDBID    int
-	Overview  string
-	Genres    string // comma-separated
-	Runtime   int
+	TMDBID     int
+	MediaType  string // "movie" or "tv"
+	Title      string
+	Year       int
+	Rating     float64
+	IMDbID     string
+	TVDBID     int
+	Overview   string
+	Genres     string // comma-separated
+	Runtime    int
+	PosterPath string
 }
 
 type TMDBDiscoverResult struct {
@@ -279,11 +280,12 @@ func (c *TMDBClient) Enrich(ctx context.Context, query string, year int) (*TMDBE
 		}
 
 		enrich := &TMDBEnrichment{
-			TMDBID:    r.ID,
-			MediaType: r.MediaType,
-			Title:     title,
-			Year:      releaseYear,
-			Rating:    r.VoteAverage,
+			TMDBID:     r.ID,
+			MediaType:  r.MediaType,
+			Title:      title,
+			Year:       releaseYear,
+			Rating:     r.VoteAverage,
+			PosterPath: r.PosterPath,
 		}
 
 		// Fetch external IDs for IMDb/TVDB

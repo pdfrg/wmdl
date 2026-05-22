@@ -100,7 +100,11 @@ func runDiscover(cmd *cobra.Command) error {
 }
 
 func runReview(database *db.DB) error {
-	tui, err := review.NewReviewTUI(database)
+	cfg, err := config.Load()
+	if err != nil {
+		return fmt.Errorf("loading config: %w", err)
+	}
+	tui, err := review.NewReviewTUI(database, cfg.PosterMode)
 	if err != nil {
 		return err
 	}

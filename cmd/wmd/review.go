@@ -9,6 +9,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/pdfrg/wmd/internal/config"
 	"github.com/pdfrg/wmd/internal/db"
 	"github.com/pdfrg/wmd/internal/model"
 	"github.com/pdfrg/wmd/internal/review"
@@ -20,6 +21,11 @@ func newReviewCmd() *cobra.Command {
 		Short: "Review pending releases in TUI",
 		Long:  "Open interactive TUI to approve/reject pending releases.",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := config.Load()
+			if err != nil {
+				return fmt.Errorf("loading config: %w", err)
+			}
+
 			dbPath, err := dataDir()
 			if err != nil {
 				return err
@@ -30,7 +36,7 @@ func newReviewCmd() *cobra.Command {
 			}
 			defer database.Close()
 
-			tui, err := review.NewReviewTUI(database)
+			tui, err := review.NewReviewTUI(database, cfg.PosterMode)
 			if err != nil {
 				return err
 			}

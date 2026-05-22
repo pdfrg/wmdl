@@ -51,6 +51,7 @@ type Title struct {
 	Overview        string
 	Genres          string
 	Runtime         int
+	PosterPath      string
 	CreatedAt       string
 }
 

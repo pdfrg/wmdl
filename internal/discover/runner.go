@@ -255,11 +255,13 @@ func (r *Runner) processItem(ctx context.Context, item ScrapedItem) error {
 	genres := ""
 	runtime := 0
 	tvdbID := 0
+	posterPath := ""
 	if enrich != nil {
 		tvdbID = enrich.TVDBID
 		overview = enrich.Overview
 		genres = enrich.Genres
 		runtime = enrich.Runtime
+		posterPath = enrich.PosterPath
 	}
 
 	title := &model.Title{
@@ -280,6 +282,7 @@ func (r *Runner) processItem(ctx context.Context, item ScrapedItem) error {
 		Overview:        overview,
 		Genres:          genres,
 		Runtime:         runtime,
+		PosterPath:      posterPath,
 	}
 
 	titleID, err := r.db.UpsertTitle(ctx, title)
