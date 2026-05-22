@@ -11,17 +11,24 @@ import (
 
 	"github.com/pdfrg/wmd/internal/config"
 	"github.com/pdfrg/wmd/internal/db"
-	"github.com/pdfrg/wmd/internal/discover"
-	"github.com/pdfrg/wmd/internal/process"
-	"github.com/pdfrg/wmd/internal/review"
 )
 
 func newCatchupCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "catchup",
 		Short: "Run all pending steps for incomplete weeks",
-		Long: `Check week state and run discover, review, or process for any weeks 
-that have not been fully handled.`,
+		Long: `Advance each incomplete week by one step (discover → review → process)
+per invocation, then move to the next week.
+
+This means a single run only moves each week one step forward.
+For example, if weeks 10, 11, and 12 all need the full pipeline:
+
+  Run 1: discover week 10, discover week 11, discover week 12
+  Run 2: review week 10,  review week 11,  review week 12
+  Run 3: process week 10, process week 11, process week 12
+
+The individual commands (discover, review, process) target only
+one week at a time — use catchup to handle all outstanding weeks.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			dbPath, err := dataDir()
 			if err != nil {
@@ -68,6 +75,21 @@ that have not been fully handled.`,
 				}
 			}
 
+			// Re-check whether any weeks still have remaining steps
+			remaining, err := database.GetWeekStates(context.Background(), 12)
+			if err == nil {
+				hasRemaining := false
+				for _, s := range remaining {
+					if !s.Discovered || !s.Reviewed || !s.Processed {
+						hasRemaining = true
+						break
+					}
+				}
+				if hasRemaining {
+					log.Println("Some weeks still have pending steps. Run 'wmd catchup' again to continue.")
+				}
+			}
+
 			return nil
 		},
 	}
@@ -89,14 +111,7 @@ func runDiscover(cmd *cobra.Command) error {
 	}
 	defer database.Close()
 
-	if err := database.Migrate(cmd.Context()); err != nil {
-		return err
-	}
-
-	runner := discover.NewRunner(cfg, database)
-	ctx, cancel := context.WithCancel(cmd.Context())
-	defer cancel()
-	return runner.Run(ctx)
+	return runDiscoverForWeek(cmd.Context(), database, cfg, 0, 0)
 }
 
 func runReview(database *db.DB) error {
@@ -104,11 +119,8 @@ func runReview(database *db.DB) error {
 	if err != nil {
 		return fmt.Errorf("loading config: %w", err)
 	}
-	tui, err := review.NewReviewTUI(database, cfg.PosterMode)
-	if err != nil {
-		return err
-	}
-	return tui.Run()
+	_, err = runReviewForWeek(context.Background(), database, cfg, 0, 0)
+	return err
 }
 
 func runProcess(cmd *cobra.Command) error {
@@ -130,24 +142,5 @@ func runProcess(cmd *cobra.Command) error {
 	ctx, cancel := context.WithTimeout(cmd.Context(), 5*time.Minute)
 	defer cancel()
 
-	events, err := database.ListApprovedWithTitles(ctx)
-	if err != nil {
-		return err
-	}
-	if len(events) == 0 {
-		return nil
-	}
-
-	exec := process.NewExecutor(cfg, database)
-	for _, ev := range events {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
-		}
-		if err := exec.ProcessApproved(ctx, ev); err != nil {
-			log.Printf("Error processing %q: %v", ev.Title.Title, err)
-		}
-	}
-	return nil
+	return runProcessForWeek(ctx, database, cfg, 0, 0)
 }

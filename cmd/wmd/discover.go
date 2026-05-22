@@ -1,16 +1,15 @@
 package main
 
 import (
-	"context"
 	"fmt"
 	"os"
 	"path/filepath"
 
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 
 	"github.com/pdfrg/wmd/internal/config"
 	"github.com/pdfrg/wmd/internal/db"
-	"github.com/pdfrg/wmd/internal/discover"
 )
 
 func newDiscoverCmd() *cobra.Command {
@@ -34,34 +33,23 @@ func newDiscoverCmd() *cobra.Command {
 			}
 			defer database.Close()
 
-			if err := database.Migrate(cmd.Context()); err != nil {
-				return fmt.Errorf("migrating database: %w", err)
-			}
-
 			targetYear, targetWeek, err := resolveWeek(cmd)
 			if err != nil {
 				return err
 			}
 
-			ws, err := database.GetWeekState(cmd.Context(), targetYear, targetWeek)
-			if err != nil {
-				return fmt.Errorf("checking week state: %w", err)
+			if err := runDiscoverForWeek(cmd.Context(), database, cfg, targetYear, targetWeek); err != nil {
+				return err
 			}
-			if ws != nil && ws.Discovered {
-				fmt.Fprintf(os.Stderr, "Week %d-W%02d already discovered.\n", targetYear, targetWeek)
-				if !promptYesNo("Continue anyway?") {
-					return nil
+
+			if term.IsTerminal(int(os.Stdin.Fd())) {
+				fmt.Fprintln(os.Stderr)
+				if promptYesNo("Review this week now?") {
+					_, err := runReviewForWeek(cmd.Context(), database, cfg, targetYear, targetWeek)
+					return err
 				}
 			}
-
-			runner := discover.NewRunner(cfg, database)
-			if targetYear != 0 && targetWeek != 0 {
-				runner.SetTargetWeek(targetYear, targetWeek)
-			}
-			ctx, cancel := context.WithCancel(cmd.Context())
-			defer cancel()
-
-			return runner.Run(ctx)
+			return nil
 		},
 	}
 	addWeekFlag(cmd)

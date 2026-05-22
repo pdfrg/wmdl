@@ -92,5 +92,3 @@ func resolveWeek(cmd *cobra.Command) (int, int, error) {
 	s, _ := cmd.Flags().GetString("week")
 	return parseWeekFlag(s)
 }
-
-

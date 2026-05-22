@@ -29,6 +29,7 @@ weekly DVD/streaming releases via Prowlarr, qBittorrent, and Radarr/Sonarr.`,
 	cmd.AddCommand(newDiscoverCmd())
 	cmd.AddCommand(newReviewCmd())
 	cmd.AddCommand(newProcessCmd())
+	cmd.AddCommand(newAllCmd())
 	cmd.AddCommand(newStatusCmd())
 	cmd.AddCommand(newCatchupCmd())
 
