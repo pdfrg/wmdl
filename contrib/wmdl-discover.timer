@@ -18,8 +18,10 @@ Documentation=https://github.com/pdfrg/wmdl
 OnCalendar=Wed 05:00
 Persistent=true
 
-# If the previous run missed its window (e.g. machine was off),
-# trigger immediately on next boot up to 1 hour after the scheduled time.
+# If the previous run was missed (e.g. machine off), Persistent=true
+# triggers it immediately on the next boot — regardless of how late.
+# AccuracySec just lets systemd coalesce wake-ups within this window;
+# it does NOT impose a deadline for the missed-trigger.
 AccuracySec=1h
 
 [Install]
