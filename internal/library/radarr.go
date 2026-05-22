@@ -107,27 +107,12 @@ func (r *RadarrClient) Lookup(ctx context.Context, tmdbID int) (*RadarrMovie, er
 }
 
 func (r *RadarrClient) Exists(ctx context.Context, tmdbID int) (*RadarrMovie, error) {
-	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, r.baseURL+"/api/v3/movie", nil)
-	req.Header.Set("X-Api-Key", r.apiKey)
-
-	resp, err := r.http.Do(req)
+	lookup, err := r.Lookup(ctx, tmdbID)
 	if err != nil {
-		return nil, fmt.Errorf("radarr list: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("radarr list returned %d", resp.StatusCode)
-	}
-
-	var movies []RadarrMovie
-	if err := json.NewDecoder(resp.Body).Decode(&movies); err != nil {
 		return nil, err
 	}
-	for _, m := range movies {
-		if m.TMDBID == tmdbID {
-			return &m, nil
-		}
+	if lookup != nil && lookup.ID > 0 {
+		return lookup, nil
 	}
 	return nil, nil
 }

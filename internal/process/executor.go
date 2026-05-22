@@ -121,6 +121,8 @@ func (e *Executor) ProcessApproved(ctx context.Context, evt db.EventWithTitle) e
 			torrentID, err = e.dl.AddTorrent(uri, download.WithCategory(category))
 			if err != nil {
 				log.Printf("  Warning: direct add failed: %v", err)
+			} else {
+				log.Printf("  Added to %s (%s)", e.cfg.Downloader.Type, category)
 			}
 		}
 

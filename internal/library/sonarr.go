@@ -110,27 +110,12 @@ func (s *SonarrClient) Lookup(ctx context.Context, tvdbID int) (*SonarrSeries, e
 }
 
 func (s *SonarrClient) Exists(ctx context.Context, tvdbID int) (*SonarrSeries, error) {
-	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, s.baseURL+"/api/v3/series", nil)
-	req.Header.Set("X-Api-Key", s.apiKey)
-
-	resp, err := s.http.Do(req)
+	lookup, err := s.Lookup(ctx, tvdbID)
 	if err != nil {
-		return nil, fmt.Errorf("sonarr list: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("sonarr list returned %d", resp.StatusCode)
-	}
-
-	var all []SonarrSeries
-	if err := json.NewDecoder(resp.Body).Decode(&all); err != nil {
 		return nil, err
 	}
-	for _, series := range all {
-		if series.TVDBID == tvdbID {
-			return &series, nil
-		}
+	if lookup != nil && lookup.ID > 0 {
+		return lookup, nil
 	}
 	return nil, nil
 }
