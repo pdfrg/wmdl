@@ -182,73 +182,62 @@ func (e *Executor) searchRelease(ctx context.Context, title *model.Title, stripp
 		queries = movieSearchQueries(stripped, title.Year, resKeyword)
 	}
 
-	for _, q := range queries {
-		log.Printf("  Searching: %q (%s)", q, searchType)
-		results, err := e.searchWithIndexer(ctx, q, searchType)
-		if err != nil {
-			return nil, err
-		}
-		log.Printf("  Prowlarr returned %d results", len(results))
-		if len(results) > 0 {
-			results = quality.FilterReleases(results, stripped, title.Year, season, string(title.MediaType))
-			log.Printf("  %d results after filtering", len(results))
-		}
-		if len(results) > 0 {
-			return results, nil
-		}
-	}
-
-	return nil, nil
-}
-
-func (e *Executor) searchWithIndexer(ctx context.Context, query, searchType string) ([]quality.ParsedRelease, error) {
 	indexerID := e.cfg.Prowlarr.IndexerID
+	numTiers := len(queries)
+	var pool []quality.ParsedRelease
 
+	// Phase 1: all tiers on preferred indexer only
 	if indexerID > 0 {
-		log.Printf("    indexer %d", indexerID)
-		results, err := e.prowl.Search(ctx, search.SearchParams{
-			Query:     query,
-			Type:      searchType,
-			IndexerID: indexerID,
-			Limit:     50,
-		})
-		if err != nil {
-			return nil, err
-		}
+		name := e.prowl.GetIndexerName(ctx, indexerID)
+		log.Printf("  preferred: %s (%d)", name, indexerID)
 
-		if len(results) > 0 {
-			name := fmt.Sprintf("indexer %d", indexerID)
-			if promptYesNo(fmt.Sprintf("  %d results from %s — search all indexers?", len(results), name)) {
-				log.Printf("    all indexers")
-				all, err := e.prowl.Search(ctx, search.SearchParams{
-					Query: query,
-					Type:  searchType,
-					Limit: 50,
-				})
-				if err != nil {
-					return nil, err
-				}
-				results = mergeReleases(results, all)
-			}
-		} else {
-			log.Printf("    no results on indexer %d, falling back to all indexers", indexerID)
-			results, err = e.prowl.Search(ctx, search.SearchParams{
-				Query: query,
-				Type:  searchType,
-				Limit: 50,
+		for i, q := range queries {
+			log.Printf("  [%d/%d] Searching: %q", i+1, numTiers, q)
+			results, err := e.prowl.Search(ctx, search.SearchParams{
+				Query:     q,
+				Type:      searchType,
+				IndexerID: indexerID,
+				Limit:     50,
 			})
 			if err != nil {
 				return nil, err
 			}
+			filtered := quality.FilterReleases(results, stripped, title.Year, season, string(title.MediaType))
+			before := len(pool)
+			pool = mergeReleases(pool, filtered)
+			log.Printf("    → %d filtered (%d total)", len(pool)-before, len(pool))
+			if len(pool) >= 10 {
+				return pool, nil
+			}
 		}
-		return results, nil
+
+		log.Printf("  → %d total from preferred, searching all indexers", len(pool))
 	}
 
-	return e.prowl.Search(ctx, search.SearchParams{
-		Query: query,
-		Type:  searchType,
-		Limit: 50,
-	})
+	// Phase 2: all tiers on all indexers
+	for i, q := range queries {
+		log.Printf("  [%d/%d] Searching all: %q", i+1, numTiers, q)
+		results, err := e.prowl.Search(ctx, search.SearchParams{
+			Query: q,
+			Type:  searchType,
+			Limit: 50,
+		})
+		if err != nil {
+			return nil, err
+		}
+		filtered := quality.FilterReleases(results, stripped, title.Year, season, string(title.MediaType))
+		before := len(pool)
+		pool = mergeReleases(pool, filtered)
+		log.Printf("    → %d filtered (%d total)", len(pool)-before, len(pool))
+		if len(pool) >= 10 {
+			return pool, nil
+		}
+	}
+
+	if len(pool) > 0 {
+		return pool, nil
+	}
+	return nil, nil
 }
 
 func mergeReleases(a, b []quality.ParsedRelease) []quality.ParsedRelease {

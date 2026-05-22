@@ -13,9 +13,15 @@ import (
 )
 
 type ProwlarrClient struct {
-	baseURL string
-	apiKey  string
-	http    *http.Client
+	baseURL      string
+	apiKey       string
+	http         *http.Client
+	indexerNames map[int]string
+}
+
+type indexerInfo struct {
+	ID   int    `json:"id"`
+	Name string `json:"name"`
 }
 
 func NewProwlarrClient(baseURL, apiKey string, timeoutSec int) *ProwlarrClient {
@@ -96,6 +102,41 @@ func (p *ProwlarrClient) Search(ctx context.Context, params SearchParams) ([]qua
 	}
 
 	return convertToReleases(results), nil
+}
+
+func (p *ProwlarrClient) GetIndexerName(ctx context.Context, id int) string {
+	if p.indexerNames == nil {
+		p.indexerNames = make(map[int]string)
+	}
+	if name, ok := p.indexerNames[id]; ok {
+		return name
+	}
+
+	u := p.baseURL + "/api/v1/indexer"
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	if err != nil {
+		return fmt.Sprintf("indexer %d", id)
+	}
+	req.Header.Set("X-Api-Key", p.apiKey)
+
+	resp, err := p.http.Do(req)
+	if err != nil {
+		return fmt.Sprintf("indexer %d", id)
+	}
+	defer resp.Body.Close()
+
+	var indexers []indexerInfo
+	if err := json.NewDecoder(resp.Body).Decode(&indexers); err != nil {
+		return fmt.Sprintf("indexer %d", id)
+	}
+
+	for _, idx := range indexers {
+		p.indexerNames[idx.ID] = idx.Name
+	}
+	if name, ok := p.indexerNames[id]; ok {
+		return name
+	}
+	return fmt.Sprintf("indexer %d", id)
 }
 
 func (p *ProwlarrClient) SearchMovies(ctx context.Context, query string) ([]quality.ParsedRelease, error) {
