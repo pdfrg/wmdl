@@ -97,11 +97,14 @@ func (r *RTFinder) FindURL(title string, year int, mediaType string) string {
 	for _, u := range candidates {
 		if r.urlExists(u) {
 			s := scoredURL{url: u}
-			// Check dateCreated year from page metadata
-			if yr, ok := r.extractRTYear(u); ok {
-				s.year = yr
-				if year > 0 && yr == fmt.Sprintf("%d", year) {
-					s.score += 2
+			// dateCreated year validation only for movies (TV date reflects
+			// the first season's air date, not the current release).
+			if prefix != "tv" {
+				if yr, ok := r.extractRTYear(u); ok {
+					s.year = yr
+					if year > 0 && yr == fmt.Sprintf("%d", year) {
+						s.score += 2
+					}
 				}
 			}
 			// Prefer year-suffixed URLs (more specific)

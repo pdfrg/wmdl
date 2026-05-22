@@ -178,7 +178,7 @@ func (r *Runner) processItem(ctx context.Context, item ScrapedItem) error {
 		preferType = string(item.MediaType)
 	}
 
-	enrich, err := r.tmdb.enrichWithPrefs(apiCtx, searchTitle, item.Year, item.Year, preferType)
+	enrich, err := r.tmdb.enrichWithPrefs(apiCtx, searchTitle, item.Year, preferType)
 	if err == nil {
 		tmdbID = enrich.TMDBID
 		rating = enrich.Rating

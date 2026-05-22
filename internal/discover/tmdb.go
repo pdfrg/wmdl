@@ -256,21 +256,21 @@ func (c *TMDBClient) SearchMulti(ctx context.Context, query string, year int) (*
 }
 
 type tmdbCandidate struct {
-	enrich     *TMDBEnrichment
-	score      int
-	matchYear  int
-	matchType  string
+	enrich *TMDBEnrichment
+	score  int
 }
 
 func (c *TMDBClient) Enrich(ctx context.Context, query string, year int) (*TMDBEnrichment, error) {
-	return c.enrichWithPrefs(ctx, query, year, 0, "")
+	return c.enrichWithPrefs(ctx, query, year, "")
 }
 
-func (c *TMDBClient) enrichWithPrefs(ctx context.Context, query string, year int, preferYear int, preferType string) (*TMDBEnrichment, error) {
+func (c *TMDBClient) enrichWithPrefs(ctx context.Context, query string, year int, preferType string) (*TMDBEnrichment, error) {
 	res, err := c.SearchMulti(ctx, query, year)
 	if err != nil {
 		return nil, err
 	}
+
+	qLower := strings.ToLower(query)
 
 	var best *tmdbCandidate
 
@@ -287,6 +287,14 @@ func (c *TMDBClient) enrichWithPrefs(ctx context.Context, query string, year int
 		if title == "" {
 			title = r.Name
 		}
+
+		// Exclude results whose title doesn't start with the search query.
+		// Prevents false matches like "Baki Dou: The Invincible Samurai"
+		// when searching for "INVINCIBLE".
+		if !strings.HasPrefix(strings.ToLower(title), qLower) {
+			continue
+		}
+
 		releaseDate := r.ReleaseDate
 		if releaseDate == "" {
 			releaseDate = r.FirstAirDate
@@ -294,6 +302,19 @@ func (c *TMDBClient) enrichWithPrefs(ctx context.Context, query string, year int
 		releaseYear := 0
 		if len(releaseDate) >= 4 {
 			fmt.Sscanf(releaseDate[:4], "%d", &releaseYear)
+		}
+
+		score := 0
+		if year > 0 && releaseYear > 0 {
+			diff := year - releaseYear
+			if diff < 0 {
+				diff = -diff
+			}
+			if diff == 0 {
+				score += 3
+			} else if diff <= 1 {
+				score += 1
+			}
 		}
 
 		cand := &tmdbCandidate{
@@ -305,24 +326,8 @@ func (c *TMDBClient) enrichWithPrefs(ctx context.Context, query string, year int
 				Rating:     r.VoteAverage,
 				PosterPath: r.PosterPath,
 			},
-			matchYear: releaseYear,
-			matchType: r.MediaType,
+			score: score,
 		}
-
-		score := 0
-		if preferYear > 0 && releaseYear > 0 {
-			diff := preferYear - releaseYear
-			if diff < 0 {
-				diff = -diff
-			}
-			if diff == 0 {
-				score += 3
-			} else if diff <= 1 {
-				score += 1
-			}
-		}
-
-		cand.score = score
 
 		if best == nil || cand.score > best.score {
 			best = cand
