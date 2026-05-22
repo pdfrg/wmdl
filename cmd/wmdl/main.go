@@ -21,7 +21,7 @@ func main() {
 		Use:   "wmdl",
 		Short: "Weekly Media Downloader",
 		Long: `Automated workflow for discovering, reviewing, and downloading 
-weekly DVD/streaming releases via Prowlarr, qBittorrent, and Radarr/Sonarr.`,
+weekly DVD/streaming releases via Prowlarr, your preferred torrent client, and Radarr/Sonarr.`,
 	}
 
 	cmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file path")

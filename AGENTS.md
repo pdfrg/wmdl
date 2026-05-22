@@ -1,6 +1,6 @@
 # wmdl — Weekly Media Downloader
 
-Go CLI that discovers new DVD/streaming releases weekly, lets user review via TUI, then searches torrents via Prowlarr, downloads via qBittorrent, and adds to Radarr/Sonarr.
+Go CLI that discovers new DVD/streaming releases weekly, lets user review via TUI, then searches torrents via Prowlarr, downloads via your preferred torrent client, and adds to Radarr/Sonarr.
 
 ## Commands
 
