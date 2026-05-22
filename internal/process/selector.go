@@ -50,25 +50,25 @@ func (s *Selector) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		s.height = msg.Height
 
 	case tea.KeyPressMsg:
-		switch msg.String() {
-		case "s", "ctrl+c":
+		switch {
+		case msg.String() == "s", msg.String() == "ctrl+c":
 			s.quit = true
 			return s, tea.Quit
 
-		case "j", "down":
+		case msg.String() == "j", msg.String() == "down":
 			if s.cursor < len(s.releases)-1 {
 				s.cursor++
 			}
 
-		case "k", "up":
+		case msg.String() == "k", msg.String() == "up":
 			if s.cursor > 0 {
 				s.cursor--
 			}
 
-		case " ":
+		case msg.String() == " ", msg.String() == "space":
 			s.toggles[s.cursor] = !s.toggles[s.cursor]
 
-		case "enter":
+		case msg.String() == "enter":
 			var toggled []int
 			for idx, on := range s.toggles {
 				if on {
