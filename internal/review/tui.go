@@ -11,8 +11,8 @@ import (
 	"charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
-	"github.com/pdfrg/wmd/internal/db"
-	"github.com/pdfrg/wmd/internal/model"
+	"github.com/pdfrg/wmdl/internal/db"
+	"github.com/pdfrg/wmdl/internal/model"
 )
 
 type decision int
@@ -328,12 +328,12 @@ func (t *TUI) View() tea.View {
 	var b strings.Builder
 
 	if t.phase == phaseConfirm {
-		b.WriteString(headerStyle.Render(fmt.Sprintf("wmd review — %d pending       [%d/%d]",
+		b.WriteString(headerStyle.Render(fmt.Sprintf("wmdl review — %d pending       [%d/%d]",
 			len(t.items), t.cursor+1, len(t.items))))
 		b.WriteString("\n\n")
 		b.WriteString(t.vpConfirm.View())
 	} else {
-		b.WriteString(headerStyle.Render(fmt.Sprintf("wmd review — %d pending       [%d/%d]",
+		b.WriteString(headerStyle.Render(fmt.Sprintf("wmdl review — %d pending       [%d/%d]",
 			len(t.items), t.cursor+1, len(t.items))))
 		b.WriteString("\n\n")
 		b.WriteString(content)

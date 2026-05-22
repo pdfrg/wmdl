@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/pdfrg/wmd/internal/model"
+	"github.com/pdfrg/wmdl/internal/model"
 )
 
 type FlixPatrolProvider struct {

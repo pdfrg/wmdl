@@ -1,18 +1,18 @@
-# wmd — Weekly Media Downloader
+# wmdl — Weekly Media Downloader
 
 Go CLI that discovers new DVD/streaming releases weekly, lets user review via TUI, then searches torrents via Prowlarr, downloads via qBittorrent, and adds to Radarr/Sonarr.
 
 ## Commands
 
 ```bash
-go build ./cmd/wmd            # build
+go build ./cmd/wmdl            # build
 go test ./...                 # test all
 go vet ./...                  # static analysis
 go fmt ./...                  # format
 golangci-lint run ./...       # full lint
-go run ./cmd/wmd discover     # scrape & notify
-go run ./cmd/wmd review       # TUI approve/reject
-go run ./cmd/wmd process      # TUI picker + download
+go run ./cmd/wmdl discover     # scrape & notify
+go run ./cmd/wmdl review       # TUI approve/reject
+go run ./cmd/wmdl process      # TUI picker + download
 ```
 
 Run all checks before committing:
@@ -23,7 +23,7 @@ go fmt ./... && go vet ./... && golangci-lint run ./... && go test ./...
 ## Project Structure
 
 ```
-cmd/wmd/          — cobra CLI commands
+cmd/wmdl/          — cobra CLI commands
 internal/discover/  — scrapers (interface-based)
 internal/review/    — bubbletea TUI list
 internal/process/   — bubbletea release picker
@@ -48,11 +48,11 @@ internal/config/    — viper config loader
 
 ## State Storage
 
-SQLite at `~/.local/share/wmd/wmd.db`. Key tables: `titles`, `release_events`, `downloads`.
+SQLite at `~/.local/share/wmdl/wmdl.db`. Key tables: `titles`, `release_events`, `downloads`.
 
 ## Config
 
-`~/.config/wmd/config.yaml` — server URLs, tokens, quality prefs.
+`~/.config/wmdl/config.yaml` — server URLs, tokens, quality prefs.
 
 ## Conventions
 

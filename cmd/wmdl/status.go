@@ -8,8 +8,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/pdfrg/wmd/internal/db"
-	"github.com/pdfrg/wmd/internal/model"
+	"github.com/pdfrg/wmdl/internal/db"
+	"github.com/pdfrg/wmdl/internal/model"
 )
 
 func newStatusCmd() *cobra.Command {
@@ -22,7 +22,7 @@ func newStatusCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			database, err := db.Open(filepath.Join(dbPath, "wmd.db"))
+			database, err := db.Open(filepath.Join(dbPath, "wmdl.db"))
 			if err != nil {
 				return fmt.Errorf("opening database: %w", err)
 			}
@@ -34,7 +34,7 @@ func newStatusCmd() *cobra.Command {
 			}
 
 			if len(allStates) == 0 {
-				fmt.Println("No week tracking data yet. Run 'wmd discover' first.")
+				fmt.Println("No week tracking data yet. Run 'wmdl discover' first.")
 				return nil
 			}
 
@@ -62,11 +62,11 @@ func newStatusCmd() *cobra.Command {
 			var todo []string
 			for _, s := range allStates {
 				if !s.Discovered {
-					todo = append(todo, fmt.Sprintf("wmd discover (W%02d %d)", s.Week, s.Year))
+					todo = append(todo, fmt.Sprintf("wmdl discover (W%02d %d)", s.Week, s.Year))
 				} else if !s.Reviewed {
-					todo = append(todo, fmt.Sprintf("wmd review (W%02d %d)", s.Week, s.Year))
+					todo = append(todo, fmt.Sprintf("wmdl review (W%02d %d)", s.Week, s.Year))
 				} else if !s.Processed {
-					todo = append(todo, fmt.Sprintf("wmd process (W%02d %d)", s.Week, s.Year))
+					todo = append(todo, fmt.Sprintf("wmdl process (W%02d %d)", s.Week, s.Year))
 				}
 			}
 
@@ -75,7 +75,7 @@ func newStatusCmd() *cobra.Command {
 				for _, t := range todo {
 					fmt.Fprintf(os.Stderr, "  - %s\n", t)
 				}
-				fmt.Fprintf(os.Stderr, "\nRun 'wmd catchup' to process all pending.\n")
+				fmt.Fprintf(os.Stderr, "\nRun 'wmdl catchup' to process all pending.\n")
 			} else {
 				fmt.Println("\nAll caught up!")
 			}

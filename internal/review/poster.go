@@ -16,7 +16,7 @@ import (
 	"github.com/disintegration/imaging"
 	"github.com/dolmen-go/kittyimg"
 
-	"github.com/pdfrg/wmd/internal/model"
+	"github.com/pdfrg/wmdl/internal/model"
 
 	_ "image/jpeg"
 )
@@ -83,7 +83,7 @@ func posterCacheDir() (string, error) {
 		}
 		cacheBase = filepath.Join(home, ".cache")
 	}
-	dir := filepath.Join(cacheBase, "wmd", "posters")
+	dir := filepath.Join(cacheBase, "wmdl", "posters")
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return "", err
 	}

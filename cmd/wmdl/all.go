@@ -6,8 +6,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/pdfrg/wmd/internal/config"
-	"github.com/pdfrg/wmd/internal/db"
+	"github.com/pdfrg/wmdl/internal/config"
+	"github.com/pdfrg/wmdl/internal/db"
 )
 
 func newAllCmd() *cobra.Command {
@@ -26,7 +26,7 @@ skipping the intermediate chain prompts.`,
 			if err != nil {
 				return err
 			}
-			database, err := db.Open(filepath.Join(dbPath, "wmd.db"))
+			database, err := db.Open(filepath.Join(dbPath, "wmdl.db"))
 			if err != nil {
 				return fmt.Errorf("opening database: %w", err)
 			}

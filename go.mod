@@ -1,4 +1,4 @@
-module github.com/pdfrg/wmd
+module github.com/pdfrg/wmdl
 
 go 1.26
 

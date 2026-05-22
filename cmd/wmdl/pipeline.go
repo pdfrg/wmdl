@@ -6,12 +6,12 @@ import (
 	"log"
 	"os"
 
-	"github.com/pdfrg/wmd/internal/config"
-	"github.com/pdfrg/wmd/internal/db"
-	"github.com/pdfrg/wmd/internal/discover"
-	"github.com/pdfrg/wmd/internal/model"
-	"github.com/pdfrg/wmd/internal/process"
-	"github.com/pdfrg/wmd/internal/review"
+	"github.com/pdfrg/wmdl/internal/config"
+	"github.com/pdfrg/wmdl/internal/db"
+	"github.com/pdfrg/wmdl/internal/discover"
+	"github.com/pdfrg/wmdl/internal/model"
+	"github.com/pdfrg/wmdl/internal/process"
+	"github.com/pdfrg/wmdl/internal/review"
 )
 
 func runDiscoverForWeek(ctx context.Context, database *db.DB, cfg *config.Config, year, week int, headless bool) error {
@@ -59,7 +59,7 @@ func runReviewForWeek(ctx context.Context, database *db.DB, cfg *config.Config, 
 			return 0, fmt.Errorf("finding target week: %w", err)
 		}
 		if target == nil {
-			fmt.Fprintln(os.Stderr, "No weeks discovered yet. Run 'wmd discover' first.")
+			fmt.Fprintln(os.Stderr, "No weeks discovered yet. Run 'wmdl discover' first.")
 			return 0, nil
 		}
 	}
@@ -169,7 +169,7 @@ func runProcessForWeek(ctx context.Context, database *db.DB, cfg *config.Config,
 		}
 		if target == nil {
 			log.Println("No weeks discovered yet.")
-			log.Println("Run 'wmd discover' first.")
+			log.Println("Run 'wmdl discover' first.")
 			return nil
 		}
 	}

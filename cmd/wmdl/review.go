@@ -8,9 +8,9 @@ import (
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 
-	"github.com/pdfrg/wmd/internal/config"
-	"github.com/pdfrg/wmd/internal/db"
-	"github.com/pdfrg/wmd/internal/model"
+	"github.com/pdfrg/wmdl/internal/config"
+	"github.com/pdfrg/wmdl/internal/db"
+	"github.com/pdfrg/wmdl/internal/model"
 )
 
 func newReviewCmd() *cobra.Command {
@@ -28,7 +28,7 @@ func newReviewCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			database, err := db.Open(filepath.Join(dbPath, "wmd.db"))
+			database, err := db.Open(filepath.Join(dbPath, "wmdl.db"))
 			if err != nil {
 				return fmt.Errorf("opening database: %w", err)
 			}

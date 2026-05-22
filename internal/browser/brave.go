@@ -20,7 +20,7 @@ func EnsureRunning(binary string, debugPort int, profile string, headless bool) 
 		return nil, nil
 	}
 
-	userDataDir := filepath.Join(os.ExpandEnv("$HOME/.local/share/wmd/browser"), profile)
+	userDataDir := filepath.Join(os.ExpandEnv("$HOME/.local/share/wmdl/browser"), profile)
 	if err := os.MkdirAll(userDataDir, 0755); err != nil {
 		return nil, fmt.Errorf("creating %s data dir: %w", binary, err)
 	}

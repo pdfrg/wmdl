@@ -1,0 +1,26 @@
+# wmdl-discover.timer — runs wmdl discover every Wednesday at 05:00
+#
+# Install:
+#   cp contrib/wmdl-discover.service  ~/.config/systemd/user/
+#   cp contrib/wmdl-discover.timer    ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now wmdl-discover.timer
+#
+# Check:
+#   systemctl --user list-timers
+#   journalctl --user -u wmdl-discover.service --since today
+
+[Unit]
+Description=Run wmdl discover every Wednesday
+Documentation=https://github.com/pdfrg/wmdl
+
+[Timer]
+OnCalendar=Wed 05:00
+Persistent=true
+
+# If the previous run missed its window (e.g. machine was off),
+# trigger immediately on next boot up to 1 hour after the scheduled time.
+AccuracySec=1h
+
+[Install]
+WantedBy=timers.target

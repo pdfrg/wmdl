@@ -3,7 +3,7 @@ package discover
 import (
 	"time"
 
-	"github.com/pdfrg/wmd/internal/model"
+	"github.com/pdfrg/wmdl/internal/model"
 )
 
 func isoWeekToDate(year, week int) time.Time {

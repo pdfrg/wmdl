@@ -111,7 +111,7 @@ type MediaQualityConfig struct {
 }
 
 const configName = "config"
-const appName = "wmd"
+const appName = "wmdl"
 
 func Load() (*Config, error) {
 	v := viper.New()

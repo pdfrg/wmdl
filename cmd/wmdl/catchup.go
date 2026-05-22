@@ -9,8 +9,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/pdfrg/wmd/internal/config"
-	"github.com/pdfrg/wmd/internal/db"
+	"github.com/pdfrg/wmdl/internal/config"
+	"github.com/pdfrg/wmdl/internal/db"
 )
 
 func newCatchupCmd() *cobra.Command {
@@ -34,7 +34,7 @@ one week at a time — use catchup to handle all outstanding weeks.`,
 			if err != nil {
 				return err
 			}
-			database, err := db.Open(filepath.Join(dbPath, "wmd.db"))
+			database, err := db.Open(filepath.Join(dbPath, "wmdl.db"))
 			if err != nil {
 				return fmt.Errorf("opening database: %w", err)
 			}
@@ -86,9 +86,9 @@ one week at a time — use catchup to handle all outstanding weeks.`,
 					}
 				}
 				if hasRemaining {
-					log.Println("Some weeks still have pending steps. Run 'wmd catchup' again to continue.")
+					log.Println("Some weeks still have pending steps. Run 'wmdl catchup' again to continue.")
 				} else {
-					log.Println("All caught up! Run 'wmd status' to verify.")
+					log.Println("All caught up! Run 'wmdl status' to verify.")
 				}
 			}
 
@@ -108,7 +108,7 @@ func runDiscover(cmd *cobra.Command, headless bool) error {
 	if err != nil {
 		return err
 	}
-	database, err := db.Open(filepath.Join(dbPath, "wmd.db"))
+	database, err := db.Open(filepath.Join(dbPath, "wmdl.db"))
 	if err != nil {
 		return err
 	}
@@ -136,7 +136,7 @@ func runProcess(cmd *cobra.Command) error {
 	if err != nil {
 		return err
 	}
-	database, err := db.Open(filepath.Join(dbPath, "wmd.db"))
+	database, err := db.Open(filepath.Join(dbPath, "wmdl.db"))
 	if err != nil {
 		return err
 	}

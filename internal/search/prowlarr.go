@@ -9,7 +9,7 @@ import (
 	"net/url"
 	"time"
 
-	"github.com/pdfrg/wmd/internal/quality"
+	"github.com/pdfrg/wmdl/internal/quality"
 )
 
 type ProwlarrClient struct {

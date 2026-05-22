@@ -8,8 +8,8 @@ import (
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 
-	"github.com/pdfrg/wmd/internal/config"
-	"github.com/pdfrg/wmd/internal/db"
+	"github.com/pdfrg/wmdl/internal/config"
+	"github.com/pdfrg/wmdl/internal/db"
 )
 
 func newDiscoverCmd() *cobra.Command {
@@ -27,7 +27,7 @@ func newDiscoverCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			database, err := db.Open(filepath.Join(dbPath, "wmd.db"))
+			database, err := db.Open(filepath.Join(dbPath, "wmdl.db"))
 			if err != nil {
 				return fmt.Errorf("opening database: %w", err)
 			}
@@ -68,7 +68,7 @@ func dataDir() (string, error) {
 		}
 		base = filepath.Join(home, ".local", "share")
 	}
-	dir := filepath.Join(base, "wmd")
+	dir := filepath.Join(base, "wmdl")
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return "", fmt.Errorf("creating data dir: %w", err)
 	}

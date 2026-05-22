@@ -18,7 +18,7 @@ func main() {
 		Logger()
 
 	cmd := &cobra.Command{
-		Use:   "wmd",
+		Use:   "wmdl",
 		Short: "Weekly Media Downloader",
 		Long: `Automated workflow for discovering, reviewing, and downloading 
 weekly DVD/streaming releases via Prowlarr, qBittorrent, and Radarr/Sonarr.`,

@@ -7,7 +7,7 @@ import (
 	"charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
-	"github.com/pdfrg/wmd/internal/quality"
+	"github.com/pdfrg/wmdl/internal/quality"
 )
 
 type Selector struct {

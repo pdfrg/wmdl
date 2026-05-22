@@ -12,11 +12,11 @@ import (
 
 	"github.com/chromedp/chromedp"
 
-	"github.com/pdfrg/wmd/internal/browser"
-	"github.com/pdfrg/wmd/internal/config"
-	"github.com/pdfrg/wmd/internal/db"
-	"github.com/pdfrg/wmd/internal/model"
-	"github.com/pdfrg/wmd/internal/notifier"
+	"github.com/pdfrg/wmdl/internal/browser"
+	"github.com/pdfrg/wmdl/internal/config"
+	"github.com/pdfrg/wmdl/internal/db"
+	"github.com/pdfrg/wmdl/internal/model"
+	"github.com/pdfrg/wmdl/internal/notifier"
 )
 
 type Runner struct {
@@ -182,7 +182,7 @@ func (r *Runner) Run(ctx context.Context) error {
 			}
 			count++
 		}
-		if err := r.notify.Send("wmd: New Releases", msg, 5); err != nil {
+		if err := r.notify.Send("wmdl: New Releases", msg, 5); err != nil {
 			log.Printf("Warning: notification failed: %v", err)
 		}
 	}

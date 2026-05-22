@@ -1,0 +1,25 @@
+# wmdl-discover.service — oneshot unit for wmdl discover
+#
+# Install:
+#   cp contrib/wmdl-discover.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#
+# Paths: adjust ExecStart to match your `which wmdl` or build output.
+# Requires: a working $HOME/.config/wmdl/config.yaml.
+
+[Unit]
+Description=wmdl — weekly media discovery
+Documentation=https://github.com/pdfrg/wmdl
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=%h/go/bin/wmdl discover --headless
+
+# Hardening
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=%h/.local/share/wmdl
+PrivateTmp=true
+NoNewPrivileges=true

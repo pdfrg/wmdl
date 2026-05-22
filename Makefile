@@ -1,5 +1,5 @@
-BIN  = wmd
-BUILD = go build -o $(BIN) ./cmd/wmd
+BIN  = wmdl
+BUILD = go build -o $(BIN) ./cmd/wmdl
 
 .PHONY: all build test vet fmt lint clean run-discover run-review run-process run-check
 
@@ -23,13 +23,13 @@ lint:
 check: fmt vet lint test build
 
 run-discover:
-	go run ./cmd/wmd discover
+	go run ./cmd/wmdl discover
 
 run-review:
-	go run ./cmd/wmd review
+	go run ./cmd/wmdl review
 
 run-process:
-	go run ./cmd/wmd process
+	go run ./cmd/wmdl process
 
 clean:
 	rm -f $(BIN)

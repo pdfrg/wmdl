@@ -8,13 +8,13 @@ import (
 	"os"
 	"strings"
 
-	"github.com/pdfrg/wmd/internal/config"
-	"github.com/pdfrg/wmd/internal/db"
-	"github.com/pdfrg/wmd/internal/download"
-	"github.com/pdfrg/wmd/internal/library"
-	"github.com/pdfrg/wmd/internal/model"
-	"github.com/pdfrg/wmd/internal/quality"
-	"github.com/pdfrg/wmd/internal/search"
+	"github.com/pdfrg/wmdl/internal/config"
+	"github.com/pdfrg/wmdl/internal/db"
+	"github.com/pdfrg/wmdl/internal/download"
+	"github.com/pdfrg/wmdl/internal/library"
+	"github.com/pdfrg/wmdl/internal/model"
+	"github.com/pdfrg/wmdl/internal/quality"
+	"github.com/pdfrg/wmdl/internal/search"
 )
 
 type ProcessResult int

@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/pdfrg/wmd/internal/model"
+	"github.com/pdfrg/wmdl/internal/model"
 )
 
 type TMDBDiscoverProvider struct {

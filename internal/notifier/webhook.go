@@ -9,7 +9,7 @@ import (
 	"text/template"
 	"time"
 
-	"github.com/pdfrg/wmd/internal/config"
+	"github.com/pdfrg/wmdl/internal/config"
 )
 
 type webhook struct {

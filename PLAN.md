@@ -1,4 +1,4 @@
-# wmd — Architecture Plan
+# wmdl — Architecture Plan
 
 ## Overview
 
@@ -14,7 +14,7 @@ Automated weekly media workflow:
 
 ```
 ┌─────────────────┐     ┌─────────────────┐     ┌──────────────────────────┐
-│  wmd discover   │ ──> │  wmd review     │ ──> │  wmd process             │
+│  wmdl discover  │ ──> │  wmdl review     │ ──> │  wmdl process            │
 │ (cron weekly)   │     │ (user-initiated)│     │ (user-initiated)         │
 ├─────────────────┤     ├─────────────────┤     ├──────────────────────────┤
 │ Scrape sources  │     │ TUI: list view  │     │ Grab Brave tabs (CDP)    │
@@ -36,11 +36,11 @@ Automated weekly media workflow:
 ## Project Tree
 
 ```
-cmd/wmd/
+cmd/wmdl/
 ├── main.go              # cobra root
-├── discover.go          # wmd discover
-├── review.go            # wmd review (TUI list)
-└── process.go           # wmd process (TUI picker)
+├── discover.go          # wmdl discover
+├── review.go            # wmdl review (TUI list)
+└── process.go           # wmdl process (TUI picker)
 
 internal/
 ├── discover/
@@ -138,7 +138,7 @@ Score each Prowlarr result and show top N in TUI picker:
 | Seeders | 40 | min(40, log2(seeders+1) × 6) |
 | Bitrate estimate | 30 | size/time if runtime known |
 
-## Config File (~/.config/wmd/config.yaml)
+## Config File (~/.config/wmdl/config.yaml)
 
 ```yaml
 notifier:
@@ -213,19 +213,19 @@ preferred_release_groups: []
 - [ ] DVDReleaseDates scraper
 - [ ] FlixPatrol scraper
 - [ ] Gotify notifier
-- [ ] `wmd discover` command
+- [ ] `wmdl discover` command
 
 ### Phase 3: Review
 - [ ] bubbletea list-based TUI
 - [ ] Approve/reject/open-in-brave actions
-- [ ] `wmd review` command
+- [ ] `wmdl review` command
 
 ### Phase 4: Processing
 - [ ] Brave CDP tab grabber
 - [ ] Prowlarr search client
 - [ ] Release title parser + quality scorer
 - [ ] bubbletea release picker TUI
-- [ ] `wmd process` command
+- [ ] `wmdl process` command
 
 ### Phase 5: Download & Library
 - [ ] DownloadClient interface + qBittorrent impl
