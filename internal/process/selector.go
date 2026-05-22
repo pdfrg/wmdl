@@ -123,6 +123,9 @@ func (s *Selector) View() tea.View {
 		if r.ReleaseGroup != "" {
 			line += fmt.Sprintf("  ┃  %s", r.ReleaseGroup)
 		}
+		if r.IndexerName != "" {
+			line += fmt.Sprintf("  ┃  %s", r.IndexerName)
+		}
 
 		if idx == s.cursor {
 			b.WriteString(selSelectedStyle.Render(line))

@@ -156,6 +156,7 @@ func convertToReleases(pr []prowlarrRelease) []quality.ParsedRelease {
 		parsed.SizeBytes = r.Size
 		parsed.RawTitle = r.Title
 		parsed.IndexerID = r.IndexerID
+		parsed.IndexerName = r.Indexer
 		parsed.Guid = r.Guid
 		parsed.DownloadURL = r.DownloadURL
 		parsed.MagnetURL = r.MagnetURL

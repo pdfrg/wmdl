@@ -20,6 +20,7 @@ type ParsedRelease struct {
 
 	// Prowlarr-specific
 	IndexerID   int
+	IndexerName string
 	Guid        string
 	DownloadURL string
 	MagnetURL   string
