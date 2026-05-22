@@ -114,6 +114,7 @@ pageLoop:
 			ImdbRating:     item.IMDbRating,
 			RTCriticsScore: item.RTCriticsScore,
 			YoutubeViews:   item.YoutubeView,
+			Source:         "flixpatrol",
 		})
 	}
 

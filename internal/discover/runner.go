@@ -173,13 +173,17 @@ func (r *Runner) processItem(ctx context.Context, item ScrapedItem) error {
 	var enrich *TMDBEnrichment
 	var imdbID string
 
-	enrich, err := r.tmdb.Enrich(apiCtx, searchTitle, item.Year)
+	var preferType string
+	if item.Source != "dvdsreleasedates" {
+		preferType = string(item.MediaType)
+	}
+
+	enrich, err := r.tmdb.enrichWithPrefs(apiCtx, searchTitle, item.Year, item.Year, preferType)
 	if err == nil {
-		mediaType = model.MediaType(enrich.MediaType)
 		tmdbID = enrich.TMDBID
 		rating = enrich.Rating
 		imdbID = enrich.IMDbID
-		log.Printf("  TMDB: ID=%d rating=%.1f", tmdbID, rating)
+		log.Printf("  TMDB: ID=%d rating=%.1f media=%s", tmdbID, rating, enrich.MediaType)
 	} else {
 		log.Printf("  TMDB lookup failed: %v", err)
 		imdbID = item.ImdbID

@@ -51,6 +51,7 @@ func (t *TMDBDiscoverProvider) Scrape() ([]ScrapedItem, error) {
 			MediaType:   model.MediaTypeMovie,
 			ReleaseType: model.ReleaseStreaming,
 			ReleaseDate: m.Date,
+			Source:      "tmdb-discover",
 		})
 	}
 
@@ -66,6 +67,7 @@ func (t *TMDBDiscoverProvider) Scrape() ([]ScrapedItem, error) {
 			MediaType:   model.MediaTypeTV,
 			ReleaseType: model.ReleaseStreaming,
 			ReleaseDate: t.Date,
+			Source:      "tmdb-discover",
 		})
 	}
 

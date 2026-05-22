@@ -255,17 +255,34 @@ func (c *TMDBClient) SearchMulti(ctx context.Context, query string, year int) (*
 	return &result, nil
 }
 
+type tmdbCandidate struct {
+	enrich     *TMDBEnrichment
+	score      int
+	matchYear  int
+	matchType  string
+}
+
 func (c *TMDBClient) Enrich(ctx context.Context, query string, year int) (*TMDBEnrichment, error) {
+	return c.enrichWithPrefs(ctx, query, year, 0, "")
+}
+
+func (c *TMDBClient) enrichWithPrefs(ctx context.Context, query string, year int, preferYear int, preferType string) (*TMDBEnrichment, error) {
 	res, err := c.SearchMulti(ctx, query, year)
 	if err != nil {
 		return nil, err
 	}
 
-	// Filter to movie/tv results and find best match
+	var best *tmdbCandidate
+
 	for _, r := range res.Results {
 		if r.MediaType != "movie" && r.MediaType != "tv" {
 			continue
 		}
+
+		if preferType != "" && r.MediaType != preferType {
+			continue
+		}
+
 		title := r.Title
 		if title == "" {
 			title = r.Name
@@ -279,43 +296,70 @@ func (c *TMDBClient) Enrich(ctx context.Context, query string, year int) (*TMDBE
 			fmt.Sscanf(releaseDate[:4], "%d", &releaseYear)
 		}
 
-		enrich := &TMDBEnrichment{
-			TMDBID:     r.ID,
-			MediaType:  r.MediaType,
-			Title:      title,
-			Year:       releaseYear,
-			Rating:     r.VoteAverage,
-			PosterPath: r.PosterPath,
+		cand := &tmdbCandidate{
+			enrich: &TMDBEnrichment{
+				TMDBID:     r.ID,
+				MediaType:  r.MediaType,
+				Title:      title,
+				Year:       releaseYear,
+				Rating:     r.VoteAverage,
+				PosterPath: r.PosterPath,
+			},
+			matchYear: releaseYear,
+			matchType: r.MediaType,
 		}
 
-		// Fetch external IDs for IMDb/TVDB
-		extIDs, err := c.getExternalIDs(ctx, r.ID, r.MediaType)
-		if err == nil {
-			enrich.IMDbID = extIDs.IMDbID
-			enrich.TVDBID = extIDs.TVDBID
-		}
-
-		// Fetch details (overview, genres, runtime)
-		var details *TMDBDetails
-		if r.MediaType == "movie" {
-			details, err = c.GetMovieDetails(ctx, r.ID)
-		} else {
-			details, err = c.GetTVDetails(ctx, r.ID)
-		}
-		if err == nil && details != nil {
-			enrich.Overview = details.Overview
-			var genreNames []string
-			for _, g := range details.Genres {
-				genreNames = append(genreNames, g.Name)
+		score := 0
+		if preferYear > 0 && releaseYear > 0 {
+			diff := preferYear - releaseYear
+			if diff < 0 {
+				diff = -diff
 			}
-			enrich.Genres = strings.Join(genreNames, ", ")
-			enrich.Runtime = details.Runtime
+			if diff == 0 {
+				score += 3
+			} else if diff <= 1 {
+				score += 1
+			}
 		}
 
-		return enrich, nil
+		cand.score = score
+
+		if best == nil || cand.score > best.score {
+			best = cand
+		}
 	}
 
-	return nil, fmt.Errorf("no TMDB results for %q (%d)", query, year)
+	if best == nil {
+		return nil, fmt.Errorf("no TMDB results for %q (%d)", query, year)
+	}
+
+	enrich := best.enrich
+
+	// Fetch external IDs for IMDb/TVDB
+	extIDs, err := c.getExternalIDs(ctx, enrich.TMDBID, enrich.MediaType)
+	if err == nil {
+		enrich.IMDbID = extIDs.IMDbID
+		enrich.TVDBID = extIDs.TVDBID
+	}
+
+	// Fetch details (overview, genres, runtime)
+	var details *TMDBDetails
+	if enrich.MediaType == "movie" {
+		details, err = c.GetMovieDetails(ctx, enrich.TMDBID)
+	} else {
+		details, err = c.GetTVDetails(ctx, enrich.TMDBID)
+	}
+	if err == nil && details != nil {
+		enrich.Overview = details.Overview
+		var genreNames []string
+		for _, g := range details.Genres {
+			genreNames = append(genreNames, g.Name)
+		}
+		enrich.Genres = strings.Join(genreNames, ", ")
+		enrich.Runtime = details.Runtime
+	}
+
+	return enrich, nil
 }
 
 func (c *TMDBClient) getExternalIDs(ctx context.Context, tmdbID int, mediaType string) (*TMDBExternalIDs, error) {

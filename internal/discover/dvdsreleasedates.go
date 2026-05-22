@@ -100,6 +100,7 @@ func (d *DVDReleaseDates) Scrape() ([]ScrapedItem, error) {
 				ReleaseDate: targetDate.Format("2006-01-02"),
 				ImdbID:      imdbID,
 				ImdbRating:  imdbRating,
+				Source:      "dvdsreleasedates",
 			})
 		})
 

@@ -18,4 +18,5 @@ type ScrapedItem struct {
 	RTCriticsScore  float64
 	RTAudienceScore float64
 	YoutubeViews    int64
+	Source          string
 }
