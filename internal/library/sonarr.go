@@ -31,6 +31,7 @@ type SonarrSeries struct {
 	TVDBID            int               `json:"tvdbId"`
 	Title             string            `json:"title"`
 	Year              int               `json:"year"`
+	Overview          string            `json:"overview"`
 	Monitored         bool              `json:"monitored"`
 	SeasonFolder      bool              `json:"seasonFolder"`
 	QualityProfileID  int               `json:"qualityProfileId"`

@@ -338,6 +338,27 @@ func (e *Executor) addToRadarr(ctx context.Context, evt db.EventWithTitle) error
 		return nil
 	}
 
+	lookup, err := e.radarr.Lookup(ctx, tmdbID)
+	if err != nil {
+		return err
+	}
+	if lookup == nil {
+		return fmt.Errorf("movie not found on TMDB (tmdb_id=%d)", tmdbID)
+	}
+
+	log.Printf("  Add to Radarr?")
+	log.Printf("    %s (%d)", lookup.Title, lookup.Year)
+	if lookup.Overview != "" {
+		for _, line := range formatOverview(lookup.Overview, 72) {
+			log.Printf("    %s", line)
+		}
+	}
+	log.Printf("    Profile: %s", e.cfg.Library.Radarr.QualityProfile)
+	log.Printf("    Root:    %s", e.cfg.Library.Radarr.RootFolder)
+	if !promptYesNo("  Add to Radarr?") {
+		return nil
+	}
+
 	profiles, err := e.radarr.GetQualityProfiles(ctx)
 	if err != nil {
 		return err
@@ -350,7 +371,7 @@ func (e *Executor) addToRadarr(ctx context.Context, evt db.EventWithTitle) error
 		}
 	}
 
-	added, err := e.radarr.Add(ctx, tmdbID, evt.Title.Title, evt.Title.Year, library.AddMovieOptions{
+	added, err := e.radarr.Add(ctx, tmdbID, lookup.Title, lookup.Year, library.AddMovieOptions{
 		Monitored:           e.cfg.Library.Radarr.Monitor,
 		MinimumAvailability: "released",
 		QualityProfileID:    profileID,
@@ -403,6 +424,19 @@ func (e *Executor) addToSonarr(ctx context.Context, evt db.EventWithTitle, seaso
 		return fmt.Errorf("series not found on TVDB (tvdb_id=%d)", tvdbID)
 	}
 
+	log.Printf("  Add to Sonarr?")
+	log.Printf("    %s (%d)", lookup.Title, lookup.Year)
+	if lookup.Overview != "" {
+		for _, line := range formatOverview(lookup.Overview, 72) {
+			log.Printf("    %s", line)
+		}
+	}
+	log.Printf("    Profile: %s", e.cfg.Library.Sonarr.QualityProfile)
+	log.Printf("    Root:    %s", e.cfg.Library.Sonarr.RootFolder)
+	if !promptYesNo("  Add to Sonarr?") {
+		return nil
+	}
+
 	profiles, err := e.sonarr.GetQualityProfiles(ctx)
 	if err != nil {
 		return err
@@ -434,7 +468,7 @@ func (e *Executor) addToSonarr(ctx context.Context, evt db.EventWithTitle, seaso
 		}
 	}
 
-	added, err := e.sonarr.Add(ctx, tvdbID, evt.Title.Title, evt.Title.Year, library.AddSeriesOptions{
+	added, err := e.sonarr.Add(ctx, tvdbID, lookup.Title, lookup.Year, library.AddSeriesOptions{
 		Monitored:         true,
 		SeasonFolder:      e.cfg.Library.Sonarr.SeasonFolders,
 		QualityProfileID:  profileID,
@@ -541,6 +575,22 @@ func promptYesNo(prompt string) bool {
 		return ans == "y" || ans == "yes"
 	}
 	return false
+}
+
+func formatOverview(text string, maxWidth int) []string {
+	var lines []string
+	for _, w := range strings.Fields(text) {
+		if len(lines) == 0 || len(lines[len(lines)-1])+len(w)+1 > maxWidth {
+			lines = append(lines, w)
+		} else {
+			lines[len(lines)-1] += " " + w
+		}
+	}
+	if len(lines) > 5 {
+		lines = lines[:5]
+		lines[4] += " ..."
+	}
+	return lines
 }
 
 func buildQualityPrefs(cfg *config.Config, mediaType model.MediaType) quality.QualityPrefs {

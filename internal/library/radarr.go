@@ -31,6 +31,7 @@ type RadarrMovie struct {
 	TMDBID              int                  `json:"tmdbId"`
 	Title               string               `json:"title"`
 	Year                int                  `json:"year"`
+	Overview            string               `json:"overview"`
 	Monitored           bool                 `json:"monitored"`
 	MinimumAvailability string               `json:"minimumAvailability"`
 	QualityProfileID    int                  `json:"qualityProfileId"`
