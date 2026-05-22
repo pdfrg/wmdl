@@ -81,6 +81,9 @@ func (s *Selector) View() tea.View {
 	b.WriteString("\n\n")
 
 	maxY := s.height - 5
+	if maxY < 1 {
+		maxY = 1
+	}
 	start := 0
 	if s.cursor >= maxY {
 		start = s.cursor - maxY + 1

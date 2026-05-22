@@ -103,6 +103,8 @@ func (r *Runner) Run(ctx context.Context) error {
 		unique = append(unique, item)
 	}
 
+	progYear, progWeek := programWeekFromItems(unique)
+
 	var processed int
 	var mu sync.Mutex
 	var wg sync.WaitGroup
@@ -115,7 +117,7 @@ func (r *Runner) Run(ctx context.Context) error {
 			sem <- struct{}{}
 			defer func() { <-sem }()
 
-			if err := r.processItem(ctx, item); err != nil {
+			if err := r.processItem(ctx, item, progYear, progWeek); err != nil {
 				log.Printf("  Error processing %q: %v", item.Title, err)
 				return
 			}
@@ -160,7 +162,31 @@ func (r *Runner) Run(ctx context.Context) error {
 	return nil
 }
 
-func (r *Runner) processItem(ctx context.Context, item ScrapedItem) error {
+func programWeekFromItems(items []ScrapedItem) (int, int) {
+	for _, item := range items {
+		if item.ReleaseType != model.ReleasePhysical || item.ReleaseDate == "" {
+			continue
+		}
+		t, err := time.Parse("2006-01-02", item.ReleaseDate)
+		if err != nil {
+			continue
+		}
+		return t.ISOWeek()
+	}
+	for _, item := range items {
+		if item.ReleaseDate == "" {
+			continue
+		}
+		t, err := time.Parse("2006-01-02", item.ReleaseDate)
+		if err != nil {
+			continue
+		}
+		return t.ISOWeek()
+	}
+	return time.Now().ISOWeek()
+}
+
+func (r *Runner) processItem(ctx context.Context, item ScrapedItem, progYear, progWeek int) error {
 	searchTitle := cleanTitleForSearch(item.Title)
 	log.Printf("Processing %q (%d)...", item.Title, item.Year)
 
@@ -343,6 +369,8 @@ func (r *Runner) processItem(ctx context.Context, item ScrapedItem) error {
 		Status:         status,
 		PreviousStatus: prevStatus,
 		Notes:          notes,
+		ISOYear:        progYear,
+		ISOWeek:        progWeek,
 	}
 
 	// If previous event was downloaded and this is new, mark the old as "upgraded"

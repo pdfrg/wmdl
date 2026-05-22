@@ -9,6 +9,12 @@ browser:
 prowlarr:
   url: "http://prowlarr.local:9696"
   api_key: ""
+  # Timeout in seconds for Prowlarr searches (default: 120)
+  # Increase if you have many indexers that take long to respond
+  timeout: 120
+  # Preferred indexer ID. Set to 0 to search all indexers.
+  # Prowlarr API: /api/v1/search with indexerIds param
+  indexer_id: 0
 
 tmdb:
   # Get a free API key at https://www.themoviedb.org/settings/api

@@ -17,6 +17,14 @@ import (
 	"github.com/pdfrg/wmd/internal/search"
 )
 
+type ProcessResult int
+
+const (
+	ResultProcessed ProcessResult = iota
+	ResultSkipped
+	ResultNotFound
+)
+
 type Executor struct {
 	cfg    *config.Config
 	db     *db.DB
@@ -24,6 +32,8 @@ type Executor struct {
 	dl     download.Client
 	radarr *library.RadarrClient
 	sonarr *library.SonarrClient
+
+	Unfound []string
 }
 
 func NewExecutor(cfg *config.Config, database *db.DB) *Executor {
@@ -33,7 +43,7 @@ func NewExecutor(cfg *config.Config, database *db.DB) *Executor {
 	return &Executor{
 		cfg:    cfg,
 		db:     database,
-		prowl:  search.NewProwlarrClient(cfg.Prowlarr.URL, cfg.Prowlarr.APIKey),
+		prowl:  search.NewProwlarrClient(cfg.Prowlarr.URL, cfg.Prowlarr.APIKey, cfg.Prowlarr.Timeout),
 		dl:     dl,
 		radarr: radarr,
 		sonarr: sonarr,
@@ -69,36 +79,20 @@ func (e *Executor) ProcessApproved(ctx context.Context, evt db.EventWithTitle) e
 	title := evt.Title
 	log.Printf("Processing: %s (%d)", title.Title, title.Year)
 
-	// Build search query
-	query := fmt.Sprintf("%s %d", title.Title, title.Year)
-	if title.MediaType == model.MediaTypeTV {
-		query = title.Title
-	}
+	season := quality.ParseSeasonNumber(title.Title)
 
-	// Search Prowlarr
-	var releases []quality.ParsedRelease
-	var err error
-	if title.MediaType == model.MediaTypeMovie {
-		releases, err = e.prowl.SearchMovies(ctx, query)
-	} else {
-		releases, err = e.prowl.SearchTV(ctx, query)
-	}
+	releases, err := e.searchRelease(ctx, title, season)
 	if err != nil {
-		return fmt.Errorf("prowlarr search: %w", err)
+		return fmt.Errorf("searching releases: %w", err)
 	}
-
 	if len(releases) == 0 {
-		log.Printf("  No results for %q", query)
+		e.Unfound = append(e.Unfound, fmt.Sprintf("%s (%d)", title.Title, title.Year))
 		return nil
 	}
 
-	// Build quality preferences
 	prefs := buildQualityPrefs(e.cfg, title.MediaType)
-
-	// Score and sort
 	top := quality.SortAndTop(releases, prefs, e.cfg.ShowTopN)
 
-	// Show picker
 	sel := NewSelector(title.Title, top)
 	chosen, err := sel.Run()
 	if err != nil {
@@ -111,12 +105,6 @@ func (e *Executor) ProcessApproved(ctx context.Context, evt db.EventWithTitle) e
 
 	log.Printf("  Selected: %s (score %d)", chosen.RawTitle, chosen.Score)
 
-	// Grab via Prowlarr (sends to Prowlarr's configured download client)
-	if err := e.prowl.Grab(ctx, chosen.IndexerID, chosen.Guid); err != nil {
-		return fmt.Errorf("prowlarr grab: %w", err)
-	}
-
-	// Also add directly to our download client for proper category tagging
 	if e.dl != nil {
 		category := e.cfg.Downloader.Categories.Movies
 		if title.MediaType == model.MediaTypeTV {
@@ -127,14 +115,30 @@ func (e *Executor) ProcessApproved(ctx context.Context, evt db.EventWithTitle) e
 		if uri == "" {
 			uri = chosen.MagnetURL
 		}
+		var torrentID string
 		if uri != "" {
-			if _, err := e.dl.AddTorrent(uri, download.WithCategory(category)); err != nil {
-				log.Printf("  Warning: direct add failed (Prowlarr grab may have succeeded): %v", err)
+			torrentID, err = e.dl.AddTorrent(uri, download.WithCategory(category))
+			if err != nil {
+				log.Printf("  Warning: direct add failed: %v", err)
 			}
+		}
+
+		dl := &model.Download{
+			TitleID:         title.ID,
+			ReleaseEventID:  evt.Event.ID,
+			Quality:         fmt.Sprintf("%dp", chosen.Resolution),
+			SourceType:      chosen.Source,
+			Codec:           chosen.Codec,
+			InfoHash:        chosen.InfoHash,
+			Category:        category,
+			Status:          model.DownloadAdded,
+			ClientTorrentID: torrentID,
+		}
+		if _, err := e.db.CreateDownload(ctx, dl); err != nil {
+			log.Printf("  Warning: creating download record: %v", err)
 		}
 	}
 
-	// Mark previous download as upgraded if this is an upgrade
 	if evt.Event.Notes != "" && strings.Contains(evt.Event.Notes, "upgrade:") {
 		oldDL, err := e.db.GetDownloadByTitleID(ctx, title.ID)
 		if err == nil && oldDL != nil {
@@ -146,19 +150,159 @@ func (e *Executor) ProcessApproved(ctx context.Context, evt db.EventWithTitle) e
 		}
 	}
 
-	// Add to library
-	if err := e.addToLibrary(ctx, evt); err != nil {
+	if err := e.addToLibrary(ctx, evt, season); err != nil {
 		log.Printf("  Warning: library add failed: %v", err)
+	}
+
+	if err := e.db.UpdateReleaseEventStatus(ctx, evt.Event.ID, model.StatusDownloaded); err != nil {
+		log.Printf("  Warning: updating event status: %v", err)
 	}
 
 	return nil
 }
 
-func (e *Executor) addToLibrary(ctx context.Context, evt db.EventWithTitle) error {
+func (e *Executor) searchRelease(ctx context.Context, title *model.Title, season int) ([]quality.ParsedRelease, error) {
+	resCfg := e.cfg.Quality.Movies
+	searchType := "movie"
+	if title.MediaType == model.MediaTypeTV {
+		resCfg = e.cfg.Quality.TV
+		searchType = "tvsearch"
+	}
+
+	resKeyword := resolutionSearchKeyword(resCfg.Resolution)
+	var queries []string
+	if title.MediaType == model.MediaTypeTV {
+		queries = tvSearchQueries(title.Title, season, resKeyword)
+	} else {
+		queries = movieSearchQueries(title.Title, title.Year, resKeyword)
+	}
+
+	for _, q := range queries {
+		results, err := e.searchWithIndexer(ctx, q, searchType)
+		if err != nil {
+			return nil, err
+		}
+		if len(results) > 0 {
+			log.Printf("  Found %d results for query %q", len(results), q)
+			return results, nil
+		}
+	}
+
+	return nil, nil
+}
+
+func (e *Executor) searchWithIndexer(ctx context.Context, query, searchType string) ([]quality.ParsedRelease, error) {
+	indexerID := e.cfg.Prowlarr.IndexerID
+
+	if indexerID > 0 {
+		results, err := e.prowl.Search(ctx, search.SearchParams{
+			Query:     query,
+			Type:      searchType,
+			IndexerID: indexerID,
+			Limit:     50,
+		})
+		if err != nil {
+			return nil, err
+		}
+
+		if len(results) > 0 {
+			name := fmt.Sprintf("indexer %d", indexerID)
+			if promptYesNo(fmt.Sprintf("  %d results from %s — search all indexers?", len(results), name)) {
+				all, err := e.prowl.Search(ctx, search.SearchParams{
+					Query: query,
+					Type:  searchType,
+					Limit: 50,
+				})
+				if err != nil {
+					return nil, err
+				}
+				results = mergeReleases(results, all)
+			}
+		} else {
+			results, err = e.prowl.Search(ctx, search.SearchParams{
+				Query: query,
+				Type:  searchType,
+				Limit: 50,
+			})
+			if err != nil {
+				return nil, err
+			}
+		}
+		return results, nil
+	}
+
+	return e.prowl.Search(ctx, search.SearchParams{
+		Query: query,
+		Type:  searchType,
+		Limit: 50,
+	})
+}
+
+func mergeReleases(a, b []quality.ParsedRelease) []quality.ParsedRelease {
+	seen := make(map[string]bool, len(a))
+	result := make([]quality.ParsedRelease, 0, len(a)+len(b))
+	for _, r := range a {
+		key := r.InfoHash
+		if key == "" {
+			key = r.Guid
+		}
+		if key != "" && !seen[key] {
+			seen[key] = true
+			result = append(result, r)
+		}
+	}
+	for _, r := range b {
+		key := r.InfoHash
+		if key == "" {
+			key = r.Guid
+		}
+		if key != "" && !seen[key] {
+			seen[key] = true
+			result = append(result, r)
+		}
+	}
+	return result
+}
+
+func resolutionSearchKeyword(res string) string {
+	switch res {
+	case "2160p", "4k", "uhd":
+		return "2160p"
+	case "1080p":
+		return "1080p"
+	case "720p":
+		return "720p"
+	}
+	return "1080p"
+}
+
+func movieSearchQueries(title string, year int, res string) []string {
+	return []string{
+		fmt.Sprintf("%s %d %s", title, year, res),
+		fmt.Sprintf("%s %d 4k", title, year),
+		fmt.Sprintf("%s %d 1080p", title, year),
+		fmt.Sprintf("%s %d", title, year),
+	}
+}
+
+func tvSearchQueries(title string, season int, res string) []string {
+	q := fmt.Sprintf("%s S%02d complete %s", title, season, res)
+	if season == 1 {
+		q = fmt.Sprintf("%s complete %s", title, res)
+	}
+	return []string{
+		q,
+		fmt.Sprintf("%s S%02d %s", title, season, res),
+		fmt.Sprintf("%s %s", title, res),
+		title,
+	}
+}
+
+func (e *Executor) addToLibrary(ctx context.Context, evt db.EventWithTitle, season int) error {
 	if evt.Title.MediaType == model.MediaTypeMovie {
 		return e.addToRadarr(ctx, evt)
 	}
-	return e.addToSonarr(ctx, evt)
+	return e.addToSonarr(ctx, evt, season)
 }
 
 func (e *Executor) addToRadarr(ctx context.Context, evt db.EventWithTitle) error {
@@ -176,7 +320,6 @@ func (e *Executor) addToRadarr(ctx context.Context, evt db.EventWithTitle) error
 		return nil
 	}
 
-	// Look up quality profile ID by name
 	profiles, err := e.radarr.GetQualityProfiles(ctx)
 	if err != nil {
 		return err
@@ -201,15 +344,14 @@ func (e *Executor) addToRadarr(ctx context.Context, evt db.EventWithTitle) error
 	}
 	log.Printf("  Added to Radarr: %s (ID %d)", added.Title, added.ID)
 
-	// Check for collection gaps
 	if added.Collection != nil && added.Collection.TMDBID > 0 {
-		e.checkCollectionGaps(ctx, tmdbID)
+		e.checkCollectionGaps(ctx, tmdbID, profileID)
 	}
 
 	return nil
 }
 
-func (e *Executor) addToSonarr(ctx context.Context, evt db.EventWithTitle) error {
+func (e *Executor) addToSonarr(ctx context.Context, evt db.EventWithTitle, season int) error {
 	tvdbID := evt.Title.TvdbID
 	if tvdbID == 0 {
 		return nil
@@ -220,11 +362,29 @@ func (e *Executor) addToSonarr(ctx context.Context, evt db.EventWithTitle) error
 		return err
 	}
 	if existing != nil {
-		log.Printf("  Already in Sonarr: %s", evt.Title.Title)
+		series, err := e.sonarr.GetSeries(ctx, existing.ID)
+		if err != nil {
+			return err
+		}
+		targetSeason := findSeasonByNumber(series.Seasons, season)
+		if targetSeason != nil && targetSeason.Statistics != nil &&
+			targetSeason.Statistics.EpisodeFileCount >= targetSeason.Statistics.EpisodeCount &&
+			targetSeason.Statistics.EpisodeCount > 0 {
+			log.Printf("  Season %d already complete in Sonarr", season)
+			return nil
+		}
+		log.Printf("  Already in Sonarr, season %d incomplete — proceeding", season)
 		return nil
 	}
 
-	// Look up quality profile ID
+	lookup, err := e.sonarr.Lookup(ctx, tvdbID)
+	if err != nil {
+		return err
+	}
+	if lookup == nil {
+		return fmt.Errorf("series not found on TVDB (tvdb_id=%d)", tvdbID)
+	}
+
 	profiles, err := e.sonarr.GetQualityProfiles(ctx)
 	if err != nil {
 		return err
@@ -237,7 +397,6 @@ func (e *Executor) addToSonarr(ctx context.Context, evt db.EventWithTitle) error
 		}
 	}
 
-	// Look up language profile ID
 	langProfiles, err := e.sonarr.GetLanguageProfiles(ctx)
 	if err != nil {
 		return err
@@ -247,9 +406,14 @@ func (e *Executor) addToSonarr(ctx context.Context, evt db.EventWithTitle) error
 		langProfileID = langProfiles[0].ID
 	}
 
-	// Build seasons — monitored=false by default, monitor only the seasons we're adding
-	seasons := []library.SonarrSeason{
-		{SeasonNumber: 1, Monitored: e.cfg.Library.Sonarr.MonitorNewEpisodes},
+	var seasons []library.SonarrSeason
+	for _, s := range lookup.Seasons {
+		if s.SeasonNumber > 0 {
+			seasons = append(seasons, library.SonarrSeason{
+				SeasonNumber: s.SeasonNumber,
+				Monitored:    false,
+			})
+		}
 	}
 
 	added, err := e.sonarr.Add(ctx, tvdbID, evt.Title.Title, evt.Title.Year, library.AddSeriesOptions{
@@ -266,15 +430,23 @@ func (e *Executor) addToSonarr(ctx context.Context, evt db.EventWithTitle) error
 	}
 	log.Printf("  Added to Sonarr: %s (ID %d)", added.Title, added.ID)
 
-	// Check for earlier missing seasons
-	if added.ID > 0 {
-		e.checkEarlierSeasons(ctx, added.TVDBID, added.ID)
+	if season > 1 && added.ID > 0 {
+		e.checkEarlierSeasons(ctx, added.ID)
 	}
 
 	return nil
 }
 
-func (e *Executor) checkEarlierSeasons(ctx context.Context, tvdbID, seriesID int) {
+func findSeasonByNumber(seasons []library.SonarrSeason, num int) *library.SonarrSeason {
+	for i := range seasons {
+		if seasons[i].SeasonNumber == num {
+			return &seasons[i]
+		}
+	}
+	return nil
+}
+
+func (e *Executor) checkEarlierSeasons(ctx context.Context, seriesID int) {
 	series, err := e.sonarr.GetSeries(ctx, seriesID)
 	if err != nil {
 		log.Printf("  Warning: cannot fetch series details: %v", err)
@@ -284,9 +456,8 @@ func (e *Executor) checkEarlierSeasons(ctx context.Context, tvdbID, seriesID int
 	var missingSeasons []library.SonarrSeason
 	for _, s := range series.Seasons {
 		if s.SeasonNumber == 0 {
-			continue // skip "All Seasons" / Specials
+			continue
 		}
-		// Check if this season has 0 files (completely missing)
 		if s.Statistics != nil && s.Statistics.EpisodeFileCount == 0 && s.Statistics.EpisodeCount > 0 {
 			missingSeasons = append(missingSeasons, s)
 		}
@@ -308,20 +479,11 @@ func (e *Executor) checkEarlierSeasons(ctx context.Context, tvdbID, seriesID int
 	}
 }
 
-func (e *Executor) checkCollectionGaps(ctx context.Context, tmdbID int) {
+func (e *Executor) checkCollectionGaps(ctx context.Context, tmdbID int, profileID int) {
 	collections, err := e.radarr.GetCollections(ctx)
 	if err != nil {
 		log.Printf("  Warning: cannot check collections: %v", err)
 		return
-	}
-
-	profileID := 1
-	profiles, _ := e.radarr.GetQualityProfiles(ctx)
-	for _, p := range profiles {
-		if p.Name == e.cfg.Library.Radarr.QualityProfile {
-			profileID = p.ID
-			break
-		}
 	}
 
 	for _, col := range collections {

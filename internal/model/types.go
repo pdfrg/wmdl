@@ -65,6 +65,8 @@ type ReleaseEvent struct {
 	PreviousStatus ReleaseStatus
 	Notes          string
 	CreatedAt      string
+	ISOYear        int
+	ISOWeek        int
 }
 
 type Download struct {
@@ -93,18 +95,4 @@ type WeekState struct {
 	UpdatedAt  string
 }
 
-type ParsedRelease struct {
-	RawTitle     string
-	Resolution   int
-	HDR          bool
-	Source       string
-	Codec        string
-	ReleaseGroup string
-	Seeders      int
-	SizeBytes    int64
-	PublishedAt  string
-	DownloadURL  string
-	MagnetURL    string
-	InfoHash     string
-	Score        int
-}
+

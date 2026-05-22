@@ -37,16 +37,16 @@ func newStatusCmd() *cobra.Command {
 				return nil
 			}
 
-			fmt.Println("Week       Date        Discover  Review    Process")
-			fmt.Println("─── ──────── ───────── ──────── ────────")
+			fmt.Println("Week      Date        Discover  Review  Process")
+			fmt.Println("────────  ──────────  ────────  ──────  ───────")
 			for _, s := range states {
-				fmt.Fprintf(os.Stdout, "W%02d %04d  %s  %s  %s  %s\n",
-					s.Week, s.Year,
-					formatDate(s.WeekDate),
-					checkMark(s.Discovered),
-					checkMark(s.Reviewed),
-					checkMark(s.Processed),
-				)
+		fmt.Fprintf(os.Stdout, "W%-2d %-4d  %-10s  %-8s  %-6s  %-5s\n",
+			s.Week, s.Year,
+			formatDate(s.WeekDate),
+			checkMark(s.Discovered),
+			checkMark(s.Reviewed),
+			checkMark(s.Processed),
+		)
 			}
 
 			// Show summary

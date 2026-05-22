@@ -31,8 +31,10 @@ type BrowserConfig struct {
 }
 
 type ProwlarrConfig struct {
-	URL    string `mapstructure:"url"`
-	APIKey string `mapstructure:"api_key"`
+	URL       string `mapstructure:"url"`
+	APIKey    string `mapstructure:"api_key"`
+	Timeout   int    `mapstructure:"timeout"`
+	IndexerID int    `mapstructure:"indexer_id"`
 }
 
 type TMDBConfig struct {
@@ -146,6 +148,8 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("quality.tv.prefer_hdr", false)
 	v.SetDefault("quality.tv.source_priority", []string{"bluray", "web-dl", "webrip"})
 	v.SetDefault("quality.tv.codec_priority", []string{"h265", "x265", "h264", "av1"})
+	v.SetDefault("prowlarr.timeout", 120)
+	v.SetDefault("prowlarr.indexer_id", 0)
 	v.SetDefault("library.radarr.monitor", false)
 	v.SetDefault("library.sonarr.monitor_new_episodes", true)
 	v.SetDefault("library.sonarr.season_folders", true)

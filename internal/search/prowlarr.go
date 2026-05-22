@@ -18,12 +18,15 @@ type ProwlarrClient struct {
 	http    *http.Client
 }
 
-func NewProwlarrClient(baseURL, apiKey string) *ProwlarrClient {
+func NewProwlarrClient(baseURL, apiKey string, timeoutSec int) *ProwlarrClient {
+	if timeoutSec <= 0 {
+		timeoutSec = 120
+	}
 	return &ProwlarrClient{
 		baseURL: baseURL,
 		apiKey:  apiKey,
 		http: &http.Client{
-			Timeout: 30 * time.Second,
+			Timeout: time.Duration(timeoutSec) * time.Second,
 		},
 	}
 }
