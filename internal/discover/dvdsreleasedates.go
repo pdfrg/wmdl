@@ -14,7 +14,10 @@ import (
 )
 
 type DVDReleaseDates struct {
-	http *http.Client
+	http          *http.Client
+	targetYear    int
+	targetWeek    int
+	hasTargetWeek bool
 }
 
 func NewDVDReleaseDates() *DVDReleaseDates {
@@ -29,12 +32,25 @@ func (d *DVDReleaseDates) Name() string {
 	return "dvdsreleasedates"
 }
 
+func (d *DVDReleaseDates) SetWeekRange(year, week int) {
+	d.targetYear = year
+	d.targetWeek = week
+	d.hasTargetWeek = true
+}
+
 func (d *DVDReleaseDates) Scrape() ([]ScrapedItem, error) {
 	now := time.Now()
 	targetDate := mostRecentTuesday(now)
 	targetStr := targetDate.Format("January 2, 2006")
 
-	resp, err := d.http.Get("https://www.dvdsreleasedates.com/releases/")
+	var url string
+	if d.hasTargetWeek {
+		url = d.historicalURL()
+	} else {
+		url = "https://www.dvdsreleasedates.com/releases/"
+	}
+
+	resp, err := d.http.Get(url)
 	if err != nil {
 		return nil, fmt.Errorf("fetching dvdsreleasedates: %w", err)
 	}
@@ -51,61 +67,11 @@ func (d *DVDReleaseDates) Scrape() ([]ScrapedItem, error) {
 
 	var items []ScrapedItem
 
-	// Find the "this week" section and extract dvdcells from its parent table
-	doc.Find("td.reldate").EachWithBreak(func(_ int, sel *goquery.Selection) bool {
-		distance := sel.Find("div.distance").Text()
-		if !strings.Contains(distance, "this week") && !strings.Contains(sel.Text(), targetStr) {
-			return true
-		}
-
-		// Found the target — find dvdcell elements within the same table
-		sel.Closest("table").Find("td.dvdcell").Each(func(_ int, cell *goquery.Selection) {
-			title := strings.TrimSpace(cell.Find("a[style*='color:#000']").Text())
-			if title == "" {
-				return
-			}
-
-			imgAlt, _ := cell.Find("img.movieimg").Attr("alt")
-			year := extractYear(imgAlt, title)
-
-			mediaType := model.MediaTypeMovie
-			lower := strings.ToLower(title)
-			if strings.Contains(lower, "season") || strings.Contains(lower, "complete") {
-				mediaType = model.MediaTypeTV
-			}
-
-			// Extract IMDb ID and rating
-			imdbID := ""
-			var imdbRating float64
-			if imdbLink := cell.Find("td.imdblink a[href*='imdb.com']"); imdbLink.Length() > 0 {
-				href, _ := imdbLink.Attr("href")
-				if parts := strings.Split(href, "/"); len(parts) > 0 {
-					for i, p := range parts {
-						if strings.HasPrefix(p, "tt") && i > 0 {
-							imdbID = p
-							break
-						}
-					}
-				}
-				if r, err := strconv.ParseFloat(strings.TrimSpace(imdbLink.Text()), 64); err == nil {
-					imdbRating = r
-				}
-			}
-
-			items = append(items, ScrapedItem{
-				Title:       cleanTitle(title),
-				Year:        year,
-				MediaType:   mediaType,
-				ReleaseType: model.ReleasePhysical,
-				ReleaseDate: targetDate.Format("2006-01-02"),
-				ImdbID:      imdbID,
-				ImdbRating:  imdbRating,
-				Source:      "dvdsreleasedates",
-			})
-		})
-
-		return false
-	})
+	if d.hasTargetWeek {
+		items = d.scrapeHistorical(doc)
+	} else {
+		items = d.scrapeCurrent(doc, targetDate, targetStr)
+	}
 
 	return items, nil
 }
@@ -129,6 +95,102 @@ func extractYear(imgAlt, title string) int {
 		}
 	}
 	return 0
+}
+
+func (d *DVDReleaseDates) historicalURL() string {
+	t := isoWeekToDate(d.targetYear, d.targetWeek)
+	monthNum := int(t.Month())
+	monthName := strings.ToLower(t.Month().String())
+	return fmt.Sprintf("https://www.dvdsreleasedates.com/releases/%d/%d/new-dvd-releases-%s-%d",
+		t.Year(), monthNum, monthName, t.Year())
+}
+
+func (d *DVDReleaseDates) scrapeHistorical(doc *goquery.Document) []ScrapedItem {
+	weekMon := isoWeekToDate(d.targetYear, d.targetWeek)
+	weekSun := weekMon.AddDate(0, 0, 6)
+
+	var items []ScrapedItem
+	doc.Find("td.reldate").Each(func(_ int, sel *goquery.Selection) {
+		dateText := strings.TrimSpace(sel.Text())
+		releaseDate, err := time.Parse("January 2, 2006", dateText)
+		if err != nil {
+			return
+		}
+		if releaseDate.Before(weekMon) || releaseDate.After(weekSun) {
+			return
+		}
+		dateStr := releaseDate.Format("2006-01-02")
+		sel.Closest("table").Find("td.dvdcell").Each(func(_ int, cell *goquery.Selection) {
+			item := d.parseDVDCell(cell, dateStr)
+			if item != nil {
+				items = append(items, *item)
+			}
+		})
+	})
+	return items
+}
+
+func (d *DVDReleaseDates) scrapeCurrent(doc *goquery.Document, targetDate time.Time, targetStr string) []ScrapedItem {
+	var items []ScrapedItem
+	doc.Find("td.reldate").EachWithBreak(func(_ int, sel *goquery.Selection) bool {
+		distance := sel.Find("div.distance").Text()
+		if !strings.Contains(distance, "this week") && !strings.Contains(sel.Text(), targetStr) {
+			return true
+		}
+		dateStr := targetDate.Format("2006-01-02")
+		sel.Closest("table").Find("td.dvdcell").Each(func(_ int, cell *goquery.Selection) {
+			item := d.parseDVDCell(cell, dateStr)
+			if item != nil {
+				items = append(items, *item)
+			}
+		})
+		return false
+	})
+	return items
+}
+
+func (d *DVDReleaseDates) parseDVDCell(cell *goquery.Selection, releaseDate string) *ScrapedItem {
+	title := strings.TrimSpace(cell.Find("a[style*='color:#000']").Text())
+	if title == "" {
+		return nil
+	}
+
+	imgAlt, _ := cell.Find("img.movieimg").Attr("alt")
+	year := extractYear(imgAlt, title)
+
+	mediaType := model.MediaTypeMovie
+	lower := strings.ToLower(title)
+	if strings.Contains(lower, "season") || strings.Contains(lower, "complete") {
+		mediaType = model.MediaTypeTV
+	}
+
+	imdbID := ""
+	var imdbRating float64
+	if imdbLink := cell.Find("td.imdblink a[href*='imdb.com']"); imdbLink.Length() > 0 {
+		href, _ := imdbLink.Attr("href")
+		if parts := strings.Split(href, "/"); len(parts) > 0 {
+			for i, p := range parts {
+				if strings.HasPrefix(p, "tt") && i > 0 {
+					imdbID = p
+					break
+				}
+			}
+		}
+		if r, err := strconv.ParseFloat(strings.TrimSpace(imdbLink.Text()), 64); err == nil {
+			imdbRating = r
+		}
+	}
+
+	return &ScrapedItem{
+		Title:       cleanTitle(title),
+		Year:        year,
+		MediaType:   mediaType,
+		ReleaseType: model.ReleasePhysical,
+		ReleaseDate: releaseDate,
+		ImdbID:      imdbID,
+		ImdbRating:  imdbRating,
+		Source:      "dvdsreleasedates",
+	}
 }
 
 func cleanTitle(title string) string {

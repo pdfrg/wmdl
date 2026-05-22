@@ -14,7 +14,7 @@ import (
 )
 
 func newDiscoverCmd() *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:   "discover",
 		Short: "Scrape release sources and notify",
 		Long:  "Scrape DVD/streaming release sites, enrich with TMDB/RT data, save to database, and send notification.",
@@ -38,13 +38,34 @@ func newDiscoverCmd() *cobra.Command {
 				return fmt.Errorf("migrating database: %w", err)
 			}
 
+			targetYear, targetWeek, err := resolveWeek(cmd)
+			if err != nil {
+				return err
+			}
+
+			ws, err := database.GetWeekState(cmd.Context(), targetYear, targetWeek)
+			if err != nil {
+				return fmt.Errorf("checking week state: %w", err)
+			}
+			if ws != nil && ws.Discovered {
+				fmt.Fprintf(os.Stderr, "Week %d-W%02d already discovered.\n", targetYear, targetWeek)
+				if !promptYesNo("Continue anyway?") {
+					return nil
+				}
+			}
+
 			runner := discover.NewRunner(cfg, database)
+			if targetYear != 0 && targetWeek != 0 {
+				runner.SetTargetWeek(targetYear, targetWeek)
+			}
 			ctx, cancel := context.WithCancel(cmd.Context())
 			defer cancel()
 
 			return runner.Run(ctx)
 		},
 	}
+	addWeekFlag(cmd)
+	return cmd
 }
 
 func dataDir() (string, error) {

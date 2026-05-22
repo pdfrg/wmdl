@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 
 	_ "modernc.org/sqlite"
 
@@ -304,38 +305,38 @@ func (d *DB) ListPendingWithTitles(ctx context.Context) ([]EventWithTitle, error
 	if err != nil {
 		return nil, fmt.Errorf("listing pending events with titles: %w", err)
 	}
-		defer rows.Close()
+	defer rows.Close()
 
-		var results []EventWithTitle
-		for rows.Next() {
-			var ev model.ReleaseEvent
-			var tl model.Title
-			var evRelType, evStatus, evPrevStatus, evCreated string
-			var tlMediaType, tlCreated string
+	var results []EventWithTitle
+	for rows.Next() {
+		var ev model.ReleaseEvent
+		var tl model.Title
+		var evRelType, evStatus, evPrevStatus, evCreated string
+		var tlMediaType, tlCreated string
 
-			err := rows.Scan(
-				&ev.ID, &ev.TitleID, &ev.Source, &evRelType, &ev.ReleaseDate,
-				&evStatus, &evPrevStatus, &ev.Notes, &evCreated, &ev.ISOYear, &ev.ISOWeek,
-				&tl.ID, &tl.TmdbID, &tl.TvdbID, &tl.Title, &tl.Year, &tlMediaType,
-				&tl.ImdbID, &tl.ImdbRating, &tl.RTURL, &tl.RTCriticsScore, &tl.RTAudienceScore,
-				&tl.TmdbRating, &tl.MetacriticScore, &tl.USRating, &tl.YoutubeViews, &tl.Overview, &tl.Genres, &tl.Runtime, &tl.PosterPath, &tlCreated,
-			)
-			if err != nil {
-				return nil, fmt.Errorf("scanning event with title: %w", err)
-			}
-
-			ev.ReleaseType = model.ReleaseType(evRelType)
-			ev.Status = model.ReleaseStatus(evStatus)
-			ev.PreviousStatus = model.ReleaseStatus(evPrevStatus)
-			ev.CreatedAt = evCreated
-
-			tl.MediaType = model.MediaType(tlMediaType)
-			tl.CreatedAt = tlCreated
-
-			results = append(results, EventWithTitle{Event: &ev, Title: &tl})
+		err := rows.Scan(
+			&ev.ID, &ev.TitleID, &ev.Source, &evRelType, &ev.ReleaseDate,
+			&evStatus, &evPrevStatus, &ev.Notes, &evCreated, &ev.ISOYear, &ev.ISOWeek,
+			&tl.ID, &tl.TmdbID, &tl.TvdbID, &tl.Title, &tl.Year, &tlMediaType,
+			&tl.ImdbID, &tl.ImdbRating, &tl.RTURL, &tl.RTCriticsScore, &tl.RTAudienceScore,
+			&tl.TmdbRating, &tl.MetacriticScore, &tl.USRating, &tl.YoutubeViews, &tl.Overview, &tl.Genres, &tl.Runtime, &tl.PosterPath, &tlCreated,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("scanning event with title: %w", err)
 		}
-		return results, rows.Err()
+
+		ev.ReleaseType = model.ReleaseType(evRelType)
+		ev.Status = model.ReleaseStatus(evStatus)
+		ev.PreviousStatus = model.ReleaseStatus(evPrevStatus)
+		ev.CreatedAt = evCreated
+
+		tl.MediaType = model.MediaType(tlMediaType)
+		tl.CreatedAt = tlCreated
+
+		results = append(results, EventWithTitle{Event: &ev, Title: &tl})
 	}
+	return results, rows.Err()
+}
 
 func (d *DB) ListApprovedWithTitles(ctx context.Context) ([]EventWithTitle, error) {
 	rows, err := d.db.QueryContext(ctx, `
@@ -504,4 +505,114 @@ func (d *DB) GetDownloadByTitleID(ctx context.Context, titleID int64) (*model.Do
 	dl.Status = model.DownloadStatus(status)
 	dl.CreatedAt = createdAt
 	return &dl, nil
+}
+
+func (d *DB) GetWeekState(ctx context.Context, year, week int) (*model.WeekState, error) {
+	var ws model.WeekState
+	var disc, rev, proc int
+	var updatedAt string
+	err := d.db.QueryRowContext(ctx, `
+		SELECT year, week, week_date, discovered, reviewed, processed, updated_at
+		FROM week_state WHERE year = ? AND week = ?
+	`, year, week).Scan(&ws.Year, &ws.Week, &ws.WeekDate, &disc, &rev, &proc, &updatedAt)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("querying week state: %w", err)
+	}
+	ws.Discovered = disc > 0
+	ws.Reviewed = rev > 0
+	ws.Processed = proc > 0
+	ws.UpdatedAt = updatedAt
+	return &ws, nil
+}
+
+func (d *DB) ListEventsByWeekWithTitles(ctx context.Context, year, week int) ([]EventWithTitle, error) {
+	rows, err := d.db.QueryContext(ctx, `
+		SELECT e.id, e.title_id, e.source, e.release_type, e.release_date,
+		       e.status, e.previous_status, e.notes, e.created_at, e.iso_year, e.iso_week,
+		t.id, t.tmdb_id, t.tvdb_id, t.title, t.year, t.media_type, t.imdb_id,
+		       t.imdb_rating, t.rt_url, t.rt_critics_score, t.rt_audience_score,
+		       t.tmdb_rating, t.metacritic_score, t.us_rating,
+		       t.yt_trailer_views, t.overview, t.genres, t.runtime, t.poster_path, t.created_at
+		FROM release_events e
+		JOIN titles t ON t.id = e.title_id
+		WHERE e.iso_year = ? AND e.iso_week = ?
+		ORDER BY e.created_at DESC
+	`, year, week)
+	if err != nil {
+		return nil, fmt.Errorf("listing events by week with titles: %w", err)
+	}
+	defer rows.Close()
+
+	return scanEventWithTitleRows(rows)
+}
+
+func (d *DB) ListEventsByWeekAndStatus(ctx context.Context, year, week int, statuses ...model.ReleaseStatus) ([]EventWithTitle, error) {
+	if len(statuses) == 0 {
+		return d.ListEventsByWeekWithTitles(ctx, year, week)
+	}
+
+	placeholders := make([]string, len(statuses))
+	args := make([]any, 0, len(statuses)+2)
+	args = append(args, year, week)
+	for i, s := range statuses {
+		placeholders[i] = "?"
+		args = append(args, string(s))
+	}
+
+	query := fmt.Sprintf(`
+		SELECT e.id, e.title_id, e.source, e.release_type, e.release_date,
+		       e.status, e.previous_status, e.notes, e.created_at, e.iso_year, e.iso_week,
+		t.id, t.tmdb_id, t.tvdb_id, t.title, t.year, t.media_type, t.imdb_id,
+		       t.imdb_rating, t.rt_url, t.rt_critics_score, t.rt_audience_score,
+		       t.tmdb_rating, t.metacritic_score, t.us_rating,
+		       t.yt_trailer_views, t.overview, t.genres, t.runtime, t.poster_path, t.created_at
+		FROM release_events e
+		JOIN titles t ON t.id = e.title_id
+		WHERE e.iso_year = ? AND e.iso_week = ?
+		AND e.status IN (%s)
+		ORDER BY e.created_at DESC
+	`, strings.Join(placeholders, ","))
+
+	rows, err := d.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("listing events by week and status: %w", err)
+	}
+	defer rows.Close()
+
+	return scanEventWithTitleRows(rows)
+}
+
+func scanEventWithTitleRows(rows *sql.Rows) ([]EventWithTitle, error) {
+	var results []EventWithTitle
+	for rows.Next() {
+		var ev model.ReleaseEvent
+		var tl model.Title
+		var evRelType, evStatus, evPrevStatus, evCreated string
+		var tlMediaType, tlCreated string
+
+		err := rows.Scan(
+			&ev.ID, &ev.TitleID, &ev.Source, &evRelType, &ev.ReleaseDate,
+			&evStatus, &evPrevStatus, &ev.Notes, &evCreated, &ev.ISOYear, &ev.ISOWeek,
+			&tl.ID, &tl.TmdbID, &tl.TvdbID, &tl.Title, &tl.Year, &tlMediaType,
+			&tl.ImdbID, &tl.ImdbRating, &tl.RTURL, &tl.RTCriticsScore, &tl.RTAudienceScore,
+			&tl.TmdbRating, &tl.MetacriticScore, &tl.USRating, &tl.YoutubeViews, &tl.Overview, &tl.Genres, &tl.Runtime, &tl.PosterPath, &tlCreated,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("scanning event with title: %w", err)
+		}
+
+		ev.ReleaseType = model.ReleaseType(evRelType)
+		ev.Status = model.ReleaseStatus(evStatus)
+		ev.PreviousStatus = model.ReleaseStatus(evPrevStatus)
+		ev.CreatedAt = evCreated
+
+		tl.MediaType = model.MediaType(tlMediaType)
+		tl.CreatedAt = tlCreated
+
+		results = append(results, EventWithTitle{Event: &ev, Title: &tl})
+	}
+	return results, rows.Err()
 }

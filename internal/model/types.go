@@ -94,5 +94,3 @@ type WeekState struct {
 	Processed  bool
 	UpdatedAt  string
 }
-
-

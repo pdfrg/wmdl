@@ -23,6 +23,17 @@ const (
 	decisionRejected
 )
 
+func decisionForStatus(s model.ReleaseStatus) decision {
+	switch s {
+	case model.StatusApproved:
+		return decisionApproved
+	case model.StatusRejected:
+		return decisionRejected
+	default:
+		return decisionNone
+	}
+}
+
 type phase int
 
 const (
@@ -55,19 +66,10 @@ type TUI struct {
 	vpConfirm  viewport.Model
 }
 
-func NewReviewTUI(database *db.DB, posterMode string) (*TUI, error) {
-	ctx := context.Background()
-	events, err := database.ListPendingWithTitles(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("loading events: %w", err)
-	}
-	if len(events) == 0 {
-		return nil, fmt.Errorf("no pending releases to review")
-	}
-
+func NewReviewTUIWithEvents(events []db.EventWithTitle, database *db.DB, posterMode string) (*TUI, error) {
 	items := make([]itemState, len(events))
 	for i, e := range events {
-		items[i] = itemState{event: e}
+		items[i] = itemState{event: e, decision: decisionForStatus(e.Event.Status)}
 	}
 
 	detectTerminal()
@@ -83,6 +85,18 @@ func NewReviewTUI(database *db.DB, posterMode string) (*TUI, error) {
 		posterMode: ParsePosterMode(posterMode),
 		vpConfirm:  vp,
 	}, nil
+}
+
+func NewReviewTUI(database *db.DB, posterMode string) (*TUI, error) {
+	ctx := context.Background()
+	events, err := database.ListPendingWithTitles(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("loading events: %w", err)
+	}
+	if len(events) == 0 {
+		return nil, fmt.Errorf("no pending releases to review")
+	}
+	return NewReviewTUIWithEvents(events, database, posterMode)
 }
 
 func (t *TUI) Run() error {

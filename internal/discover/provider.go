@@ -1,10 +1,30 @@
 package discover
 
-import "github.com/pdfrg/wmd/internal/model"
+import (
+	"time"
+
+	"github.com/pdfrg/wmd/internal/model"
+)
+
+func isoWeekToDate(year, week int) time.Time {
+	jan4 := time.Date(year, 1, 4, 0, 0, 0, 0, time.UTC)
+	dayOffset := (int(jan4.Weekday()) - 1 + 7) % 7
+	week1Monday := jan4.AddDate(0, 0, -dayOffset)
+	return week1Monday.AddDate(0, 0, 7*(week-1))
+}
+
+func tuesdayOfISOWeek(year, week int) time.Time {
+	monday := isoWeekToDate(year, week)
+	return monday.AddDate(0, 0, 1)
+}
 
 type ReleaseProvider interface {
 	Name() string
 	Scrape() ([]ScrapedItem, error)
+}
+
+type WeekSettable interface {
+	SetWeekRange(year, week int)
 }
 
 type ScrapedItem struct {

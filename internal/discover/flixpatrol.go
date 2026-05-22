@@ -15,7 +15,10 @@ import (
 )
 
 type FlixPatrolProvider struct {
-	http *http.Client
+	http          *http.Client
+	targetYear    int
+	targetWeek    int
+	hasTargetWeek bool
 }
 
 func NewFlixPatrolProvider(_ string) *FlixPatrolProvider {
@@ -26,6 +29,12 @@ func NewFlixPatrolProvider(_ string) *FlixPatrolProvider {
 
 func (f *FlixPatrolProvider) Name() string {
 	return "flixpatrol"
+}
+
+func (f *FlixPatrolProvider) SetWeekRange(year, week int) {
+	f.targetYear = year
+	f.targetWeek = week
+	f.hasTargetWeek = true
 }
 
 type flixItem struct {
@@ -50,8 +59,13 @@ var (
 )
 
 func (f *FlixPatrolProvider) Scrape() ([]ScrapedItem, error) {
-	now := time.Now()
-	physicalTue := mostRecentTuesday(now)
+	var physicalTue time.Time
+	if f.hasTargetWeek {
+		physicalTue = tuesdayOfISOWeek(f.targetYear, f.targetWeek)
+	} else {
+		now := time.Now()
+		physicalTue = mostRecentTuesday(now)
+	}
 	streamTue := truncateToDay(physicalTue.AddDate(0, -2, 0))
 	streamStart := truncateToDay(streamTue.AddDate(0, 0, -6))
 

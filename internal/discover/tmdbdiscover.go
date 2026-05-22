@@ -9,7 +9,10 @@ import (
 )
 
 type TMDBDiscoverProvider struct {
-	client *TMDBClient
+	client        *TMDBClient
+	targetYear    int
+	targetWeek    int
+	hasTargetWeek bool
 }
 
 func NewTMDBDiscoverProvider(client *TMDBClient) *TMDBDiscoverProvider {
@@ -20,13 +23,21 @@ func (t *TMDBDiscoverProvider) Name() string {
 	return "tmdb-discover"
 }
 
-func (t *TMDBDiscoverProvider) Scrape() ([]ScrapedItem, error) {
-	now := time.Now()
+func (t *TMDBDiscoverProvider) SetWeekRange(year, week int) {
+	t.targetYear = year
+	t.targetWeek = week
+	t.hasTargetWeek = true
+}
 
-	// Physical releases are grouped by Tuesday.
-	// Streaming releases mirror the same week shifted back 2 months.
-	// e.g. physical week May 13-19 → streaming week March 13-19
-	physicalTue := mostRecentTuesday(now)
+func (t *TMDBDiscoverProvider) Scrape() ([]ScrapedItem, error) {
+	var physicalTue time.Time
+
+	if t.hasTargetWeek {
+		physicalTue = tuesdayOfISOWeek(t.targetYear, t.targetWeek)
+	} else {
+		now := time.Now()
+		physicalTue = mostRecentTuesday(now)
+	}
 	streamTue := physicalTue.AddDate(0, -2, 0)
 	streamStart := streamTue.AddDate(0, 0, -6) // previous Wednesday
 	streamEnd := streamTue                     // this Tuesday

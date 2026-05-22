@@ -20,15 +20,24 @@ import (
 )
 
 type Runner struct {
-	cfg         *config.Config
-	db          *db.DB
-	tmdb        *TMDBClient
-	rt          *RTFinder
-	imdb        *IMDbAPIClient
-	notify      *notifier.Gotify
-	debugURL    string
-	allocCtx    context.Context
-	allocCancel context.CancelFunc
+	cfg           *config.Config
+	db            *db.DB
+	tmdb          *TMDBClient
+	rt            *RTFinder
+	imdb          *IMDbAPIClient
+	notify        *notifier.Gotify
+	debugURL      string
+	allocCtx      context.Context
+	allocCancel   context.CancelFunc
+	targetYear    int
+	targetWeek    int
+	hasTargetWeek bool
+}
+
+func (r *Runner) SetTargetWeek(year, week int) {
+	r.targetYear = year
+	r.targetWeek = week
+	r.hasTargetWeek = true
 }
 
 func NewRunner(cfg *config.Config, database *db.DB) *Runner {
@@ -72,6 +81,15 @@ func (r *Runner) Run(ctx context.Context) error {
 	// FlixPatrol via chromedp (best-effort, requires Brave running on debug port)
 	fp := NewFlixPatrolProvider(r.debugURL)
 	providers = append(providers, fp)
+
+	// Set target week on providers that support it
+	if r.hasTargetWeek {
+		for _, p := range providers {
+			if ws, ok := p.(WeekSettable); ok {
+				ws.SetWeekRange(r.targetYear, r.targetWeek)
+			}
+		}
+	}
 
 	var allItems []ScrapedItem
 

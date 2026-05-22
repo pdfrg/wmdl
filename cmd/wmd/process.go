@@ -7,7 +7,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/spf13/cobra"
 
@@ -18,7 +17,7 @@ import (
 )
 
 func newProcessCmd() *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:   "process",
 		Short: "Search and download approved releases",
 		Long: `For each approved release: search Prowlarr, select a release in the TUI picker,
@@ -41,42 +40,91 @@ and send it to the download client.`,
 
 			ctx := cmd.Context()
 
-			target, err := database.GetLatestDiscoveredWeek(ctx)
-			if err != nil {
-				return fmt.Errorf("finding target week: %w", err)
-			}
-			if target == nil {
-				log.Println("No weeks discovered yet.")
-				log.Println("Run 'wmd discover' first.")
-				return nil
-			}
-			if target.Processed {
-				if !promptYesNo(fmt.Sprintf("Week %d-W%02d already processed. Continue anyway?", target.Year, target.Week)) {
+			// Resolve target week
+			var target *model.WeekState
+			if cmd.Flags().Changed("week") {
+				y, w, err := resolveWeek(cmd)
+				if err != nil {
+					return err
+				}
+				target, err = database.GetWeekState(ctx, y, w)
+				if err != nil {
+					return fmt.Errorf("finding week state: %w", err)
+				}
+				if target == nil {
+					return fmt.Errorf("week %d-W%02d not discovered yet", y, w)
+				}
+			} else {
+				target, err = database.GetLatestDiscoveredWeek(ctx)
+				if err != nil {
+					return fmt.Errorf("finding target week: %w", err)
+				}
+				if target == nil {
+					log.Println("No weeks discovered yet.")
+					log.Println("Run 'wmd discover' first.")
 					return nil
 				}
 			}
 
-			allEvents, err := database.ListApprovedWithTitles(ctx)
+			allEvents, err := database.ListEventsByWeekWithTitles(ctx, target.Year, target.Week)
 			if err != nil {
-				return fmt.Errorf("loading approved: %w", err)
+				return fmt.Errorf("loading events: %w", err)
 			}
 			if len(allEvents) == 0 {
-				log.Println("No approved releases to process.")
-				log.Println("Run 'wmd review' to approve releases first.")
+				log.Printf("No releases found for week %d-W%02d.", target.Year, target.Week)
 				return nil
 			}
 
-			// Filter events to target week — prefer stored iso_year/iso_week
-			var events []db.EventWithTitle
+			// Partition into pending and downloaded
+			var pending, downloaded []db.EventWithTitle
 			for _, ev := range allEvents {
-				if eventMatchesWeek(ev.Event, target.Year, target.Week) {
-					events = append(events, ev)
+				switch ev.Event.Status {
+				case model.StatusApproved:
+					pending = append(pending, ev)
+				case model.StatusDownloaded:
+					downloaded = append(downloaded, ev)
 				}
 			}
 
-			if len(events) == 0 {
-				log.Printf("No approved releases for week %d-W%02d", target.Year, target.Week)
+			var events []db.EventWithTitle
+
+			switch {
+			case len(pending) == 0 && len(downloaded) == 0:
+				log.Printf("No processable releases for week %d-W%02d.", target.Year, target.Week)
 				return nil
+
+			case len(downloaded) > 0 && len(pending) == 0:
+				log.Printf("All %d releases for %d-W%02d already downloaded.", len(downloaded), target.Year, target.Week)
+				if !promptYesNo("Continue anyway (re-process all)?") {
+					return nil
+				}
+				events = downloaded
+
+			case len(downloaded) > 0 && len(pending) > 0:
+				log.Printf("%d/%d releases already downloaded for %d-W%02d.", len(downloaded), len(allEvents), target.Year, target.Week)
+				for {
+					log.Print("[a] re-process all  [u] only not-yet-downloaded  [q] quit")
+					fmt.Fprintf(os.Stderr, "Choose: ")
+					var choice string
+					if _, err := fmt.Scanln(&choice); err != nil {
+						return nil
+					}
+					switch choice {
+					case "a":
+						events = allEvents
+					case "u":
+						events = pending
+					case "q":
+						return nil
+					default:
+						log.Print("Invalid choice.")
+						continue
+					}
+					break
+				}
+
+			default:
+				events = allEvents
 			}
 
 			log.Printf("Processing %d release(s) for %d-W%02d", len(events), target.Year, target.Week)
@@ -118,13 +166,12 @@ and send it to the download client.`,
 				}
 			}
 
-			// Mark the week as processed (user chose to run, so mark it done)
+			// Mark the week as processed
 			target.Processed = true
 			if err := database.UpsertWeekState(ctx, target); err != nil {
 				log.Printf("Warning: tracking week state: %v", err)
 			}
 
-			// Print summary
 			log.Printf("Processed %d/%d releases", processed, len(events))
 
 			if len(exec.Unfound) > 0 {
@@ -145,6 +192,8 @@ and send it to the download client.`,
 			return nil
 		},
 	}
+	addWeekFlag(cmd)
+	return cmd
 }
 
 func promptYesNo(prompt string) bool {
@@ -155,18 +204,6 @@ func promptYesNo(prompt string) bool {
 		return ans == "y" || ans == "yes"
 	}
 	return false
-}
-
-func eventMatchesWeek(ev *model.ReleaseEvent, year, week int) bool {
-	if ev.ISOYear > 0 && ev.ISOWeek > 0 {
-		return ev.ISOYear == year && ev.ISOWeek == week
-	}
-	t, err := time.Parse("2006-01-02", ev.ReleaseDate)
-	if err != nil {
-		return false
-	}
-	y, w := t.ISOWeek()
-	return y == year && w == week
 }
 
 func promptSaveManualSearch(items []string) bool {
