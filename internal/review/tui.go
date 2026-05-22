@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"strings"
 
+	"charm.land/bubbles/v2/viewport"
 	"charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
@@ -51,6 +52,7 @@ type TUI struct {
 	posterImg  image.Image
 	posterMode PosterMode
 	flashMsg   string
+	vpConfirm  viewport.Model
 }
 
 func NewReviewTUI(database *db.DB, posterMode string) (*TUI, error) {
@@ -70,11 +72,16 @@ func NewReviewTUI(database *db.DB, posterMode string) (*TUI, error) {
 
 	detectTerminal()
 
+	vp := viewport.New()
+	vp.SetWidth(80)
+	vp.SetHeight(10)
+
 	return &TUI{
 		items:      items,
 		database:   database,
 		height:     24,
 		posterMode: ParsePosterMode(posterMode),
+		vpConfirm:  vp,
 	}, nil
 }
 
@@ -101,6 +108,10 @@ func (t *TUI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		t.width = msg.Width
 		t.height = msg.Height
+		if t.phase == phaseConfirm {
+			t.vpConfirm.SetHeight(max(1, t.height-4))
+			t.vpConfirm.SetWidth(t.width)
+		}
 
 	case posterReadyMsg:
 		if msg.err == nil {
@@ -216,6 +227,10 @@ func (t *TUI) updateReview(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			return t, nil
 		}
 		t.phase = phaseConfirm
+		t.vpConfirm.SetContent(t.buildConfirmContent())
+		t.vpConfirm.SetHeight(max(1, t.height-4))
+		t.vpConfirm.SetWidth(t.width)
+		t.vpConfirm.GotoTop()
 		return t, t.clearPosterCmd()
 	}
 
@@ -226,6 +241,12 @@ func (t *TUI) updateConfirm(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "q", "ctrl+c":
 		return t, t.quitCmd()
+
+	case "j", "down":
+		t.vpConfirm.ScrollDown(1)
+
+	case "k", "up":
+		t.vpConfirm.ScrollUp(1)
 
 	case "y":
 		for _, it := range t.items {
@@ -278,23 +299,31 @@ func (t *TUI) View() tea.View {
 			keyStyle.Render("o") + helpStyle.Render(" open RT  ") +
 			keyStyle.Render("q") + helpStyle.Render(" quit")
 	case phaseConfirm:
-		content = t.buildConfirmContent()
-		footer = keyStyle.Render("y") + helpStyle.Render(" continue  ") +
+		footer = keyStyle.Render("j") + helpStyle.Render("/") + keyStyle.Render("k") + helpStyle.Render(" scroll  ") +
+			keyStyle.Render("y") + helpStyle.Render(" continue  ") +
 			keyStyle.Render("n") + helpStyle.Render(" return")
 	}
 
 	var b strings.Builder
-	b.WriteString(headerStyle.Render(fmt.Sprintf("wmd review — %d pending       [%d/%d]",
-		len(t.items), t.cursor+1, len(t.items))))
-	b.WriteString("\n\n")
-	b.WriteString(content)
 
-	if t.flashMsg != "" {
+	if t.phase == phaseConfirm {
+		b.WriteString(headerStyle.Render(fmt.Sprintf("wmd review — %d pending       [%d/%d]",
+			len(t.items), t.cursor+1, len(t.items))))
 		b.WriteString("\n\n")
-		if t.shouldPadForPoster() {
-			b.WriteString(strings.Repeat(" ", posterCols+1))
+		b.WriteString(t.vpConfirm.View())
+	} else {
+		b.WriteString(headerStyle.Render(fmt.Sprintf("wmd review — %d pending       [%d/%d]",
+			len(t.items), t.cursor+1, len(t.items))))
+		b.WriteString("\n\n")
+		b.WriteString(content)
+
+		if t.flashMsg != "" {
+			b.WriteString("\n\n")
+			if t.shouldPadForPoster() {
+				b.WriteString(strings.Repeat(" ", posterCols+1))
+			}
+			b.WriteString(warnStyle.Render(t.flashMsg))
 		}
-		b.WriteString(warnStyle.Render(t.flashMsg))
 	}
 
 	curLines := strings.Count(b.String(), "\n") + 1
