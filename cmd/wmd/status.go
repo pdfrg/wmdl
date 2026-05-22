@@ -9,6 +9,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/pdfrg/wmd/internal/db"
+	"github.com/pdfrg/wmd/internal/model"
 )
 
 func newStatusCmd() *cobra.Command {
@@ -27,19 +28,27 @@ func newStatusCmd() *cobra.Command {
 			}
 			defer database.Close()
 
-			states, err := database.GetWeekStates(context.Background(), 12)
+			allStates, err := database.GetWeekStates(context.Background(), 0)
 			if err != nil {
 				return fmt.Errorf("loading week states: %w", err)
 			}
 
-			if len(states) == 0 {
+			if len(allStates) == 0 {
 				fmt.Println("No week tracking data yet. Run 'wmd discover' first.")
 				return nil
 			}
 
+			// Display: 12 most recent weeks + any older week with incomplete status
+			var display []*model.WeekState
+			for i, s := range allStates {
+				if i < 12 || !s.Discovered || !s.Reviewed || !s.Processed {
+					display = append(display, s)
+				}
+			}
+
 			fmt.Println("Week      Date        Discover  Review  Process")
 			fmt.Println("────────  ──────────  ────────  ──────  ───────")
-			for _, s := range states {
+			for _, s := range display {
 				fmt.Fprintf(os.Stdout, "W%-2d %-4d  %-10s  %-8s  %-6s  %-5s\n",
 					s.Week, s.Year,
 					formatDate(s.WeekDate),
@@ -49,9 +58,9 @@ func newStatusCmd() *cobra.Command {
 				)
 			}
 
-			// Show summary
+			// Show summary (based on all weeks, not just display)
 			var todo []string
-			for _, s := range states {
+			for _, s := range allStates {
 				if !s.Discovered {
 					todo = append(todo, fmt.Sprintf("wmd discover (W%02d %d)", s.Week, s.Year))
 				} else if !s.Reviewed {

@@ -425,13 +425,19 @@ func (d *DB) UpsertWeekState(ctx context.Context, ws *model.WeekState) error {
 }
 
 func (d *DB) GetWeekStates(ctx context.Context, limit int) ([]*model.WeekState, error) {
-	if limit <= 0 {
-		limit = 12
+	var rows *sql.Rows
+	var err error
+	if limit > 0 {
+		rows, err = d.db.QueryContext(ctx, `
+			SELECT year, week, week_date, discovered, reviewed, processed, updated_at
+			FROM week_state ORDER BY year DESC, week DESC LIMIT ?
+		`, limit)
+	} else {
+		rows, err = d.db.QueryContext(ctx, `
+			SELECT year, week, week_date, discovered, reviewed, processed, updated_at
+			FROM week_state ORDER BY year DESC, week DESC
+		`)
 	}
-	rows, err := d.db.QueryContext(ctx, `
-		SELECT year, week, week_date, discovered, reviewed, processed, updated_at
-		FROM week_state ORDER BY year DESC, week DESC LIMIT ?
-	`, limit)
 	if err != nil {
 		return nil, fmt.Errorf("querying week states: %w", err)
 	}
