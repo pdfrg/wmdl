@@ -58,12 +58,12 @@ quality:
     resolution: "2160p"
     prefer_hdr: true
     source_priority: ["bluray", "web-dl", "webrip"]
-    codec_priority: ["h265", "x265", "h264", "av1"]
+    codec_priority: ["h265", "h264", "av1"]  # h265 also matches x265/hevc, h264 also matches x264
   tv:
     resolution: "1080p"
     prefer_hdr: false
     source_priority: ["bluray", "web-dl", "webrip"]
-    codec_priority: ["h265", "x265", "h264", "av1"]
+    codec_priority: ["h265", "h264", "av1"]  # h265 also matches x265/hevc, h264 also matches x264
 
 show_top_n: 10
 min_seeders: 3

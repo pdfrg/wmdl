@@ -7,11 +7,14 @@ import (
 )
 
 var (
-	seasonNumPat    = regexp.MustCompile(`(?i)\bseason\s+(\d+)\b`)
-	shortSeasonPat  = regexp.MustCompile(`(?i)\bs(\d+)(?:e\d+)?\b`)
+	seasonNumPat     = regexp.MustCompile(`(?i)\bseason\s+(\d+)\b`)
+	shortSeasonPat   = regexp.MustCompile(`(?i)\bs(\d+)(?:e\d+)?\b`)
 	ordinalSeasonPat = regexp.MustCompile(`(?i)(\d+)(?:st|nd|rd|th)\s+season\b`)
-	wordSeasonPat   = regexp.MustCompile(`(?i)\bseason\s+(` + seasonWords + `)\b`)
+	wordSeasonPat    = regexp.MustCompile(`(?i)\bseason\s+(` + seasonWords + `)\b`)
 	wordSeasonRevPat = regexp.MustCompile(`(?i)(?:complete\s+)?(` + seasonWords + `)\s+season\b`)
+
+	stripParenPat    = regexp.MustCompile(`(?i)\s*\([^)]*\bseason\s*(?:\d+|` + seasonWords + `)[^)]*\)\s*`)
+	stripTrailPat    = regexp.MustCompile(`(?i)\s+(?:complete\s+)?(?:season\s+(?:\d+|` + seasonWords + `)|(?:\d+)(?:st|nd|rd|th)\s+season|` + seasonWords + `\s+season)\s*$`)
 )
 
 const seasonWords = `twenty|nineteen|eighteen|seventeen|sixteen|fifteen|fourteen|thirteen|twelve|eleven|ten|nine|eight|seven|six|five|four|three|two|one|twentieth|nineteenth|eighteenth|seventeenth|sixteenth|fifteenth|fourteenth|thirteenth|twelfth|eleventh|tenth|ninth|eighth|seventh|sixth|fifth|fourth|third|second|first`
@@ -68,4 +71,51 @@ func ParseSeasonNumber(title string) int {
 	}
 
 	return 1
+}
+
+var seasonSuffixWords = map[string]bool{
+	"first": true, "second": true, "third": true, "fourth": true, "fifth": true,
+	"sixth": true, "seventh": true, "eighth": true, "ninth": true, "tenth": true,
+	"eleventh": true, "twelfth": true, "thirteenth": true, "fourteenth": true,
+	"fifteenth": true, "sixteenth": true, "seventeenth": true, "eighteenth": true,
+	"nineteenth": true, "twentieth": true,
+	"one": true, "two": true, "three": true, "four": true, "five": true,
+	"six": true, "seven": true, "eight": true, "nine": true, "ten": true,
+	"eleven": true, "twelve": true, "thirteen": true, "fourteen": true,
+	"fifteen": true, "sixteen": true, "seventeen": true, "eighteen": true,
+	"nineteen": true, "twenty": true,
+}
+
+func StripSeason(title string) string {
+	s := title
+
+	// Remove parenthesized season: "Show (season 2)" → "Show"
+	s = stripParenPat.ReplaceAllString(s, "")
+
+	// Remove colon-separated season: "Show: Season Fifteen" → "Show"
+	if idx := strings.Index(s, ":"); idx >= 0 {
+		suffix := strings.TrimSpace(s[idx+1:])
+		lower := strings.ToLower(suffix)
+		if containsSeasonKeywords(lower) {
+			s = strings.TrimSpace(s[:idx])
+		}
+	}
+
+	// Remove trailing season patterns: "Show season 2" → "Show"
+	s = stripTrailPat.ReplaceAllString(s, "")
+
+	return strings.TrimSpace(s)
+}
+
+func containsSeasonKeywords(s string) bool {
+	if strings.Contains(s, "season") || strings.Contains(s, "complete") {
+		return true
+	}
+	words := strings.Fields(s)
+	for _, w := range words {
+		if seasonSuffixWords[w] {
+			return true
+		}
+	}
+	return false
 }

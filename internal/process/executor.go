@@ -80,8 +80,9 @@ func (e *Executor) ProcessApproved(ctx context.Context, evt db.EventWithTitle) e
 	log.Printf("Processing: %s (%d)", title.Title, title.Year)
 
 	season := quality.ParseSeasonNumber(title.Title)
+	stripped := quality.StripSeason(title.Title)
 
-	releases, err := e.searchRelease(ctx, title, season)
+	releases, err := e.searchRelease(ctx, title, stripped, season)
 	if err != nil {
 		return fmt.Errorf("searching releases: %w", err)
 	}
@@ -161,7 +162,7 @@ func (e *Executor) ProcessApproved(ctx context.Context, evt db.EventWithTitle) e
 	return nil
 }
 
-func (e *Executor) searchRelease(ctx context.Context, title *model.Title, season int) ([]quality.ParsedRelease, error) {
+func (e *Executor) searchRelease(ctx context.Context, title *model.Title, stripped string, season int) ([]quality.ParsedRelease, error) {
 	resCfg := e.cfg.Quality.Movies
 	searchType := "movie"
 	if title.MediaType == model.MediaTypeTV {
@@ -170,20 +171,27 @@ func (e *Executor) searchRelease(ctx context.Context, title *model.Title, season
 	}
 
 	resKeyword := resolutionSearchKeyword(resCfg.Resolution)
+	fallbackRes := fallbackResolution(resKeyword)
+
 	var queries []string
 	if title.MediaType == model.MediaTypeTV {
-		queries = tvSearchQueries(title.Title, season, resKeyword)
+		queries = tvSearchQueries(stripped, season, resKeyword, fallbackRes)
 	} else {
-		queries = movieSearchQueries(title.Title, title.Year, resKeyword)
+		queries = movieSearchQueries(stripped, title.Year, resKeyword)
 	}
 
 	for _, q := range queries {
+		log.Printf("  Searching: %q (%s)", q, searchType)
 		results, err := e.searchWithIndexer(ctx, q, searchType)
 		if err != nil {
 			return nil, err
 		}
+		log.Printf("  Prowlarr returned %d results", len(results))
 		if len(results) > 0 {
-			log.Printf("  Found %d results for query %q", len(results), q)
+			results = quality.FilterReleases(results, stripped, title.Year, season, string(title.MediaType))
+			log.Printf("  %d results after filtering", len(results))
+		}
+		if len(results) > 0 {
 			return results, nil
 		}
 	}
@@ -195,6 +203,7 @@ func (e *Executor) searchWithIndexer(ctx context.Context, query, searchType stri
 	indexerID := e.cfg.Prowlarr.IndexerID
 
 	if indexerID > 0 {
+		log.Printf("    indexer %d", indexerID)
 		results, err := e.prowl.Search(ctx, search.SearchParams{
 			Query:     query,
 			Type:      searchType,
@@ -208,6 +217,7 @@ func (e *Executor) searchWithIndexer(ctx context.Context, query, searchType stri
 		if len(results) > 0 {
 			name := fmt.Sprintf("indexer %d", indexerID)
 			if promptYesNo(fmt.Sprintf("  %d results from %s — search all indexers?", len(results), name)) {
+				log.Printf("    all indexers")
 				all, err := e.prowl.Search(ctx, search.SearchParams{
 					Query: query,
 					Type:  searchType,
@@ -219,6 +229,7 @@ func (e *Executor) searchWithIndexer(ctx context.Context, query, searchType stri
 				results = mergeReleases(results, all)
 			}
 		} else {
+			log.Printf("    no results on indexer %d, falling back to all indexers", indexerID)
 			results, err = e.prowl.Search(ctx, search.SearchParams{
 				Query: query,
 				Type:  searchType,
@@ -285,17 +296,33 @@ func movieSearchQueries(title string, year int, res string) []string {
 	}
 }
 
-func tvSearchQueries(title string, season int, res string) []string {
-	q := fmt.Sprintf("%s S%02d complete %s", title, season, res)
-	if season == 1 {
-		q = fmt.Sprintf("%s complete %s", title, res)
+func tvSearchQueries(stripped string, season int, res, fallback string) []string {
+	seasonStr := fmt.Sprintf("S%02d", season)
+	seasonWord := fmt.Sprintf("season %d", season)
+
+	tiers := []string{
+		fmt.Sprintf("%s %s complete %s", stripped, seasonStr, res),
+		fmt.Sprintf("%s %s complete %s", stripped, seasonWord, res),
+		fmt.Sprintf("%s %s %s", stripped, seasonStr, res),
+		fmt.Sprintf("%s %s %s", stripped, seasonWord, res),
+		fmt.Sprintf("%s %s", stripped, res),
 	}
-	return []string{
-		q,
-		fmt.Sprintf("%s S%02d %s", title, season, res),
-		fmt.Sprintf("%s %s", title, res),
-		title,
+	if fallback != "" {
+		tiers = append(tiers, fmt.Sprintf("%s %s", stripped, fallback))
 	}
+	return tiers
+}
+
+func fallbackResolution(res string) string {
+	switch res {
+	case "2160p":
+		return "1080p"
+	case "1080p":
+		return "720p"
+	case "720p":
+		return "480p"
+	}
+	return ""
 }
 
 func (e *Executor) addToLibrary(ctx context.Context, evt db.EventWithTitle, season int) error {

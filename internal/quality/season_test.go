@@ -36,3 +36,34 @@ func TestParseSeasonNumber(t *testing.T) {
 		})
 	}
 }
+
+func TestStripSeason(t *testing.T) {
+	tests := []struct {
+		title string
+		want  string
+	}{
+		{"Eva Lasting (season 4)", "Eva Lasting"},
+		{"Furies (season 2)", "Furies"},
+		{"INVINCIBLE (season 4)", "INVINCIBLE"},
+		{"Call the Midwife: Season Fifteen", "Call the Midwife"},
+		{"Fallout: Complete Second Season", "Fallout"},
+		{"Regular Show (season 1)", "Regular Show"},
+		{"Show: Season One", "Show"},
+		{"Show: Complete First Season", "Show"},
+		{"Show: Complete Third Season", "Show"},
+		{"Series: Season Twenty", "Series"},
+		{"The Show (season 1)", "The Show"},
+		{"Imperfect Women (season one)", "Imperfect Women"},
+		{"No Season Here", "No Season Here"},
+		{"Movie Title 2025", "Movie Title 2025"},
+		{"New Show", "New Show"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.title, func(t *testing.T) {
+			got := StripSeason(tt.title)
+			if got != tt.want {
+				t.Errorf("StripSeason(%q) = %q, want %q", tt.title, got, tt.want)
+			}
+		})
+	}
+}

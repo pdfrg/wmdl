@@ -3,6 +3,7 @@ package quality
 import (
 	"math"
 	"regexp"
+	"strconv"
 	"strings"
 )
 
@@ -212,6 +213,125 @@ func groupBonus(group string, preferred []string) int {
 		}
 	}
 	return 0
+}
+
+var (
+	episodeMarkerPat = regexp.MustCompile(`(?i)\bs\d{2}e\d{2}\b`)
+	releaseYearPat   = regexp.MustCompile(`\b((?:19|20)\d{2})\b`)
+)
+
+// ExtractShowName strips torrent metadata from a release title,
+// returning the show/movie name portion.
+func ExtractShowName(rawTitle string) string {
+	s := strings.ReplaceAll(rawTitle, ".", " ")
+
+	firstIdx := len(s)
+	for _, pat := range []*regexp.Regexp{episodeMarkerPat, shortSeasonPat, seasonNumPat, releaseYearPat} {
+		loc := pat.FindStringIndex(s)
+		if loc != nil && loc[0] < firstIdx {
+			firstIdx = loc[0]
+		}
+	}
+
+	name := strings.TrimSpace(s[:firstIdx])
+	name = strings.TrimRight(name, " -")
+	return name
+}
+
+// FilterRelease checks whether a parsed release should be kept
+// based on title similarity, year (movies), and season/episode (TV).
+func FilterRelease(r ParsedRelease, searchTitle string, searchYear, searchSeason int, mediaType string) bool {
+	// TV: reject single episodes
+	if mediaType == "tv" && episodeMarkerPat.MatchString(r.RawTitle) {
+		return false
+	}
+
+	// TV: reject wrong season
+	if mediaType == "tv" {
+		relSeason := parseReleaseSeason(r.RawTitle)
+		if relSeason > 0 && relSeason != searchSeason {
+			return false
+		}
+	}
+
+	// Movies: reject wrong year (diff > 1)
+	if mediaType == "movie" {
+		relYear := parseReleaseYear(r.RawTitle)
+		if relYear > 0 && absInt(relYear-searchYear) > 1 {
+			return false
+		}
+	}
+
+	// Title similarity: all normalized search words must appear in release title
+	searchNorm := normalizeTitle(searchTitle)
+	releaseNorm := normalizeRelease(r.RawTitle)
+	searchWords := strings.Fields(searchNorm)
+	if len(searchWords) == 0 {
+		return true
+	}
+	for _, w := range searchWords {
+		if !strings.Contains(releaseNorm, w) {
+			return false
+		}
+	}
+
+	return true
+}
+
+// FilterReleases bulk-filters a slice of parsed releases.
+func FilterReleases(releases []ParsedRelease, searchTitle string, searchYear, searchSeason int, mediaType string) []ParsedRelease {
+	var filtered []ParsedRelease
+	for _, r := range releases {
+		if FilterRelease(r, searchTitle, searchYear, searchSeason, mediaType) {
+			filtered = append(filtered, r)
+		}
+	}
+	return filtered
+}
+
+func parseReleaseSeason(rawTitle string) int {
+	if m := shortSeasonPat.FindStringSubmatch(rawTitle); len(m) > 1 {
+		n, err := strconv.Atoi(m[1])
+		if err == nil && n >= 1 && n <= 100 {
+			return n
+		}
+	}
+	if m := seasonNumPat.FindStringSubmatch(rawTitle); len(m) > 1 {
+		n, err := strconv.Atoi(m[1])
+		if err == nil && n >= 1 && n <= 100 {
+			return n
+		}
+	}
+	return 0
+}
+
+func parseReleaseYear(rawTitle string) int {
+	matches := releaseYearPat.FindStringSubmatch(rawTitle)
+	if len(matches) > 1 {
+		n, err := strconv.Atoi(matches[1])
+		if err == nil && n >= 1990 && n <= 2030 {
+			return n
+		}
+	}
+	return 0
+}
+
+func normalizeTitle(s string) string {
+	return strings.TrimSpace(strings.ToLower(s))
+}
+
+func normalizeRelease(rawTitle string) string {
+	s := strings.ToLower(rawTitle)
+	s = strings.NewReplacer(".", " ", "-", " ", "_", " ").Replace(s)
+	// Collapse multiple spaces
+	return strings.Join(strings.Fields(s), " ")
+}
+
+func absInt(n int) int {
+	if n < 0 {
+		return -n
+	}
+	return n
 }
 
 func seederScore(seeders, minSeeders int) int {
