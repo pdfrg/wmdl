@@ -87,6 +87,8 @@ one week at a time — use catchup to handle all outstanding weeks.`,
 				}
 				if hasRemaining {
 					log.Println("Some weeks still have pending steps. Run 'wmd catchup' again to continue.")
+				} else {
+					log.Println("All caught up! Run 'wmd status' to verify.")
 				}
 			}
 
