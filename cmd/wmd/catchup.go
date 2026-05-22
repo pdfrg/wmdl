@@ -14,7 +14,7 @@ import (
 )
 
 func newCatchupCmd() *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:   "catchup",
 		Short: "Run all pending steps for incomplete weeks",
 		Long: `Advance each incomplete week by one step (discover → review → process)
@@ -29,7 +29,7 @@ For example, if weeks 10, 11, and 12 all need the full pipeline:
 
 The individual commands (discover, review, process) target only
 one week at a time — use catchup to handle all outstanding weeks.`,
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(c *cobra.Command, args []string) error {
 			dbPath, err := dataDir()
 			if err != nil {
 				return err
@@ -47,13 +47,13 @@ one week at a time — use catchup to handle all outstanding weeks.`,
 
 			if len(states) == 0 {
 				log.Println("No week data found. Running discover for current week.")
-				return runDiscover(cmd)
+				return runDiscover(c, false)
 			}
 
 			for _, s := range states {
 				if !s.Discovered {
 					log.Printf("Week %d/%d: needs discover, running now...", s.Year, s.Week)
-					if err := runDiscover(cmd); err != nil {
+					if err := runDiscover(c, false); err != nil {
 						log.Printf("  discover failed: %v", err)
 					}
 					continue
@@ -69,7 +69,7 @@ one week at a time — use catchup to handle all outstanding weeks.`,
 
 				if !s.Processed {
 					log.Printf("Week %d/%d: needs process, running now...", s.Year, s.Week)
-					if err := runProcess(cmd); err != nil {
+					if err := runProcess(c); err != nil {
 						log.Printf("  process failed: %v", err)
 					}
 				}
@@ -95,9 +95,10 @@ one week at a time — use catchup to handle all outstanding weeks.`,
 			return nil
 		},
 	}
+	return cmd
 }
 
-func runDiscover(cmd *cobra.Command) error {
+func runDiscover(cmd *cobra.Command, headless bool) error {
 	cfg, err := config.Load()
 	if err != nil {
 		return fmt.Errorf("loading config: %w", err)
@@ -113,7 +114,7 @@ func runDiscover(cmd *cobra.Command) error {
 	}
 	defer database.Close()
 
-	return runDiscoverForWeek(cmd.Context(), database, cfg, 0, 0)
+	return runDiscoverForWeek(cmd.Context(), database, cfg, 0, 0, headless)
 }
 
 func runReview(database *db.DB) error {

@@ -14,7 +14,7 @@ import (
 	"github.com/pdfrg/wmd/internal/review"
 )
 
-func runDiscoverForWeek(ctx context.Context, database *db.DB, cfg *config.Config, year, week int) error {
+func runDiscoverForWeek(ctx context.Context, database *db.DB, cfg *config.Config, year, week int, headless bool) error {
 	if err := database.Migrate(ctx); err != nil {
 		return fmt.Errorf("migrating database: %w", err)
 	}
@@ -31,7 +31,7 @@ func runDiscoverForWeek(ctx context.Context, database *db.DB, cfg *config.Config
 		}
 	}
 
-	runner := discover.NewRunner(cfg, database)
+	runner := discover.NewRunner(cfg, database, headless)
 	if year != 0 && week != 0 {
 		runner.SetTargetWeek(year, week)
 	}

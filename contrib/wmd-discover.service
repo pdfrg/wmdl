@@ -1,0 +1,25 @@
+# wmd-discover.service — oneshot unit for wmd discover
+#
+# Install:
+#   cp contrib/wmd-discover.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#
+# Paths: adjust ExecStart to match your `which wmd` or build output.
+# Requires: a working $HOME/.config/wmd/config.yaml.
+
+[Unit]
+Description=wmd — weekly media discovery
+Documentation=https://github.com/pdfrg/wmd
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=%h/go/bin/wmd discover --headless
+
+# Hardening
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=%h/.local/share/wmd
+PrivateTmp=true
+NoNewPrivileges=true

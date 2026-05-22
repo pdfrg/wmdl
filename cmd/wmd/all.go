@@ -39,7 +39,7 @@ skipping the intermediate chain prompts.`,
 
 			ctx := cmd.Context()
 
-			if err := runDiscoverForWeek(ctx, database, cfg, targetYear, targetWeek); err != nil {
+			if err := runDiscoverForWeek(ctx, database, cfg, targetYear, targetWeek, false); err != nil {
 				return err
 			}
 			if _, err := runReviewForWeek(ctx, database, cfg, targetYear, targetWeek); err != nil {

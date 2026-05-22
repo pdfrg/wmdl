@@ -38,11 +38,13 @@ func newDiscoverCmd() *cobra.Command {
 				return err
 			}
 
-			if err := runDiscoverForWeek(cmd.Context(), database, cfg, targetYear, targetWeek); err != nil {
+			headless, _ := cmd.Flags().GetBool("headless")
+
+			if err := runDiscoverForWeek(cmd.Context(), database, cfg, targetYear, targetWeek, headless); err != nil {
 				return err
 			}
 
-			if term.IsTerminal(int(os.Stdin.Fd())) {
+			if !headless && term.IsTerminal(int(os.Stdin.Fd())) {
 				fmt.Fprintln(os.Stderr)
 				if promptYesNo("Review this week now?") {
 					_, err := runReviewForWeek(cmd.Context(), database, cfg, targetYear, targetWeek)
@@ -53,6 +55,7 @@ func newDiscoverCmd() *cobra.Command {
 		},
 	}
 	addWeekFlag(cmd)
+	cmd.Flags().Bool("headless", false, "Run without opening a browser window (for cron/systemd)")
 	return cmd
 }
 

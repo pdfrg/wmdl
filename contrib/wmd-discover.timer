@@ -1,0 +1,26 @@
+# wmd-discover.timer — runs wmd discover every Wednesday at 05:00
+#
+# Install:
+#   cp contrib/wmd-discover.service  ~/.config/systemd/user/
+#   cp contrib/wmd-discover.timer    ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now wmd-discover.timer
+#
+# Check:
+#   systemctl --user list-timers
+#   journalctl --user -u wmd-discover.service --since today
+
+[Unit]
+Description=Run wmd discover every Wednesday
+Documentation=https://github.com/pdfrg/wmd
+
+[Timer]
+OnCalendar=Wed 05:00
+Persistent=true
+
+# If the previous run missed its window (e.g. machine was off),
+# trigger immediately on next boot up to 1 hour after the scheduled time.
+AccuracySec=1h
+
+[Install]
+WantedBy=timers.target

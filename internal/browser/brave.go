@@ -12,7 +12,7 @@ import (
 	"github.com/chromedp/chromedp"
 )
 
-func EnsureRunning(debugPort int, profile string) (func() error, error) {
+func EnsureRunning(debugPort int, profile string, headless bool) (func() error, error) {
 	addr := fmt.Sprintf("127.0.0.1:%d", debugPort)
 	conn, err := net.DialTimeout("tcp", addr, 500*time.Millisecond)
 	if err == nil {
@@ -25,13 +25,17 @@ func EnsureRunning(debugPort int, profile string) (func() error, error) {
 		return nil, fmt.Errorf("creating brave data dir: %w", err)
 	}
 
-	cmd := exec.Command("brave",
+	args := []string{
 		fmt.Sprintf("--remote-debugging-port=%d", debugPort),
 		fmt.Sprintf("--user-data-dir=%s", userDataDir),
 		"--no-first-run",
-		"--new-window",
-		"about:blank",
-	)
+	}
+	if headless {
+		args = append(args, "--headless=new")
+	}
+	args = append(args, "--new-window", "about:blank")
+
+	cmd := exec.Command("brave", args...)
 	cmd.Stdout = os.Stderr
 	cmd.Stderr = os.Stderr
 

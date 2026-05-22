@@ -32,6 +32,8 @@ type Runner struct {
 	targetYear    int
 	targetWeek    int
 	hasTargetWeek bool
+	headless      bool
+	killBrave     func() error
 }
 
 func (r *Runner) SetTargetWeek(year, week int) {
@@ -40,7 +42,7 @@ func (r *Runner) SetTargetWeek(year, week int) {
 	r.hasTargetWeek = true
 }
 
-func NewRunner(cfg *config.Config, database *db.DB) *Runner {
+func NewRunner(cfg *config.Config, database *db.DB, headless bool) *Runner {
 	return &Runner{
 		cfg:      cfg,
 		db:       database,
@@ -49,6 +51,7 @@ func NewRunner(cfg *config.Config, database *db.DB) *Runner {
 		imdb:     NewIMDbAPIClient(),
 		notify:   notifier.NewGotify(cfg.Notifier.GotifyURL, cfg.Notifier.GotifyToken),
 		debugURL: fmt.Sprintf("http://127.0.0.1:%d", cfg.Browser.DebugPort),
+		headless: headless,
 	}
 }
 
@@ -58,13 +61,20 @@ func (r *Runner) Run(ctx context.Context) error {
 	}
 
 	// Auto-launch Brave if not already running on the debug port
-	killBrave, err := browser.EnsureRunning(r.cfg.Browser.DebugPort, r.cfg.Browser.Profile)
+	killBrave, err := browser.EnsureRunning(r.cfg.Browser.DebugPort, r.cfg.Browser.Profile, r.headless)
 	if err != nil {
 		log.Printf("Warning: browser unavailable (some features disabled): %v", err)
 	} else if killBrave != nil {
+		r.killBrave = killBrave
 		log.Printf("Launched Brave on port %d (profile: %s)", r.cfg.Browser.DebugPort, r.cfg.Browser.Profile)
 	} else {
 		log.Printf("Connected to Brave on port %d", r.cfg.Browser.DebugPort)
+	}
+
+	// If we auto-launched in headless mode, kill the browser when done.
+	// Defer this BEFORE allocCtx setup so allocCancel runs first (LIFO).
+	if r.killBrave != nil && r.headless {
+		defer r.killBrave()
 	}
 
 	// Shared chromedp allocator for all RT page scraping (single WebSocket connection)
