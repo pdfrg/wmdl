@@ -15,6 +15,11 @@ type TMDBDiscoverProvider struct {
 	hasTargetWeek bool
 }
 
+var (
+	_ ReleaseProvider = (*TMDBDiscoverProvider)(nil)
+	_ WeekSettable    = (*TMDBDiscoverProvider)(nil)
+)
+
 func NewTMDBDiscoverProvider(client *TMDBClient) *TMDBDiscoverProvider {
 	return &TMDBDiscoverProvider{client: client}
 }

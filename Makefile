@@ -1,7 +1,8 @@
 BIN  = wmdl
-BUILD = go build -o $(BIN) ./cmd/wmdl
+VERSION ?= $(shell git describe --tags --dirty --always 2>/dev/null || echo dev)
+BUILD = go build -ldflags="-X main.version=$(VERSION)" -o $(BIN) ./cmd/wmdl
 
-.PHONY: all build test vet fmt lint clean run-discover run-review run-process run-check
+.PHONY: all build test vet fmt lint clean release run-discover run-review run-process run-check
 
 all: fmt vet lint test build
 
@@ -30,6 +31,9 @@ run-review:
 
 run-process:
 	go run ./cmd/wmdl process
+
+release:
+	goreleaser release --clean
 
 clean:
 	rm -f $(BIN)

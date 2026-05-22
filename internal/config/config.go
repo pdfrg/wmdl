@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/spf13/viper"
 )
@@ -132,6 +133,54 @@ func Load() (*Config, error) {
 	}
 
 	return &cfg, nil
+}
+
+func (c *Config) Validate() error {
+	var errs []string
+
+	if c.TMDB.APIKey == "" {
+		errs = append(errs, "tmdb.api_key is required (get one at https://www.themoviedb.org/settings/api)")
+	}
+	if c.Prowlarr.URL == "" {
+		errs = append(errs, "prowlarr.url is required")
+	}
+	if c.Prowlarr.APIKey == "" {
+		errs = append(errs, "prowlarr.api_key is required")
+	}
+
+	switch c.Downloader.Type {
+	case "qbittorrent":
+		if c.Downloader.Qbittorrent.URL == "" {
+			errs = append(errs, "downloader.qbittorrent.url is required when downloader.type is qbittorrent")
+		}
+	case "transmission":
+		if c.Downloader.Transmission.URL == "" {
+			errs = append(errs, "downloader.transmission.url is required when downloader.type is transmission")
+		}
+	case "deluge":
+		if c.Downloader.Deluge.URL == "" {
+			errs = append(errs, "downloader.deluge.url is required when downloader.type is deluge")
+		}
+	case "":
+		errs = append(errs, "downloader.type is required (qbittorrent, transmission, or deluge)")
+	default:
+		errs = append(errs, fmt.Sprintf("unknown downloader.type %q (must be qbittorrent, transmission, or deluge)", c.Downloader.Type))
+	}
+
+	// Validate Radarr config if URL is set (partially configured)
+	if c.Library.Radarr.URL != "" && c.Library.Radarr.APIKey == "" {
+		errs = append(errs, "library.radarr.api_key is required when library.radarr.url is set")
+	}
+
+	// Validate Sonarr config if URL is set (partially configured)
+	if c.Library.Sonarr.URL != "" && c.Library.Sonarr.APIKey == "" {
+		errs = append(errs, "library.sonarr.api_key is required when library.sonarr.url is set")
+	}
+
+	if len(errs) == 0 {
+		return nil
+	}
+	return fmt.Errorf("config validation failed:\n  - %s", strings.Join(errs, "\n  - "))
 }
 
 func setDefaults(v *viper.Viper) {

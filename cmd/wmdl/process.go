@@ -3,11 +3,11 @@ package main
 import (
 	"bufio"
 	"fmt"
-	"log"
 	"os"
 	"path/filepath"
 	"strings"
 
+	"github.com/rs/zerolog/log"
 	"github.com/spf13/cobra"
 
 	"github.com/pdfrg/wmdl/internal/config"
@@ -26,6 +26,9 @@ and send it to the download client.`,
 			cfg, err := config.Load()
 			if err != nil {
 				return fmt.Errorf("loading config: %w", err)
+			}
+			if err := cfg.Validate(); err != nil {
+				return fmt.Errorf("invalid config: %w", err)
 			}
 
 			dbPath, err := dataDir()
@@ -60,8 +63,8 @@ and send it to the download client.`,
 					return fmt.Errorf("finding target week: %w", err)
 				}
 				if target == nil {
-					log.Println("No weeks discovered yet.")
-					log.Println("Run 'wmdl discover' first.")
+					log.Info().Msg("No weeks discovered yet.")
+					log.Info().Msg("Run 'wmdl discover' first.")
 					return nil
 				}
 			}
@@ -71,7 +74,7 @@ and send it to the download client.`,
 				return fmt.Errorf("loading events: %w", err)
 			}
 			if len(allEvents) == 0 {
-				log.Printf("No releases found for week %d-W%02d.", target.Year, target.Week)
+				log.Info().Msgf("No releases found for week %d-W%02d.", target.Year, target.Week)
 				return nil
 			}
 
@@ -90,20 +93,20 @@ and send it to the download client.`,
 
 			switch {
 			case len(pending) == 0 && len(downloaded) == 0:
-				log.Printf("No processable releases for week %d-W%02d.", target.Year, target.Week)
+				log.Info().Msgf("No processable releases for week %d-W%02d.", target.Year, target.Week)
 				return nil
 
 			case len(downloaded) > 0 && len(pending) == 0:
-				log.Printf("All %d releases for %d-W%02d already downloaded.", len(downloaded), target.Year, target.Week)
+				log.Info().Msgf("All %d releases for %d-W%02d already downloaded.", len(downloaded), target.Year, target.Week)
 				if !promptYesNo("Continue anyway (re-process all)?") {
 					return nil
 				}
 				events = downloaded
 
 			case len(downloaded) > 0 && len(pending) > 0:
-				log.Printf("%d/%d releases already downloaded for %d-W%02d.", len(downloaded), len(allEvents), target.Year, target.Week)
+				log.Info().Msgf("%d/%d releases already downloaded for %d-W%02d.", len(downloaded), len(pending)+len(downloaded), target.Year, target.Week)
 				for {
-					log.Print("[a] re-process all  [u] only not-yet-downloaded  [q] quit")
+					log.Info().Msg("[a] re-process all  [u] only not-yet-downloaded  [q] quit")
 					fmt.Fprintf(os.Stderr, "Choose: ")
 					var choice string
 					if _, err := fmt.Scanln(&choice); err != nil {
@@ -117,7 +120,7 @@ and send it to the download client.`,
 					case "q":
 						return nil
 					default:
-						log.Print("Invalid choice.")
+						log.Info().Msg("Invalid choice.")
 						continue
 					}
 					break
@@ -127,9 +130,9 @@ and send it to the download client.`,
 				events = allEvents
 			}
 
-			log.Printf("Processing %d release(s) for %d-W%02d", len(events), target.Year, target.Week)
+			log.Info().Msgf("Processing %d release(s) for %d-W%02d", len(events), target.Year, target.Week)
 
-			exec := process.NewExecutor(cfg, database)
+			exec := process.NewExecutor(log.Logger, cfg, database)
 
 			processed := 0
 			if cfg.ProcessMode == "batch" {
@@ -145,7 +148,7 @@ and send it to the download client.`,
 						continue
 					}
 					if err := exec.PresentResult(ctx, sr); err != nil {
-						log.Printf("Error presenting %q: %v", sr.Event.Title.Title, err)
+						log.Warn().Err(err).Str("title", sr.Event.Title.Title).Msg("error presenting release")
 						continue
 					}
 					processed++
@@ -159,7 +162,7 @@ and send it to the download client.`,
 					}
 
 					if err := exec.ProcessApproved(ctx, ev); err != nil {
-						log.Printf("Error processing %q: %v", ev.Title.Title, err)
+						log.Warn().Err(err).Str("title", ev.Title.Title).Msg("error processing release")
 						continue
 					}
 					processed++
@@ -169,22 +172,22 @@ and send it to the download client.`,
 			// Mark the week as processed
 			target.Processed = true
 			if err := database.UpsertWeekState(ctx, target); err != nil {
-				log.Printf("Warning: tracking week state: %v", err)
+				log.Warn().Err(err).Msg("tracking week state")
 			}
 
-			log.Printf("Processed %d/%d releases", processed, len(events))
+			log.Info().Msgf("Processed %d/%d releases", processed, len(events))
 
 			if len(exec.Unfound) > 0 {
-				log.Printf("No results found for %d item(s):", len(exec.Unfound))
+				log.Warn().Msgf("No results found for %d item(s):", len(exec.Unfound))
 				for _, u := range exec.Unfound {
-					log.Printf("  - %s", u)
+					log.Info().Str("title", u).Msg("unfound")
 				}
 				if promptSaveManualSearch(exec.Unfound) {
 					fname := fmt.Sprintf("wmdl-manual-search-%d-W%02d.md", target.Year, target.Week)
 					if err := writeManualSearchFile(fname, exec.Unfound); err != nil {
-						log.Printf("Warning: writing manual search file: %v", err)
+						log.Warn().Err(err).Msg("writing manual search file")
 					} else {
-						log.Printf("Wrote %s", fname)
+						log.Info().Str("file", fname).Msg("wrote manual search file")
 					}
 				}
 			}

@@ -22,6 +22,9 @@ func newDiscoverCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("loading config: %w", err)
 			}
+			if err := cfg.Validate(); err != nil {
+				return fmt.Errorf("invalid config: %w", err)
+			}
 
 			dbPath, err := dataDir()
 			if err != nil {
@@ -40,11 +43,12 @@ func newDiscoverCmd() *cobra.Command {
 
 			headless, _ := cmd.Flags().GetBool("headless")
 
-			if err := runDiscoverForWeek(cmd.Context(), database, cfg, targetYear, targetWeek, headless); err != nil {
+			discovered, err := runDiscoverForWeek(cmd.Context(), database, cfg, targetYear, targetWeek, headless)
+			if err != nil {
 				return err
 			}
 
-			if !headless && term.IsTerminal(int(os.Stdin.Fd())) {
+			if discovered && !headless && term.IsTerminal(int(os.Stdin.Fd())) {
 				fmt.Fprintln(os.Stderr)
 				if promptYesNo("Review this week now?") {
 					_, err := runReviewForWeek(cmd.Context(), database, cfg, targetYear, targetWeek)

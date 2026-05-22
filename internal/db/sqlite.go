@@ -21,7 +21,11 @@ func Open(path string) (*DB, error) {
 		return nil, fmt.Errorf("opening database: %w", err)
 	}
 	d.SetMaxOpenConns(1)
-	return &DB{db: d}, nil
+	db := &DB{db: d}
+	if err := db.Migrate(context.Background()); err != nil {
+		return nil, fmt.Errorf("migrating database: %w", err)
+	}
+	return db, nil
 }
 
 func (d *DB) Close() error {
@@ -266,7 +270,7 @@ func (d *DB) GetLatestReleaseEvent(ctx context.Context, titleID int64) (*model.R
 	err := d.db.QueryRowContext(ctx, `
 		SELECT id, title_id, source, release_type, release_date, status, previous_status, notes, created_at, iso_year, iso_week
 		FROM release_events WHERE title_id = ?
-		ORDER BY created_at DESC LIMIT 1
+		ORDER BY id DESC LIMIT 1
 	`, titleID).Scan(
 		&e.ID, &e.TitleID, &e.Source, &releaseType, &e.ReleaseDate,
 		&status, &prevStatus, &e.Notes, &createdAt, &e.ISOYear, &e.ISOWeek,
@@ -496,7 +500,7 @@ func (d *DB) GetDownloadByTitleID(ctx context.Context, titleID int64) (*model.Do
 		SELECT id, title_id, release_event_id, quality, source_type, codec,
 		       info_hash, category, status, client_torrent_id, radarr_id, sonarr_id, created_at
 		FROM downloads WHERE title_id = ?
-		ORDER BY created_at DESC LIMIT 1
+		ORDER BY id DESC LIMIT 1
 	`, titleID).Scan(
 		&dl.ID, &dl.TitleID, &dl.ReleaseEventID, &dl.Quality, &dl.SourceType,
 		&dl.Codec, &dl.InfoHash, &dl.Category, &status, &dl.ClientTorrentID,

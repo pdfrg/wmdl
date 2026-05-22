@@ -1,6 +1,7 @@
 package discover
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"regexp"
@@ -19,6 +20,11 @@ type DVDReleaseDates struct {
 	targetWeek    int
 	hasTargetWeek bool
 }
+
+var (
+	_ ReleaseProvider = (*DVDReleaseDates)(nil)
+	_ WeekSettable    = (*DVDReleaseDates)(nil)
+)
 
 func NewDVDReleaseDates() *DVDReleaseDates {
 	return &DVDReleaseDates{
@@ -50,7 +56,13 @@ func (d *DVDReleaseDates) Scrape() ([]ScrapedItem, error) {
 		url = "https://www.dvdsreleasedates.com/releases/"
 	}
 
-	resp, err := d.http.Get(url)
+	reqCtx, reqCancel := context.WithTimeout(context.Background(), d.http.Timeout)
+	defer reqCancel()
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("creating request: %w", err)
+	}
+	resp, err := d.http.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("fetching dvdsreleasedates: %w", err)
 	}

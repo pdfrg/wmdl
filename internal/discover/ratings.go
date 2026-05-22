@@ -2,12 +2,12 @@ package discover
 
 import (
 	"context"
-	"log"
 	"regexp"
 	"strconv"
 	"time"
 
 	"github.com/chromedp/chromedp"
+	"github.com/rs/zerolog/log"
 )
 
 type RTRatings struct {
@@ -29,7 +29,7 @@ func ScrapeRTRatings(ctx context.Context, allocCtx context.Context, rtURL string
 		chromedp.Navigate(rtURL),
 		chromedp.WaitReady("body"),
 	); err != nil {
-		log.Printf("    RT navigate failed: %v", err)
+		log.Warn().Err(err).Msg("RT navigate failed")
 		return ratings
 	}
 

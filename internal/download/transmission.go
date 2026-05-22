@@ -17,6 +17,8 @@ type TransmissionClient struct {
 	http      *http.Client
 }
 
+var _ Client = (*TransmissionClient)(nil)
+
 func NewTransmissionClient(baseURL, username, password string) *TransmissionClient {
 	return &TransmissionClient{
 		baseURL:  strings.TrimRight(baseURL, "/"),

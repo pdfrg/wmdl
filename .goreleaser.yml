@@ -1,0 +1,27 @@
+version: 2
+project_name: wmdl
+before:
+  hooks:
+    - go mod tidy
+builds:
+  - main: ./cmd/wmdl
+    binary: wmdl
+    ldflags:
+      - -s -w -X main.version={{ .Version }}
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+archives:
+  - formats: [tar.gz]
+    files:
+      - README.md
+      - LICENSE
+checksum:
+  name_template: "checksums.txt"
+changelog:
+  use: github

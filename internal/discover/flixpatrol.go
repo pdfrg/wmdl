@@ -4,12 +4,13 @@ import (
 	"fmt"
 	"html"
 	"io"
-	"log"
 	"net/http"
 	"regexp"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/rs/zerolog/log"
 
 	"github.com/pdfrg/wmdl/internal/model"
 )
@@ -20,6 +21,11 @@ type FlixPatrolProvider struct {
 	targetWeek    int
 	hasTargetWeek bool
 }
+
+var (
+	_ ReleaseProvider = (*FlixPatrolProvider)(nil)
+	_ WeekSettable    = (*FlixPatrolProvider)(nil)
+)
 
 func NewFlixPatrolProvider(_ string) *FlixPatrolProvider {
 	return &FlixPatrolProvider{
@@ -71,14 +77,14 @@ func (f *FlixPatrolProvider) Scrape() ([]ScrapedItem, error) {
 
 	startStr := streamStart.Format("Jan 2")
 	endStr := streamTue.Format("Jan 2")
-	log.Printf("  FlixPatrol target: %s – %s", startStr, endStr)
+	log.Info().Msgf("FlixPatrol target: %s – %s", startStr, endStr)
 
 	var allItems []flixItem
 pageLoop:
 	for page := 1; page <= 30; page++ {
 		items, err := f.fetchPage(page, streamStart, streamTue)
 		if err != nil {
-			log.Printf("  FlixPatrol page %d: %v", page, err)
+			log.Warn().Err(err).Msgf("FlixPatrol page %d failed", page)
 			continue
 		}
 		if len(items) == 0 {
@@ -91,7 +97,7 @@ pageLoop:
 		for _, it := range items {
 			d := parseFlixDate(it.Date)
 			if !d.IsZero() && d.Before(streamStart) {
-				log.Printf("  FlixPatrol: found pre-window date %s on page %d, stopping", it.Date, page)
+				log.Debug().Msgf("FlixPatrol: found pre-window date %s on page %d, stopping", it.Date, page)
 				break pageLoop
 			}
 		}
@@ -107,7 +113,7 @@ pageLoop:
 		filtered = append(filtered, item)
 	}
 
-	log.Printf("  FlixPatrol: %d in target range", len(filtered))
+	log.Info().Msgf("FlixPatrol: %d in target range", len(filtered))
 
 	var results []ScrapedItem
 	for _, item := range filtered {

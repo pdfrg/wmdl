@@ -21,6 +21,9 @@ skipping the intermediate chain prompts.`,
 			if err != nil {
 				return fmt.Errorf("loading config: %w", err)
 			}
+			if err := cfg.Validate(); err != nil {
+				return fmt.Errorf("invalid config: %w", err)
+			}
 
 			dbPath, err := dataDir()
 			if err != nil {
@@ -39,7 +42,7 @@ skipping the intermediate chain prompts.`,
 
 			ctx := cmd.Context()
 
-			if err := runDiscoverForWeek(ctx, database, cfg, targetYear, targetWeek, false); err != nil {
+			if _, err := runDiscoverForWeek(ctx, database, cfg, targetYear, targetWeek, false); err != nil {
 				return err
 			}
 			if _, err := runReviewForWeek(ctx, database, cfg, targetYear, targetWeek); err != nil {

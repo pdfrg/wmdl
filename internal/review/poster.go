@@ -13,6 +13,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/rs/zerolog/log"
+
 	"github.com/disintegration/imaging"
 	"github.com/dolmen-go/kittyimg"
 
@@ -70,7 +72,9 @@ func getPosterImage(tl *model.Title) (image.Image, error) {
 		return nil, err
 	}
 
-	_ = savePosterCache(cachePath, img)
+	if err := savePosterCache(cachePath, img); err != nil {
+		log.Warn().Err(err).Msg("failed to save poster cache")
+	}
 	return img, nil
 }
 

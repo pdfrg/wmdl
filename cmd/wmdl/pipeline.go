@@ -3,8 +3,9 @@ package main
 import (
 	"context"
 	"fmt"
-	"log"
 	"os"
+
+	"github.com/rs/zerolog/log"
 
 	"github.com/pdfrg/wmdl/internal/config"
 	"github.com/pdfrg/wmdl/internal/db"
@@ -14,24 +15,20 @@ import (
 	"github.com/pdfrg/wmdl/internal/review"
 )
 
-func runDiscoverForWeek(ctx context.Context, database *db.DB, cfg *config.Config, year, week int, headless bool) error {
-	if err := database.Migrate(ctx); err != nil {
-		return fmt.Errorf("migrating database: %w", err)
-	}
-
+func runDiscoverForWeek(ctx context.Context, database *db.DB, cfg *config.Config, year, week int, headless bool) (discovered bool, err error) {
 	ws, err := database.GetWeekState(ctx, year, week)
 	if err != nil {
-		return fmt.Errorf("checking week state: %w", err)
+		return false, fmt.Errorf("checking week state: %w", err)
 	}
 
 	if ws != nil && ws.Discovered {
 		fmt.Fprintf(os.Stderr, "Week %d-W%02d already discovered.\n", year, week)
 		if !promptYesNo("Continue anyway?") {
-			return nil
+			return false, nil
 		}
 	}
 
-	runner := discover.NewRunner(cfg, database, headless)
+	runner := discover.NewRunner(log.Logger, cfg, database, headless)
 	if year != 0 && week != 0 {
 		runner.SetTargetWeek(year, week)
 	}
@@ -39,7 +36,10 @@ func runDiscoverForWeek(ctx context.Context, database *db.DB, cfg *config.Config
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	return runner.Run(ctx)
+	if err := runner.Run(ctx); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 func runReviewForWeek(ctx context.Context, database *db.DB, cfg *config.Config, year, week int) (approved int, err error) {
@@ -168,8 +168,8 @@ func runProcessForWeek(ctx context.Context, database *db.DB, cfg *config.Config,
 			return fmt.Errorf("finding target week: %w", err)
 		}
 		if target == nil {
-			log.Println("No weeks discovered yet.")
-			log.Println("Run 'wmdl discover' first.")
+			log.Info().Msg("No weeks discovered yet.")
+			log.Info().Msg("Run 'wmdl discover' first.")
 			return nil
 		}
 	}
@@ -181,7 +181,7 @@ func runProcessForWeek(ctx context.Context, database *db.DB, cfg *config.Config,
 		return fmt.Errorf("loading events: %w", err)
 	}
 	if len(allEvents) == 0 {
-		log.Printf("No releases found for week %d-W%02d.", year, week)
+		log.Info().Msgf("No releases found for week %d-W%02d.", year, week)
 		return nil
 	}
 
@@ -199,20 +199,20 @@ func runProcessForWeek(ctx context.Context, database *db.DB, cfg *config.Config,
 
 	switch {
 	case len(pending) == 0 && len(downloaded) == 0:
-		log.Printf("No processable releases for week %d-W%02d.", year, week)
+		log.Info().Msgf("No processable releases for week %d-W%02d.", year, week)
 		return nil
 
 	case len(downloaded) > 0 && len(pending) == 0:
-		log.Printf("All %d releases for %d-W%02d already downloaded.", len(downloaded), year, week)
+		log.Info().Msgf("All %d releases for %d-W%02d already downloaded.", len(downloaded), year, week)
 		if !promptYesNo("Continue anyway (re-process all)?") {
 			return nil
 		}
 		events = downloaded
 
 	case len(downloaded) > 0 && len(pending) > 0:
-		log.Printf("%d/%d releases already downloaded for %d-W%02d.", len(downloaded), len(allEvents), year, week)
+		log.Info().Msgf("%d/%d releases already downloaded for %d-W%02d.", len(downloaded), len(pending)+len(downloaded), year, week)
 		for {
-			log.Print("[a] re-process all  [u] only not-yet-downloaded  [q] quit")
+			log.Info().Msg("[a] re-process all  [u] only not-yet-downloaded  [q] quit")
 			fmt.Fprintf(os.Stderr, "Choose: ")
 			var choice string
 			if _, err := fmt.Scanln(&choice); err != nil {
@@ -226,7 +226,7 @@ func runProcessForWeek(ctx context.Context, database *db.DB, cfg *config.Config,
 			case "q":
 				return nil
 			default:
-				log.Print("Invalid choice.")
+				log.Info().Msg("Invalid choice.")
 				continue
 			}
 			break
@@ -236,9 +236,9 @@ func runProcessForWeek(ctx context.Context, database *db.DB, cfg *config.Config,
 		events = allEvents
 	}
 
-	log.Printf("Processing %d release(s) for %d-W%02d", len(events), year, week)
+	log.Info().Msgf("Processing %d release(s) for %d-W%02d", len(events), year, week)
 
-	exec := process.NewExecutor(cfg, database)
+	exec := process.NewExecutor(log.Logger, cfg, database)
 
 	processed := 0
 	if cfg.ProcessMode == "batch" {
@@ -254,7 +254,7 @@ func runProcessForWeek(ctx context.Context, database *db.DB, cfg *config.Config,
 				continue
 			}
 			if err := exec.PresentResult(ctx, sr); err != nil {
-				log.Printf("Error presenting %q: %v", sr.Event.Title.Title, err)
+				log.Warn().Err(err).Str("title", sr.Event.Title.Title).Msg("error presenting release")
 				continue
 			}
 			processed++
@@ -268,7 +268,7 @@ func runProcessForWeek(ctx context.Context, database *db.DB, cfg *config.Config,
 			}
 
 			if err := exec.ProcessApproved(ctx, ev); err != nil {
-				log.Printf("Error processing %q: %v", ev.Title.Title, err)
+				log.Warn().Err(err).Str("title", ev.Title.Title).Msg("error processing release")
 				continue
 			}
 			processed++
@@ -277,22 +277,22 @@ func runProcessForWeek(ctx context.Context, database *db.DB, cfg *config.Config,
 
 	target.Processed = true
 	if err := database.UpsertWeekState(ctx, target); err != nil {
-		log.Printf("Warning: tracking week state: %v", err)
+		log.Warn().Err(err).Msg("tracking week state")
 	}
 
-	log.Printf("Processed %d/%d releases", processed, len(events))
+	log.Info().Msgf("Processed %d/%d releases", processed, len(events))
 
 	if len(exec.Unfound) > 0 {
-		log.Printf("No results found for %d item(s):", len(exec.Unfound))
+		log.Warn().Msgf("No results found for %d item(s):", len(exec.Unfound))
 		for _, u := range exec.Unfound {
-			log.Printf("  - %s", u)
+			log.Info().Str("title", u).Msg("unfound")
 		}
 		if promptSaveManualSearch(exec.Unfound) {
 			fname := fmt.Sprintf("wmd-manual-search-%d-W%02d.md", year, week)
 			if err := writeManualSearchFile(fname, exec.Unfound); err != nil {
-				log.Printf("Warning: writing manual search file: %v", err)
+				log.Warn().Err(err).Msg("writing manual search file")
 			} else {
-				log.Printf("Wrote %s", fname)
+				log.Info().Str("file", fname).Msg("wrote manual search file")
 			}
 		}
 	}

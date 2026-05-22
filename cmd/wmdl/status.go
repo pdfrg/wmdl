@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -28,7 +27,7 @@ func newStatusCmd() *cobra.Command {
 			}
 			defer database.Close()
 
-			allStates, err := database.GetWeekStates(context.Background(), 0)
+			allStates, err := database.GetWeekStates(cmd.Context(), 0)
 			if err != nil {
 				return fmt.Errorf("loading week states: %w", err)
 			}

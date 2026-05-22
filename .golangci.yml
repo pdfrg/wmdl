@@ -1,0 +1,34 @@
+version: "2"
+linters:
+  default: none
+  enable:
+    - errcheck
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+  exclusions:
+    paths:
+      - _test\.go$
+      - internal/browser/
+    rules:
+      - linters: [errcheck]
+        text: "Body.Close"
+      - linters: [errcheck]
+        text: "database.Close"
+      - linters: [errcheck]
+        text: "rows.Close"
+      - linters: [errcheck]
+        path: internal/db/sqlite\.go
+      - linters: [errcheck]
+        path: internal/discover/tmdb\.go
+        text: "fmt.Sscanf"
+      - linters: [errcheck]
+        path: internal/discover/runner\.go
+        text: "killBrave"
+      - linters: [errcheck]
+        path: cmd/wmdl/status\.go
+        text: "fmt.Fprintf"
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0

@@ -15,6 +15,8 @@ type DelugeClient struct {
 	http     *http.Client
 }
 
+var _ Client = (*DelugeClient)(nil)
+
 func NewDelugeClient(baseURL, password string) *DelugeClient {
 	return &DelugeClient{
 		baseURL:  strings.TrimRight(baseURL, "/"),

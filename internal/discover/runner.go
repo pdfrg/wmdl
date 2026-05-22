@@ -4,13 +4,13 @@ import (
 	"context"
 	"fmt"
 	"html"
-	"log"
 	"regexp"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/chromedp/chromedp"
+	"github.com/rs/zerolog"
 
 	"github.com/pdfrg/wmdl/internal/browser"
 	"github.com/pdfrg/wmdl/internal/config"
@@ -20,6 +20,7 @@ import (
 )
 
 type Runner struct {
+	log           zerolog.Logger
 	cfg           *config.Config
 	db            *db.DB
 	tmdb          *TMDBClient
@@ -42,14 +43,21 @@ func (r *Runner) SetTargetWeek(year, week int) {
 	r.hasTargetWeek = true
 }
 
-func NewRunner(cfg *config.Config, database *db.DB, headless bool) *Runner {
+func NewRunner(logger zerolog.Logger, cfg *config.Config, database *db.DB, headless bool) *Runner {
+	notify, err := notifier.New(cfg.Notifier)
+	if err != nil {
+		logger.Warn().Err(err).Msg("notifier unavailable")
+		notify = nil
+	}
+
 	return &Runner{
+		log:      logger,
 		cfg:      cfg,
 		db:       database,
 		tmdb:     NewTMDBClient(cfg.TMDB.APIKey, cfg.TMDB.AccessToken),
 		rt:       NewRTFinder(),
 		imdb:     NewIMDbAPIClient(),
-		notify:   notifier.New(cfg.Notifier),
+		notify:   notify,
 		debugURL: fmt.Sprintf("http://127.0.0.1:%d", cfg.Browser.DebugPort),
 		headless: headless,
 	}
@@ -63,18 +71,18 @@ func (r *Runner) Run(ctx context.Context) error {
 	// Auto-launch Brave if not already running on the debug port
 	killBrave, err := browser.EnsureRunning(r.cfg.Browser.Binary, r.cfg.Browser.DebugPort, r.cfg.Browser.Profile, r.headless)
 	if err != nil {
-		log.Printf("Warning: browser unavailable (some features disabled): %v", err)
+		r.log.Warn().Err(err).Msg("browser unavailable, some features disabled")
 	} else if killBrave != nil {
 		r.killBrave = killBrave
-		log.Printf("Launched Brave on port %d (profile: %s)", r.cfg.Browser.DebugPort, r.cfg.Browser.Profile)
+		r.log.Info().Int("port", r.cfg.Browser.DebugPort).Str("profile", r.cfg.Browser.Profile).Msg("launched Brave")
 	} else {
-		log.Printf("Connected to Brave on port %d", r.cfg.Browser.DebugPort)
+		r.log.Info().Int("port", r.cfg.Browser.DebugPort).Msg("connected to Brave")
 	}
 
 	// If we auto-launched in headless mode, kill the browser when done.
 	// Defer this BEFORE allocCtx setup so allocCancel runs first (LIFO).
 	if r.killBrave != nil && r.headless {
-		defer r.killBrave()
+		defer func() { _ = r.killBrave() }()
 	}
 
 	// Shared chromedp allocator for all RT page scraping (single WebSocket connection)
@@ -104,18 +112,18 @@ func (r *Runner) Run(ctx context.Context) error {
 	var allItems []ScrapedItem
 
 	for _, p := range providers {
-		log.Printf("Scraping %s...", p.Name())
+		r.log.Info().Str("provider", p.Name()).Msg("scraping")
 		items, err := p.Scrape()
 		if err != nil {
-			log.Printf("Warning: %s failed: %v", p.Name(), err)
+			r.log.Warn().Err(err).Str("provider", p.Name()).Msg("scrape failed")
 			continue
 		}
-		log.Printf("  Found %d items from %s", len(items), p.Name())
+		r.log.Info().Int("count", len(items)).Str("provider", p.Name()).Msg("found items")
 		allItems = append(allItems, items...)
 	}
 
 	if len(allItems) == 0 {
-		log.Println("No new releases found.")
+		r.log.Info().Msg("no new releases found")
 		return nil
 	}
 
@@ -146,7 +154,7 @@ func (r *Runner) Run(ctx context.Context) error {
 			defer func() { <-sem }()
 
 			if err := r.processItem(ctx, item, progYear, progWeek); err != nil {
-				log.Printf("  Error processing %q: %v", item.Title, err)
+				r.log.Warn().Err(err).Str("title", item.Title).Msg("error processing item")
 				return
 			}
 			mu.Lock()
@@ -156,13 +164,13 @@ func (r *Runner) Run(ctx context.Context) error {
 	}
 
 	wg.Wait()
-	log.Printf("Processed %d/%d items", processed, len(unique))
+	r.log.Info().Msgf("Processed %d/%d items", processed, len(unique))
 
 	// Track week state
 	if ws := weekStateFromItems(unique); ws != nil {
 		ws.Discovered = true
 		if err := r.db.UpsertWeekState(ctx, ws); err != nil {
-			log.Printf("Warning: tracking week state: %v", err)
+			r.log.Warn().Err(err).Msg("tracking week state")
 		}
 	}
 
@@ -183,7 +191,7 @@ func (r *Runner) Run(ctx context.Context) error {
 			count++
 		}
 		if err := r.notify.Send("wmdl: New Releases", msg, 5); err != nil {
-			log.Printf("Warning: notification failed: %v", err)
+			r.log.Warn().Err(err).Msg("notification failed")
 		}
 	}
 
@@ -216,7 +224,7 @@ func programWeekFromItems(items []ScrapedItem) (int, int) {
 
 func (r *Runner) processItem(ctx context.Context, item ScrapedItem, progYear, progWeek int) error {
 	searchTitle := cleanTitleForSearch(item.Title)
-	log.Printf("Processing %q (%d)...", item.Title, item.Year)
+	r.log.Info().Str("title", item.Title).Int("year", item.Year).Msg("processing item")
 
 	// Phase 1: TMDB enrichment (gets us tmdb_id, imdb_id, rating, metadata)
 	apiCtx, apiCancel := context.WithTimeout(ctx, 20*time.Second)
@@ -237,9 +245,9 @@ func (r *Runner) processItem(ctx context.Context, item ScrapedItem, progYear, pr
 		tmdbID = enrich.TMDBID
 		rating = enrich.Rating
 		imdbID = enrich.IMDbID
-		log.Printf("  TMDB: ID=%d rating=%.1f media=%s", tmdbID, rating, enrich.MediaType)
+		r.log.Info().Int("tmdb_id", tmdbID).Float64("rating", rating).Str("media", string(enrich.MediaType)).Msg("TMDB enriched")
 	} else {
-		log.Printf("  TMDB lookup failed: %v", err)
+		r.log.Warn().Err(err).Msg("TMDB lookup failed")
 		imdbID = item.ImdbID
 	}
 
@@ -256,15 +264,15 @@ func (r *Runner) processItem(ctx context.Context, item ScrapedItem, progYear, pr
 		if err == nil && ratings != nil {
 			imdbRating = ratings.ImdbRating
 			metacriticScore = ratings.MetacriticScore
-			log.Printf("  IMDbAPI: rating=%.1f MC=%.0f", imdbRating, metacriticScore)
+			r.log.Info().Float64("imdb_rating", imdbRating).Float64("metacritic", metacriticScore).Msg("IMDbAPI ratings")
 		} else if err != nil {
-			log.Printf("  IMDbAPI failed: %v", err)
+			r.log.Warn().Err(err).Msg("IMDbAPI failed")
 		}
 	}
 	// Fall back to scraped IMDb rating if API returned nothing
 	if imdbRating == 0 && item.ImdbRating > 0 {
 		imdbRating = item.ImdbRating
-		log.Printf("  IMDb: using scraped rating %.1f", imdbRating)
+		r.log.Info().Float64("imdb_rating", imdbRating).Msg("using scraped IMDb rating")
 	}
 
 	// Phase 3: US content rating from TMDB
@@ -276,7 +284,7 @@ func (r *Runner) processItem(ctx context.Context, item ScrapedItem, progYear, pr
 			usRating = r.tmdb.GetUSCertification(apiCtx, tmdbID, string(mediaType))
 		}
 		if usRating != "" {
-			log.Printf("  US rating: %s", usRating)
+			r.log.Info().Str("rating", usRating).Msg("US content rating")
 		}
 	}
 
@@ -291,22 +299,22 @@ func (r *Runner) processItem(ctx context.Context, item ScrapedItem, progYear, pr
 	// Phase 4: Best-effort RT rating scrape via chromedp
 	rtCritics, rtAudience := 0.0, 0.0
 	if rtURL != "" {
-		log.Printf("  RT URL: %s", rtURL)
+		r.log.Info().Str("url", rtURL).Msg("RT URL found")
 		ratings := ScrapeRTRatings(ctx, r.allocCtx, rtURL)
 		rtCritics = ratings.CriticsScore
 		rtAudience = ratings.AudienceScore
 		if rtCritics > 0 || rtAudience > 0 {
-			log.Printf("  RT scrape: critics=%.0f%% audience=%.0f%%", rtCritics, rtAudience)
+			r.log.Info().Float64("critics", rtCritics).Float64("audience", rtAudience).Msg("RT scores")
 		} else {
-			log.Printf("  RT scrape: no scores found")
+			r.log.Warn().Msg("RT scrape: no scores found")
 		}
 	} else {
-		log.Printf("  RT URL: not found")
+		r.log.Info().Msg("RT URL not found")
 	}
 	// Fall back to FlixPatrol RT scores if chromedp returned nothing
 	if rtCritics == 0 && item.RTCriticsScore > 0 {
 		rtCritics = item.RTCriticsScore
-		log.Printf("  RT: using FlixPatrol critics score %.0f%%", rtCritics)
+		r.log.Info().Float64("critics_score", rtCritics).Msg("using FlixPatrol RT critics score")
 	}
 
 	overview := ""
@@ -403,7 +411,9 @@ func (r *Runner) processItem(ctx context.Context, item ScrapedItem, progYear, pr
 
 	// If previous event was downloaded and this is new, mark the old as "upgraded"
 	if existing != nil && existing.Status == model.StatusDownloaded && notes != "" {
-		_ = r.db.UpdateReleaseEventStatus(ctx, existing.ID, model.StatusDownloaded)
+		if err := r.db.UpdateReleaseEventStatus(ctx, existing.ID, model.StatusDownloaded); err != nil {
+			r.log.Warn().Err(err).Msg("failed to mark previous download as upgraded")
+		}
 	}
 
 	if _, err := r.db.CreateReleaseEvent(ctx, event); err != nil {

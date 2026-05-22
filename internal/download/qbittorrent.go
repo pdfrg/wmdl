@@ -17,6 +17,8 @@ type QbittorrentClient struct {
 	cookies  []*http.Cookie
 }
 
+var _ Client = (*QbittorrentClient)(nil)
+
 func NewQbittorrentClient(baseURL, username, password string) *QbittorrentClient {
 	return &QbittorrentClient{
 		baseURL:  strings.TrimRight(baseURL, "/"),

@@ -2,6 +2,7 @@ package notifier
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -25,7 +26,9 @@ type tmplData struct {
 	Priority int
 }
 
-func NewWebhook(cfg config.NotifierConfig) *webhook {
+var _ Notifier = (*webhook)(nil)
+
+func NewWebhook(cfg config.NotifierConfig) (*webhook, error) {
 	h := &webhook{
 		client: &http.Client{Timeout: 10 * time.Second},
 	}
@@ -86,8 +89,12 @@ func NewWebhook(cfg config.NotifierConfig) *webhook {
 		h.headers["Content-Type"] = "application/json"
 	}
 
-	h.bodyTmpl = template.Must(template.New("body").Parse(tmplStr))
-	return h
+	tmpl, err := template.New("body").Parse(tmplStr)
+	if err != nil {
+		return nil, fmt.Errorf("parsing notifier template: %w", err)
+	}
+	h.bodyTmpl = tmpl
+	return h, nil
 }
 
 func (w *webhook) Send(title, message string, priority int) error {
@@ -105,7 +112,7 @@ func (w *webhook) Send(title, message string, priority int) error {
 		return fmt.Errorf("rendered body is not valid JSON: %s", buf.String())
 	}
 
-	req, err := http.NewRequest(http.MethodPost, w.url, &buf)
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, w.url, &buf)
 	if err != nil {
 		return fmt.Errorf("creating request: %w", err)
 	}

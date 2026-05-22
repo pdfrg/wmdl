@@ -23,6 +23,9 @@ func newReviewCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("loading config: %w", err)
 			}
+			if err := cfg.Validate(); err != nil {
+				return fmt.Errorf("invalid config: %w", err)
+			}
 
 			dbPath, err := dataDir()
 			if err != nil {

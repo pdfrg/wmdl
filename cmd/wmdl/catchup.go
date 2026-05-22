@@ -3,10 +3,10 @@ package main
 import (
 	"context"
 	"fmt"
-	"log"
 	"path/filepath"
 	"time"
 
+	"github.com/rs/zerolog/log"
 	"github.com/spf13/cobra"
 
 	"github.com/pdfrg/wmdl/internal/config"
@@ -40,43 +40,43 @@ one week at a time — use catchup to handle all outstanding weeks.`,
 			}
 			defer database.Close()
 
-			states, err := database.GetWeekStates(context.Background(), 12)
+			states, err := database.GetWeekStates(c.Context(), 12)
 			if err != nil {
 				return fmt.Errorf("loading week states: %w", err)
 			}
 
 			if len(states) == 0 {
-				log.Println("No week data found. Running discover for current week.")
+				log.Info().Msg("No week data found. Running discover for current week.")
 				return runDiscover(c, false)
 			}
 
 			for _, s := range states {
 				if !s.Discovered {
-					log.Printf("Week %d/%d: needs discover, running now...", s.Year, s.Week)
+					log.Info().Msgf("Week %d/%d: needs discover, running now...", s.Year, s.Week)
 					if err := runDiscover(c, false); err != nil {
-						log.Printf("  discover failed: %v", err)
+						log.Warn().Err(err).Msg("discover failed")
 					}
 					continue
 				}
 
 				if !s.Reviewed {
-					log.Printf("Week %d/%d: needs review, running now...", s.Year, s.Week)
-					if err := runReview(database); err != nil {
-						log.Printf("  review failed: %v", err)
+					log.Info().Msgf("Week %d/%d: needs review, running now...", s.Year, s.Week)
+					if err := runReview(c, database); err != nil {
+						log.Warn().Err(err).Msg("review failed")
 					}
 					continue
 				}
 
 				if !s.Processed {
-					log.Printf("Week %d/%d: needs process, running now...", s.Year, s.Week)
+					log.Info().Msgf("Week %d/%d: needs process, running now...", s.Year, s.Week)
 					if err := runProcess(c); err != nil {
-						log.Printf("  process failed: %v", err)
+						log.Warn().Err(err).Msg("process failed")
 					}
 				}
 			}
 
 			// Re-check whether any weeks still have remaining steps
-			remaining, err := database.GetWeekStates(context.Background(), 12)
+			remaining, err := database.GetWeekStates(c.Context(), 12)
 			if err == nil {
 				hasRemaining := false
 				for _, s := range remaining {
@@ -86,9 +86,9 @@ one week at a time — use catchup to handle all outstanding weeks.`,
 					}
 				}
 				if hasRemaining {
-					log.Println("Some weeks still have pending steps. Run 'wmdl catchup' again to continue.")
+					log.Info().Msg("Some weeks still have pending steps. Run 'wmdl catchup' again to continue.")
 				} else {
-					log.Println("All caught up! Run 'wmdl status' to verify.")
+					log.Info().Msg("All caught up! Run 'wmdl status' to verify.")
 				}
 			}
 
@@ -103,6 +103,9 @@ func runDiscover(cmd *cobra.Command, headless bool) error {
 	if err != nil {
 		return fmt.Errorf("loading config: %w", err)
 	}
+	if err := cfg.Validate(); err != nil {
+		return fmt.Errorf("invalid config: %w", err)
+	}
 
 	dbPath, err := dataDir()
 	if err != nil {
@@ -114,15 +117,19 @@ func runDiscover(cmd *cobra.Command, headless bool) error {
 	}
 	defer database.Close()
 
-	return runDiscoverForWeek(cmd.Context(), database, cfg, 0, 0, headless)
+	_, err = runDiscoverForWeek(cmd.Context(), database, cfg, 0, 0, headless)
+	return err
 }
 
-func runReview(database *db.DB) error {
+func runReview(cmd *cobra.Command, database *db.DB) error {
 	cfg, err := config.Load()
 	if err != nil {
 		return fmt.Errorf("loading config: %w", err)
 	}
-	_, err = runReviewForWeek(context.Background(), database, cfg, 0, 0)
+	if err := cfg.Validate(); err != nil {
+		return fmt.Errorf("invalid config: %w", err)
+	}
+	_, err = runReviewForWeek(cmd.Context(), database, cfg, 0, 0)
 	return err
 }
 
@@ -130,6 +137,9 @@ func runProcess(cmd *cobra.Command) error {
 	cfg, err := config.Load()
 	if err != nil {
 		return fmt.Errorf("loading config: %w", err)
+	}
+	if err := cfg.Validate(); err != nil {
+		return fmt.Errorf("invalid config: %w", err)
 	}
 
 	dbPath, err := dataDir()
