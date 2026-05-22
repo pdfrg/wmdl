@@ -1,6 +1,11 @@
 notifier:
-  gotify_url: "http://gotify.local:8080"
-  gotify_token: ""
+  # Supported services: gotify, slack, discord, ntfy, webhook
+  service: gotify
+  url: "http://gotify.local:8080"
+  token: ""
+  # Optional: override the built-in JSON template for this service.
+  # Available template fields: {{.Title}}, {{.Message}}, {{.Priority}}
+  # custom_template: '{"text":"{{.Title}}\n{{.Message}}"}'
 
 browser:
   binary: "brave"          # google-chrome, chromium, brave, microsoft-edge, vivaldi, opera

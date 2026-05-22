@@ -25,7 +25,7 @@ type Runner struct {
 	tmdb          *TMDBClient
 	rt            *RTFinder
 	imdb          *IMDbAPIClient
-	notify        *notifier.Gotify
+	notify        notifier.Notifier
 	debugURL      string
 	allocCtx      context.Context
 	allocCancel   context.CancelFunc
@@ -49,7 +49,7 @@ func NewRunner(cfg *config.Config, database *db.DB, headless bool) *Runner {
 		tmdb:     NewTMDBClient(cfg.TMDB.APIKey, cfg.TMDB.AccessToken),
 		rt:       NewRTFinder(),
 		imdb:     NewIMDbAPIClient(),
-		notify:   notifier.NewGotify(cfg.Notifier.GotifyURL, cfg.Notifier.GotifyToken),
+		notify:   notifier.New(cfg.Notifier),
 		debugURL: fmt.Sprintf("http://127.0.0.1:%d", cfg.Browser.DebugPort),
 		headless: headless,
 	}

@@ -22,8 +22,10 @@ type Config struct {
 }
 
 type NotifierConfig struct {
-	GotifyURL   string `mapstructure:"gotify_url"`
-	GotifyToken string `mapstructure:"gotify_token"`
+	Service        string `mapstructure:"service"`
+	URL            string `mapstructure:"url"`
+	Token          string `mapstructure:"token"`
+	CustomTemplate string `mapstructure:"custom_template"`
 }
 
 type BrowserConfig struct {
