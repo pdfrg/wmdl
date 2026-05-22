@@ -100,7 +100,7 @@ func (t *TUI) ApprovedTitles() []db.EventWithTitle {
 }
 
 func (t *TUI) Init() tea.Cmd {
-	return t.loadPosterCmd()
+	return t.loadCurrentPosterCmd()
 }
 
 func (t *TUI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -117,9 +117,9 @@ func (t *TUI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err == nil {
 			t.posterImg = msg.img
 			return t, t.renderPosterCmd()
-		} else {
-			t.posterImg = nil
 		}
+		t.posterImg = nil
+		return t, t.clearPosterCmd()
 
 	case tea.KeyPressMsg:
 		switch t.phase {
@@ -131,6 +131,13 @@ func (t *TUI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	return t, nil
+}
+
+func (t *TUI) loadCurrentPosterCmd() tea.Cmd {
+	if t.items[t.cursor].event.Title.PosterPath == "" {
+		return t.clearPosterCmd()
+	}
+	return t.loadPosterCmd()
 }
 
 func (t *TUI) loadPosterCmd() tea.Cmd {
@@ -182,14 +189,14 @@ func (t *TUI) updateReview(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		if t.cursor < len(t.items)-1 {
 			t.cursor++
 			t.posterImg = nil
-			return t, tea.Batch(t.loadPosterCmd(), t.renderPosterCmd())
+			return t, t.loadCurrentPosterCmd()
 		}
 
 	case "k", "up":
 		if t.cursor > 0 {
 			t.cursor--
 			t.posterImg = nil
-			return t, tea.Batch(t.loadPosterCmd(), t.renderPosterCmd())
+			return t, t.loadCurrentPosterCmd()
 		}
 
 	case "a":
@@ -412,13 +419,26 @@ func (t *TUI) buildReviewContent() string {
 }
 
 func (t *TUI) buildPosterBlock() string {
+	ph := posterHeight()
 	if !posterAvailable || t.posterMode == PosterText {
-		return renderTextPlaceholder(posterCols, 10)
+		return renderTextPlaceholder(posterCols, ph)
 	}
 	if t.posterImg == nil {
-		return renderTextPlaceholder(posterCols, 10)
+		return renderTextPlaceholder(posterCols, ph)
 	}
 	return strings.Repeat(" ", posterCols)
+}
+
+func posterHeight() int {
+	if fontW <= 0 || fontH <= 0 {
+		return 16
+	}
+	// Estimate poster rows assuming ~2:3 aspect ratio at posterCols width
+	h := int(float64(posterCols*fontW) * 1.5 / float64(fontH))
+	if h < 10 {
+		h = 10
+	}
+	return h
 }
 
 func (t *TUI) buildRightContent(tl *model.Title, ev *model.ReleaseEvent, rw int) string {
