@@ -14,7 +14,7 @@ var (
 	wordSeasonRevPat = regexp.MustCompile(`(?i)(?:complete\s+)?(` + seasonWords + `)\s+season\b`)
 
 	stripParenPat = regexp.MustCompile(`(?i)\s*\([^)]*\bseason\s*(?:\d+|` + seasonWords + `)[^)]*\)\s*`)
-	stripTrailPat = regexp.MustCompile(`(?i)\s+(?:complete\s+)?(?:season\s+(?:\d+|` + seasonWords + `)|(?:\d+)(?:st|nd|rd|th)\s+season|` + seasonWords + `\s+season)\s*$`)
+	stripTrailPat = regexp.MustCompile(`(?i)\s+(?:complete\s+)?(?:season\s+(?:\d+|` + seasonWords + `)|(?:\d+)(?:st|nd|rd|th)\s+season|(?:` + seasonWords + `)\s+season)\s*$`)
 )
 
 const seasonWords = `twenty|nineteen|eighteen|seventeen|sixteen|fifteen|fourteen|thirteen|twelve|eleven|ten|nine|eight|seven|six|five|four|three|two|one|twentieth|nineteenth|eighteenth|seventeenth|sixteenth|fifteenth|fourteenth|thirteenth|twelfth|eleventh|tenth|ninth|eighth|seventh|sixth|fifth|fourth|third|second|first`

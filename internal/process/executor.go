@@ -96,10 +96,11 @@ func (e *Executor) ProcessApproved(ctx context.Context, evt db.EventWithTitle) e
 
 func (e *Executor) SearchEvent(ctx context.Context, evt db.EventWithTitle) *SearchResult {
 	title := evt.Title
-	e.log.Info().Str("title", title.Title).Int("year", title.Year).Msg("processing title")
 
 	season := quality.ParseSeasonNumber(title.Title)
 	stripped := quality.StripSeason(title.Title)
+
+	e.log.Info().Str("title", title.Title).Int("year", title.Year).Int("season", season).Str("stripped", stripped).Msg("processing title")
 
 	releases, err := e.searchRelease(ctx, title, stripped, season)
 	if err != nil {
@@ -148,6 +149,7 @@ func (e *Executor) PresentResult(ctx context.Context, sr *SearchResult) error {
 	title := evt.Title
 
 	if len(sr.Top) == 0 {
+		e.log.Info().Str("title", title.Title).Msg("no search results found, skipping")
 		return nil
 	}
 
@@ -253,7 +255,7 @@ func (e *Executor) searchRelease(ctx context.Context, title *model.Title, stripp
 		e.log.Info().Str("name", name).Int("id", indexerID).Msg("preferred indexer")
 
 		for i, q := range queries {
-			e.log.Debug().Msgf("[%d/%d] searching: %s", i+1, numTiers, q)
+			e.log.Info().Msgf("[%d/%d] preferred: %s", i+1, numTiers, q)
 			results, err := e.prowl.Search(ctx, search.SearchParams{
 				Query:     q,
 				Type:      searchType,
@@ -277,7 +279,7 @@ func (e *Executor) searchRelease(ctx context.Context, title *model.Title, stripp
 
 	// Phase 2: all tiers on all indexers
 	for i, q := range queries {
-		e.log.Debug().Msgf("[%d/%d] searching all: %s", i+1, numTiers, q)
+		e.log.Info().Msgf("[%d/%d] searching all: %s", i+1, numTiers, q)
 		results, err := e.prowl.Search(ctx, search.SearchParams{
 			Query: q,
 			Type:  searchType,
