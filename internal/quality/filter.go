@@ -51,7 +51,7 @@ func Parse(rawTitle string) ParsedRelease {
 	r.Resolution = parseResolution(clean)
 	r.HDR = hdrPattern.MatchString(clean)
 	r.Source = parseSource(clean)
-	r.Codec = parseCodec(clean)
+	r.Codec = parseCodec(rawTitle)
 	r.ReleaseGroup = parseGroup(rawTitle)
 
 	return r

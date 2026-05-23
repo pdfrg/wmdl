@@ -2,6 +2,40 @@ package quality
 
 import "testing"
 
+func TestParseCodec(t *testing.T) {
+	tests := []struct {
+		raw  string
+		want string
+	}{
+		// x265 without dot
+		{"Show.S01.1080p.WEB-DL.x265-GROUP", "x265"},
+		// h.265 with dot
+		{"Show.S01.1080p.WEB-DL.H.265-GROUP", "h265"},
+		// h265 without dot
+		{"Show.1080p.WEB-DL.h265-GROUP", "h265"},
+		// hevc
+		{"Show.2160p.WEB-DL.HEVC-GROUP", "h265"},
+		// x264
+		{"Movie.2025.1080p.BluRay.x264-GROUP", "x264"},
+		// h.264 with dot
+		{"Movie.2025.1080p.WEB-DL.H.264-GROUP", "h264"},
+		// h264 without dot
+		{"Movie.2025.1080p.WEB-DL.h264-GROUP", "h264"},
+		// av1
+		{"Show.1080p.WEB-DL.AV1-GROUP", "av1"},
+		// no codec
+		{"Show.1080p.WEB-DL-GROUP", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.raw, func(t *testing.T) {
+			got := Parse(tt.raw).Codec
+			if got != tt.want {
+				t.Errorf("Parse(%q).Codec = %q, want %q", tt.raw, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestExtractShowName(t *testing.T) {
 	tests := []struct {
 		raw  string
