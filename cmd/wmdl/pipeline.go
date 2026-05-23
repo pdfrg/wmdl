@@ -220,7 +220,7 @@ func runProcessForWeek(ctx context.Context, database *db.DB, cfg *config.Config,
 			}
 			switch choice {
 			case "a":
-				events = allEvents
+				events = append(pending, downloaded...)
 			case "u":
 				events = pending
 			case "q":
@@ -233,7 +233,7 @@ func runProcessForWeek(ctx context.Context, database *db.DB, cfg *config.Config,
 		}
 
 	default:
-		events = allEvents
+		events = pending
 	}
 
 	log.Info().Msgf("Processing %d release(s) for %d-W%02d", len(events), year, week)

@@ -114,7 +114,7 @@ and send it to the download client.`,
 					}
 					switch choice {
 					case "a":
-						events = allEvents
+						events = append(pending, downloaded...)
 					case "u":
 						events = pending
 					case "q":
@@ -127,7 +127,7 @@ and send it to the download client.`,
 				}
 
 			default:
-				events = allEvents
+				events = pending
 			}
 
 			log.Info().Msgf("Processing %d release(s) for %d-W%02d", len(events), target.Year, target.Week)
