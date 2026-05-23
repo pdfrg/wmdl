@@ -287,14 +287,6 @@ func runProcessForWeek(ctx context.Context, database *db.DB, cfg *config.Config,
 		for _, u := range exec.Unfound {
 			log.Info().Str("title", u).Msg("unfound")
 		}
-		if promptSaveManualSearch(exec.Unfound) {
-			fname := fmt.Sprintf("wmd-manual-search-%d-W%02d.md", year, week)
-			if err := writeManualSearchFile(fname, exec.Unfound); err != nil {
-				log.Warn().Err(err).Msg("writing manual search file")
-			} else {
-				log.Info().Str("file", fname).Msg("wrote manual search file")
-			}
-		}
 	}
 
 	return nil

@@ -86,11 +86,13 @@ type Download struct {
 }
 
 type WeekState struct {
-	Year       int
-	Week       int
-	WeekDate   string
-	Discovered bool
-	Reviewed   bool
-	Processed  bool
-	UpdatedAt  string
+	Year            int
+	Week            int
+	WeekDate        string
+	Discovered      bool
+	Reviewed        bool
+	Processed       bool
+	UpdatedAt       string
+	ApprovedCount   int // total approved + downloaded events
+	DownloadedCount int // downloaded events only
 }

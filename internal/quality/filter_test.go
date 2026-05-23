@@ -93,6 +93,40 @@ func TestFilterRelease(t *testing.T) {
 		{"Dune.Part.Two.2025.2160p.WEB-DL.x265-GROUP", "Dune", 2025, 0, "movie", true},
 		// No year in release — accept (can't verify)
 		{"Movie Title WEBDL-1080p", "Movie Title", 2025, 0, "movie", true},
+		// Word order: reversed words should not match
+		{"One.Fine.Day.2024.1080p.WEB-DL-GROUP", "Day One", 2024, 0, "movie", false},
+		// Word order: correct order should match
+		{"Day.One.2024.1080p.WEB-DL-GROUP", "Day One", 2024, 0, "movie", true},
+		// Word order: "One Day" in wrong order for "Day One"
+		{"One.Day.2024.1080p.WEB-DL-GROUP", "Day One", 2024, 0, "movie", false},
+		// Word order: "One Day" correct order
+		{"One.Day.2024.1080p.WEB-DL-GROUP", "One Day", 2024, 0, "movie", true},
+		// Word order: multi-word correct order
+		{"Cult.Massacre.One.Day.in.Jonestown.2025.1080p.WEB-DL-GROUP", "Day One", 2025, 0, "movie", false},
+		// Title at start: extra words before search title should reject
+		{"A.Quiet.Place.Day.One.2024.1080p.WEB-DL-GROUP", "Day One", 2024, 0, "movie", false},
+		// Title at start: correct position should accept
+		{"Day.One.2024.1080p.WEB-DL-GROUP", "Day One", 2024, 0, "movie", true},
+		// Title at start: unrelated title before search words
+		{"Eva.Berger.Eva.Lasting.Love.2024.WEB-DL-GROUP", "Eva Lasting", 2024, 0, "movie", false},
+		// Title at start: Spanish title not at start
+		{"Invasion.en.la.oficina.2024.WEB-DL-GROUP", "La oficina", 2024, 0, "movie", false},
+		// Title at start: correct Spanish title
+		{"La.oficina.S01.1080p.WEB-DL-GROUP", "La oficina", 0, 1, "tv", true},
+		// Title at start: anime-style [group] prefix
+		{"[Group].Eva.Lasting.S04.1080p.WEB-DL.x265-GROUP", "Eva Lasting", 0, 4, "tv", true},
+		// Title at start: single word, extra words before
+		{"A.Quiet.Place.Dune.2024.1080p.WEB-DL-GROUP", "Dune", 2024, 0, "movie", false},
+		// Title at start: single word at start
+		{"Dune.2024.1080p.WEB-DL-GROUP", "Dune", 2024, 0, "movie", true},
+		// Title at start: single word, multi-word release with matching start
+		{"Dune.Part.Two.2025.2160p.WEB-DL.x265-GROUP", "Dune", 2025, 0, "movie", true},
+		// Episode marker: S01.E03 format should be rejected
+		{"Show.S01.E03.1080p.WEB-DL.x265-GROUP", "Show", 0, 1, "tv", false},
+		// Episode marker: S01E03 format still rejected
+		{"Show.S01E03.1080p.WEB-DL.x265-GROUP", "Show", 0, 1, "tv", false},
+		// Episode marker: S01-only (no episode) is a season pack
+		{"Show.S01.1080p.WEB-DL.x265-GROUP", "Show", 0, 1, "tv", true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.raw, func(t *testing.T) {

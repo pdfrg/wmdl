@@ -27,7 +27,9 @@ func newStatusCmd() *cobra.Command {
 			}
 			defer database.Close()
 
-			allStates, err := database.GetWeekStates(cmd.Context(), 0)
+			ctx := cmd.Context()
+
+			allStates, err := database.GetWeekStates(ctx, 0)
 			if err != nil {
 				return fmt.Errorf("loading week states: %w", err)
 			}
@@ -45,16 +47,36 @@ func newStatusCmd() *cobra.Command {
 				}
 			}
 
+			// Enrich display weeks with download counts
+			for _, s := range display {
+				if s.Processed {
+					dl, app, err := database.GetWeekProcessCounts(ctx, s.Year, s.Week)
+					if err == nil {
+						s.DownloadedCount = dl
+						s.ApprovedCount = app
+					}
+				}
+			}
+
 			fmt.Println("Week      Date        Discover  Review  Process")
 			fmt.Println("────────  ──────────  ────────  ──────  ───────")
 			for _, s := range display {
-				fmt.Fprintf(os.Stdout, "W%-2d %-4d  %-10s  %-8s  %-6s  %-5s\n",
-					s.Week, s.Year,
+				fmt.Fprintf(os.Stdout, "%-8s  %-10s  %-8s  %-6s  %-5s\n",
+					weekLabel(s),
 					formatDate(s.WeekDate),
 					checkMark(s.Discovered),
 					checkMark(s.Reviewed),
-					checkMark(s.Processed),
+					processStatus(s),
 				)
+			}
+
+			// Collect undownloaded items from display weeks (they have counts)
+			var remaining []string
+			for _, s := range display {
+				if s.Processed && s.ApprovedCount > 0 && s.DownloadedCount < s.ApprovedCount {
+					remaining = append(remaining, fmt.Sprintf("wmdl process --week %d-W%02d  (%d items remaining)",
+						s.Year, s.Week, s.ApprovedCount-s.DownloadedCount))
+				}
 			}
 
 			// Show summary (based on all weeks, not just display)
@@ -75,13 +97,40 @@ func newStatusCmd() *cobra.Command {
 					fmt.Fprintf(os.Stderr, "  - %s\n", t)
 				}
 				fmt.Fprintf(os.Stderr, "\nRun 'wmdl catchup' to process all pending.\n")
-			} else {
+			}
+
+			if len(remaining) > 0 {
+				fmt.Fprintf(os.Stderr, "\nWeeks with remaining items:\n")
+				for _, r := range remaining {
+					fmt.Fprintf(os.Stderr, "  - %s\n", r)
+				}
+				fmt.Fprintf(os.Stderr, "\nRun the command(s) above to search and download remaining items.\n")
+			}
+
+			if len(todo) == 0 && len(remaining) == 0 {
 				fmt.Println("\nAll caught up!")
 			}
 
 			return nil
 		},
 	}
+}
+
+func processStatus(s *model.WeekState) string {
+	if !s.Processed {
+		return "✗"
+	}
+	if s.ApprovedCount == 0 {
+		return "✓"
+	}
+	if s.DownloadedCount >= s.ApprovedCount {
+		return "✓"
+	}
+	return fmt.Sprintf("%d/%d", s.DownloadedCount, s.ApprovedCount)
+}
+
+func weekLabel(s *model.WeekState) string {
+	return fmt.Sprintf("%d-W%02d", s.Year, s.Week)
 }
 
 func checkMark(ok bool) string {

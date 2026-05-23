@@ -15,7 +15,7 @@ var weekFlagPatterns = []struct {
 	parse func([]string) (int, int, error)
 }{
 	{regexp.MustCompile(`^[Ww](\d+)$`), func(m []string) (int, int, error) {
-		w, _ := strconv.Atoi(m[1])
+		w, _ := strconv.Atoi(m[0])
 		y, _ := time.Now().ISOWeek()
 		if w < 1 || w > 53 {
 			return 0, 0, fmt.Errorf("week %d out of range (1-53)", w)
@@ -23,37 +23,37 @@ var weekFlagPatterns = []struct {
 		return y, w, nil
 	}},
 	{regexp.MustCompile(`^(\d{4})-?[Ww](\d+)$`), func(m []string) (int, int, error) {
-		y, _ := strconv.Atoi(m[1])
-		w, _ := strconv.Atoi(m[2])
+		y, _ := strconv.Atoi(m[0])
+		w, _ := strconv.Atoi(m[1])
 		if w < 1 || w > 53 {
 			return 0, 0, fmt.Errorf("week %d out of range (1-53)", w)
 		}
 		return y, w, nil
 	}},
 	{regexp.MustCompile(`^(\d{1,2})-(\d{1,2})-(\d{4})$`), func(m []string) (int, int, error) {
-		mo, _ := strconv.Atoi(m[1])
-		d, _ := strconv.Atoi(m[2])
-		y, _ := strconv.Atoi(m[3])
+		mo, _ := strconv.Atoi(m[0])
+		d, _ := strconv.Atoi(m[1])
+		y, _ := strconv.Atoi(m[2])
 		t := time.Date(y, time.Month(mo), d, 0, 0, 0, 0, time.UTC)
 		if t.Year() != y || t.Month() != time.Month(mo) || t.Day() != d {
-			return 0, 0, fmt.Errorf("invalid date %s-%s-%s", m[1], m[2], m[3])
+			return 0, 0, fmt.Errorf("invalid date %s-%s-%s", m[0], m[1], m[2])
 		}
 		y2, w := t.ISOWeek()
 		return y2, w, nil
 	}},
 	{regexp.MustCompile(`^(\d{1,2})-(\d{1,2})$`), func(m []string) (int, int, error) {
-		mo, _ := strconv.Atoi(m[1])
-		d, _ := strconv.Atoi(m[2])
+		mo, _ := strconv.Atoi(m[0])
+		d, _ := strconv.Atoi(m[1])
 		now := time.Now()
 		t := time.Date(now.Year(), time.Month(mo), d, 0, 0, 0, 0, time.UTC)
 		if t.Month() != time.Month(mo) || t.Day() != d {
-			return 0, 0, fmt.Errorf("invalid date %s-%s", m[1], m[2])
+			return 0, 0, fmt.Errorf("invalid date %s-%s", m[0], m[1])
 		}
 		y, w := t.ISOWeek()
 		return y, w, nil
 	}},
 	{regexp.MustCompile(`^-(\d+)$`), func(m []string) (int, int, error) {
-		n, _ := strconv.Atoi(m[1])
+		n, _ := strconv.Atoi(m[0])
 		t := time.Now().AddDate(0, 0, -n*7)
 		y, w := t.ISOWeek()
 		return y, w, nil

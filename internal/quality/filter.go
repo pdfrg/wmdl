@@ -217,7 +217,7 @@ func groupBonus(group string, preferred []string) int {
 }
 
 var (
-	episodeMarkerPat = regexp.MustCompile(`(?i)\bs\d{2}e\d{2}\b`)
+	episodeMarkerPat = regexp.MustCompile(`(?i)\bs\d{2}[ .]?e\d{2}\b`)
 	releaseYearPat   = regexp.MustCompile(`\b((?:19|20)\d{2})\b`)
 )
 
@@ -276,6 +276,16 @@ func FilterRelease(r ParsedRelease, searchTitle string, searchYear, searchSeason
 		}
 	}
 
+	// Word order: search words must appear in the same relative order
+	if !wordsInOrder(releaseNorm, searchWords) {
+		return false
+	}
+
+	// Title at start: release must begin with search words (after stripping [group] prefixes)
+	if !titleAtStart(releaseNorm, searchWords) {
+		return false
+	}
+
 	return true
 }
 
@@ -326,6 +336,34 @@ func normalizeRelease(rawTitle string) string {
 	s = strings.NewReplacer(".", " ", "-", " ", "_", " ").Replace(s)
 	// Collapse multiple spaces
 	return strings.Join(strings.Fields(s), " ")
+}
+
+func wordsInOrder(releaseNorm string, searchWords []string) bool {
+	releaseWords := strings.Fields(releaseNorm)
+	j := 0
+	for _, rw := range releaseWords {
+		if j < len(searchWords) && rw == searchWords[j] {
+			j++
+		}
+	}
+	return j == len(searchWords)
+}
+
+func titleAtStart(releaseNorm string, searchWords []string) bool {
+	releaseWords := strings.Fields(releaseNorm)
+	// Strip leading [group] prefix (anime convention)
+	for len(releaseWords) > 0 && strings.HasPrefix(releaseWords[0], "[") {
+		releaseWords = releaseWords[1:]
+	}
+	if len(releaseWords) < len(searchWords) {
+		return false
+	}
+	for i, sw := range searchWords {
+		if releaseWords[i] != sw {
+			return false
+		}
+	}
+	return true
 }
 
 func absInt(n int) int {

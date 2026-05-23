@@ -595,6 +595,24 @@ func (d *DB) ListEventsByWeekAndStatus(ctx context.Context, year, week int, stat
 	return scanEventWithTitleRows(rows)
 }
 
+func (d *DB) GetWeekProcessCounts(ctx context.Context, year, week int) (downloaded, approved int, err error) {
+	err = d.db.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM release_events
+		WHERE iso_year = ? AND iso_week = ? AND status = 'downloaded'
+	`, year, week).Scan(&downloaded)
+	if err != nil {
+		return 0, 0, fmt.Errorf("counting downloaded events: %w", err)
+	}
+	err = d.db.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM release_events
+		WHERE iso_year = ? AND iso_week = ? AND status IN ('approved', 'downloaded')
+	`, year, week).Scan(&approved)
+	if err != nil {
+		return 0, 0, fmt.Errorf("counting approved events: %w", err)
+	}
+	return downloaded, approved, nil
+}
+
 func scanEventWithTitleRows(rows *sql.Rows) ([]EventWithTitle, error) {
 	var results []EventWithTitle
 	for rows.Next() {
