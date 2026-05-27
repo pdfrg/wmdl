@@ -124,6 +124,14 @@ func (d *DVDReleaseDates) scrapeHistorical(doc *goquery.Document) []ScrapedItem 
 	var items []ScrapedItem
 	doc.Find("td.reldate").Each(func(_ int, sel *goquery.Selection) {
 		dateText := strings.TrimSpace(sel.Text())
+		// Strip leading weekday name (e.g. "Tuesday ")
+		if idx := strings.Index(dateText, " "); idx >= 0 {
+			dateText = dateText[idx+1:]
+		}
+		// Strip trailing distance text (e.g. "(this week)", "(3 weeks ago)")
+		if idx := strings.Index(dateText, "("); idx >= 0 {
+			dateText = strings.TrimSpace(dateText[:idx])
+		}
 		releaseDate, err := time.Parse("January 2, 2006", dateText)
 		if err != nil {
 			return

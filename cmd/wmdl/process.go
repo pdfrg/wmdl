@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -98,7 +99,7 @@ and send it to the download client.`,
 
 			case len(downloaded) > 0 && len(pending) == 0:
 				log.Info().Msgf("All %d releases for %d-W%02d already downloaded.", len(downloaded), target.Year, target.Week)
-				if !promptYesNo("Continue anyway (re-process all)?") {
+				if !promptYesNo(ctx, "Continue anyway (re-process all)?") {
 					return nil
 				}
 				events = downloaded
@@ -134,25 +135,10 @@ and send it to the download client.`,
 
 			exec := process.NewExecutor(log.Logger, cfg, database)
 
-			processed := 0
-			if cfg.ProcessMode == "batch" {
-				results := exec.SearchAll(ctx, events)
-				for _, sr := range results {
-					select {
-					case <-ctx.Done():
-						return ctx.Err()
-					default:
-					}
+			var picked []process.PickedItem
 
-					if len(sr.Top) == 0 {
-						continue
-					}
-					if err := exec.PresentResult(ctx, sr); err != nil {
-						log.Warn().Err(err).Str("title", sr.Event.Title.Title).Msg("error presenting release")
-						continue
-					}
-					processed++
-				}
+			if cfg.ProcessMode == "batch" {
+				picked = exec.SearchAndPickAll(ctx, events)
 			} else {
 				for _, ev := range events {
 					select {
@@ -161,13 +147,13 @@ and send it to the download client.`,
 					default:
 					}
 
-					if err := exec.ProcessApproved(ctx, ev); err != nil {
-						log.Warn().Err(err).Str("title", ev.Title.Title).Msg("error processing release")
-						continue
+					if item := exec.SearchAndPickOne(ctx, ev); item != nil {
+						picked = append(picked, *item)
 					}
-					processed++
 				}
 			}
+
+			exec.ProcessLibraryDecisions(ctx, picked)
 
 			// Mark the week as processed
 			target.Processed = true
@@ -175,7 +161,7 @@ and send it to the download client.`,
 				log.Warn().Err(err).Msg("tracking week state")
 			}
 
-			log.Info().Msgf("Processed %d/%d releases", processed, len(events))
+			log.Info().Msgf("Processed %d/%d releases", len(picked), len(events))
 
 			if len(exec.Unfound) > 0 {
 				log.Warn().Msgf("No results found for %d item(s):", len(exec.Unfound))
@@ -191,12 +177,18 @@ and send it to the download client.`,
 	return cmd
 }
 
-func promptYesNo(prompt string) bool {
+func promptYesNo(ctx context.Context, prompt string) bool {
 	fmt.Printf("%s [y/N] ", prompt)
-	scanner := bufio.NewScanner(os.Stdin)
-	if scanner.Scan() {
-		ans := strings.ToLower(strings.TrimSpace(scanner.Text()))
-		return ans == "y" || ans == "yes"
+	ch := make(chan string, 1)
+	go func() {
+		scanner := bufio.NewScanner(os.Stdin)
+		scanner.Scan()
+		ch <- scanner.Text()
+	}()
+	select {
+	case ans := <-ch:
+		return strings.ToLower(strings.TrimSpace(ans)) == "y" || strings.ToLower(strings.TrimSpace(ans)) == "yes"
+	case <-ctx.Done():
+		return false
 	}
-	return false
 }

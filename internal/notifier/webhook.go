@@ -13,11 +13,13 @@ import (
 	"github.com/pdfrg/wmdl/internal/config"
 )
 
+type bodyBuilder func(title, message string, priority int) ([]byte, error)
+
 type webhook struct {
-	url      string
-	headers  map[string]string
-	bodyTmpl *template.Template
-	client   *http.Client
+	url     string
+	headers map[string]string
+	client  *http.Client
+	build   bodyBuilder
 }
 
 type tmplData struct {
@@ -36,7 +38,6 @@ func NewWebhook(cfg config.NotifierConfig) (*webhook, error) {
 	svc := strings.ToLower(cfg.Service)
 	url := cfg.URL
 	token := cfg.Token
-	tmplStr := cfg.CustomTemplate
 
 	switch svc {
 	case "gotify":
@@ -44,20 +45,28 @@ func NewWebhook(cfg config.NotifierConfig) (*webhook, error) {
 		if token != "" {
 			h.headers = map[string]string{"X-Gotify-Key": token}
 		}
-		if tmplStr == "" {
-			tmplStr = `{"title":"{{.Title}}","message":"{{.Message}}","priority":{{.Priority}}}`
+		h.build = func(title, message string, priority int) ([]byte, error) {
+			return json.Marshal(map[string]interface{}{
+				"title":    title,
+				"message":  message,
+				"priority": priority,
+			})
 		}
 
 	case "slack":
 		h.url = url
-		if tmplStr == "" {
-			tmplStr = `{"text":"{{.Title}}\n{{.Message}}"}`
+		h.build = func(title, message string, priority int) ([]byte, error) {
+			return json.Marshal(map[string]interface{}{
+				"text": title + "\n" + message,
+			})
 		}
 
 	case "discord":
 		h.url = url
-		if tmplStr == "" {
-			tmplStr = `{"content":"**{{.Title}}**\n{{.Message}}"}`
+		h.build = func(title, message string, priority int) ([]byte, error) {
+			return json.Marshal(map[string]interface{}{
+				"content": "**" + title + "**\n" + message,
+			})
 		}
 
 	case "ntfy":
@@ -65,8 +74,13 @@ func NewWebhook(cfg config.NotifierConfig) (*webhook, error) {
 		if token != "" {
 			h.headers = map[string]string{"Authorization": "Bearer " + token}
 		}
-		if tmplStr == "" {
-			tmplStr = `{"topic":"","title":"{{.Title}}","message":"{{.Message}}","priority":{{.Priority}}}`
+		h.build = func(title, message string, priority int) ([]byte, error) {
+			return json.Marshal(map[string]interface{}{
+				"topic":    "",
+				"title":    title,
+				"message":  message,
+				"priority": priority,
+			})
 		}
 
 	default:
@@ -77,8 +91,28 @@ func NewWebhook(cfg config.NotifierConfig) (*webhook, error) {
 				"Content-Type": "application/json",
 			}
 		}
-		if tmplStr == "" {
-			tmplStr = `{}`
+		if cfg.CustomTemplate != "" {
+			tmpl, err := template.New("body").Funcs(template.FuncMap{
+				"jsonEscape": jsonEscape,
+			}).Parse(cfg.CustomTemplate)
+			if err != nil {
+				return nil, fmt.Errorf("parsing notifier template: %w", err)
+			}
+			h.build = func(title, message string, priority int) ([]byte, error) {
+				var buf bytes.Buffer
+				if err := tmpl.Execute(&buf, tmplData{
+					Title:    title,
+					Message:  message,
+					Priority: priority,
+				}); err != nil {
+					return nil, fmt.Errorf("rendering body: %w", err)
+				}
+				return buf.Bytes(), nil
+			}
+		} else {
+			h.build = func(title, message string, priority int) ([]byte, error) {
+				return []byte("{}"), nil
+			}
 		}
 	}
 
@@ -89,30 +123,20 @@ func NewWebhook(cfg config.NotifierConfig) (*webhook, error) {
 		h.headers["Content-Type"] = "application/json"
 	}
 
-	tmpl, err := template.New("body").Parse(tmplStr)
-	if err != nil {
-		return nil, fmt.Errorf("parsing notifier template: %w", err)
-	}
-	h.bodyTmpl = tmpl
 	return h, nil
 }
 
 func (w *webhook) Send(title, message string, priority int) error {
-	var buf bytes.Buffer
-	if err := w.bodyTmpl.Execute(&buf, tmplData{
-		Title:    title,
-		Message:  message,
-		Priority: priority,
-	}); err != nil {
-		return fmt.Errorf("rendering body: %w", err)
+	body, err := w.build(title, message, priority)
+	if err != nil {
+		return fmt.Errorf("building body: %w", err)
 	}
 
-	// Validate it's valid JSON
-	if !json.Valid(buf.Bytes()) {
-		return fmt.Errorf("rendered body is not valid JSON: %s", buf.String())
+	if !json.Valid(body) {
+		return fmt.Errorf("rendered body is not valid JSON: %s", string(body))
 	}
 
-	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, w.url, &buf)
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, w.url, bytes.NewReader(body))
 	if err != nil {
 		return fmt.Errorf("creating request: %w", err)
 	}
@@ -130,4 +154,10 @@ func (w *webhook) Send(title, message string, priority int) error {
 		return fmt.Errorf("webhook returned %d", resp.StatusCode)
 	}
 	return nil
+}
+
+func jsonEscape(s string) string {
+	b, _ := json.Marshal(s)
+	// Remove surrounding quotes for use inside quoted JSON values
+	return string(b[1 : len(b)-1])
 }

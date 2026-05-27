@@ -50,7 +50,7 @@ func newDiscoverCmd() *cobra.Command {
 
 			if discovered && !headless && term.IsTerminal(int(os.Stdin.Fd())) {
 				fmt.Fprintln(os.Stderr)
-				if promptYesNo("Review this week now?") {
+				if promptYesNo(cmd.Context(), "Review this week now?") {
 					_, err := runReviewForWeek(cmd.Context(), database, cfg, targetYear, targetWeek)
 					return err
 				}

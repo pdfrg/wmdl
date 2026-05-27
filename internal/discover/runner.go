@@ -139,7 +139,10 @@ func (r *Runner) Run(ctx context.Context) error {
 		unique = append(unique, item)
 	}
 
-	progYear, progWeek := programWeekFromItems(unique)
+	progYear, progWeek := r.targetYear, r.targetWeek
+	if !r.hasTargetWeek {
+		progYear, progWeek = programWeekFromItems(unique)
+	}
 
 	var processed int
 	var mu sync.Mutex
@@ -166,8 +169,19 @@ func (r *Runner) Run(ctx context.Context) error {
 	wg.Wait()
 	r.log.Info().Msgf("Processed %d/%d items", processed, len(unique))
 
-	// Track week state
-	if ws := weekStateFromItems(unique); ws != nil {
+	// Track week state — use target week when set, never derive from
+	// streaming items (which can be 2 months in the past).
+	if r.hasTargetWeek {
+		ws := &model.WeekState{
+			Year:       r.targetYear,
+			Week:       r.targetWeek,
+			WeekDate:   tuesdayOfISOWeek(r.targetYear, r.targetWeek).Format("2006-01-02"),
+			Discovered: true,
+		}
+		if err := r.db.UpsertWeekState(ctx, ws); err != nil {
+			r.log.Warn().Err(err).Msg("tracking week state")
+		}
+	} else if ws := weekStateFromItems(unique); ws != nil {
 		ws.Discovered = true
 		if err := r.db.UpsertWeekState(ctx, ws); err != nil {
 			r.log.Warn().Err(err).Msg("tracking week state")

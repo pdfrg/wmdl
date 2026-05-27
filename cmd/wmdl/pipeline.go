@@ -23,7 +23,7 @@ func runDiscoverForWeek(ctx context.Context, database *db.DB, cfg *config.Config
 
 	if ws != nil && ws.Discovered {
 		fmt.Fprintf(os.Stderr, "Week %d-W%02d already discovered.\n", year, week)
-		if !promptYesNo("Continue anyway?") {
+		if !promptYesNo(ctx, "Continue anyway?") {
 			return false, nil
 		}
 	}
@@ -204,7 +204,7 @@ func runProcessForWeek(ctx context.Context, database *db.DB, cfg *config.Config,
 
 	case len(downloaded) > 0 && len(pending) == 0:
 		log.Info().Msgf("All %d releases for %d-W%02d already downloaded.", len(downloaded), year, week)
-		if !promptYesNo("Continue anyway (re-process all)?") {
+		if !promptYesNo(ctx, "Continue anyway (re-process all)?") {
 			return nil
 		}
 		events = downloaded
@@ -240,25 +240,10 @@ func runProcessForWeek(ctx context.Context, database *db.DB, cfg *config.Config,
 
 	exec := process.NewExecutor(log.Logger, cfg, database)
 
-	processed := 0
-	if cfg.ProcessMode == "batch" {
-		results := exec.SearchAll(ctx, events)
-		for _, sr := range results {
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			default:
-			}
+	var picked []process.PickedItem
 
-			if len(sr.Top) == 0 {
-				continue
-			}
-			if err := exec.PresentResult(ctx, sr); err != nil {
-				log.Warn().Err(err).Str("title", sr.Event.Title.Title).Msg("error presenting release")
-				continue
-			}
-			processed++
-		}
+	if cfg.ProcessMode == "batch" {
+		picked = exec.SearchAndPickAll(ctx, events)
 	} else {
 		for _, ev := range events {
 			select {
@@ -267,20 +252,20 @@ func runProcessForWeek(ctx context.Context, database *db.DB, cfg *config.Config,
 			default:
 			}
 
-			if err := exec.ProcessApproved(ctx, ev); err != nil {
-				log.Warn().Err(err).Str("title", ev.Title.Title).Msg("error processing release")
-				continue
+			if item := exec.SearchAndPickOne(ctx, ev); item != nil {
+				picked = append(picked, *item)
 			}
-			processed++
 		}
 	}
+
+	exec.ProcessLibraryDecisions(ctx, picked)
 
 	target.Processed = true
 	if err := database.UpsertWeekState(ctx, target); err != nil {
 		log.Warn().Err(err).Msg("tracking week state")
 	}
 
-	log.Info().Msgf("Processed %d/%d releases", processed, len(events))
+	log.Info().Msgf("Processed %d/%d releases", len(picked), len(events))
 
 	if len(exec.Unfound) > 0 {
 		log.Warn().Msgf("No results found for %d item(s):", len(exec.Unfound))

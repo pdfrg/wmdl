@@ -8,18 +8,19 @@ import (
 )
 
 type Config struct {
-	Notifier        NotifierConfig   `mapstructure:"notifier"`
-	Browser         BrowserConfig    `mapstructure:"browser"`
-	Prowlarr        ProwlarrConfig   `mapstructure:"prowlarr"`
-	TMDB            TMDBConfig       `mapstructure:"tmdb"`
-	Downloader      DownloaderConfig `mapstructure:"downloader"`
-	Library         LibraryConfig    `mapstructure:"library"`
-	Quality         QualityConfig    `mapstructure:"quality"`
-	ShowTopN        int              `mapstructure:"show_top_n"`
-	MinSeeders      int              `mapstructure:"min_seeders"`
-	PreferredGroups []string         `mapstructure:"preferred_release_groups"`
-	PosterMode      string           `mapstructure:"poster_mode"`
-	ProcessMode     string           `mapstructure:"process_mode"`
+	Notifier         NotifierConfig   `mapstructure:"notifier"`
+	Browser          BrowserConfig    `mapstructure:"browser"`
+	Prowlarr         ProwlarrConfig   `mapstructure:"prowlarr"`
+	TMDB             TMDBConfig       `mapstructure:"tmdb"`
+	Downloader       DownloaderConfig `mapstructure:"downloader"`
+	Library          LibraryConfig    `mapstructure:"library"`
+	Quality          QualityConfig    `mapstructure:"quality"`
+	ShowTopN         int              `mapstructure:"show_top_n"`
+	MinSeeders       int              `mapstructure:"min_seeders"`
+	PreferredGroups  []string         `mapstructure:"preferred_release_groups"`
+	PosterMode       string           `mapstructure:"poster_mode"`
+	ProcessMode      string           `mapstructure:"process_mode"`
+	CheckCollections bool             `mapstructure:"check_collections"`
 }
 
 type NotifierConfig struct {
@@ -195,6 +196,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("preferred_release_groups", []string{})
 	v.SetDefault("poster_mode", "auto")
 	v.SetDefault("process_mode", "batch")
+	v.SetDefault("check_collections", true)
 	v.SetDefault("quality.movies.resolution", "2160p")
 	v.SetDefault("quality.movies.prefer_hdr", true)
 	v.SetDefault("quality.movies.source_priority", []string{"bluray", "web-dl", "webrip"})
