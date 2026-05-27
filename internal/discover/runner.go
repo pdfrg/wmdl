@@ -336,33 +336,39 @@ func (r *Runner) processItem(ctx context.Context, item ScrapedItem, progYear, pr
 	runtime := 0
 	tvdbID := 0
 	posterPath := ""
+	originalLanguage := ""
+	originCountry := ""
 	if enrich != nil {
 		tvdbID = enrich.TVDBID
 		overview = enrich.Overview
 		genres = enrich.Genres
 		runtime = enrich.Runtime
 		posterPath = enrich.PosterPath
+		originalLanguage = enrich.OriginalLanguage
+		originCountry = enrich.OriginCountry
 	}
 
 	title := &model.Title{
-		TmdbID:          tmdbID,
-		TvdbID:          tvdbID,
-		Title:           item.Title,
-		Year:            item.Year,
-		MediaType:       mediaType,
-		ImdbID:          imdbID,
-		ImdbRating:      imdbRating,
-		MetacriticScore: metacriticScore,
-		RTURL:           rtURL,
-		RTCriticsScore:  rtCritics,
-		RTAudienceScore: rtAudience,
-		TmdbRating:      rating,
-		USRating:        usRating,
-		YoutubeViews:    item.YoutubeViews,
-		Overview:        overview,
-		Genres:          genres,
-		Runtime:         runtime,
-		PosterPath:      posterPath,
+		TmdbID:           tmdbID,
+		TvdbID:           tvdbID,
+		Title:            item.Title,
+		Year:             item.Year,
+		MediaType:        mediaType,
+		ImdbID:           imdbID,
+		ImdbRating:       imdbRating,
+		MetacriticScore:  metacriticScore,
+		RTURL:            rtURL,
+		RTCriticsScore:   rtCritics,
+		RTAudienceScore:  rtAudience,
+		TmdbRating:       rating,
+		USRating:         usRating,
+		YoutubeViews:     item.YoutubeViews,
+		Overview:         overview,
+		Genres:           genres,
+		Runtime:          runtime,
+		PosterPath:       posterPath,
+		OriginalLanguage: originalLanguage,
+		OriginCountry:    originCountry,
 	}
 
 	titleID, err := r.db.UpsertTitle(ctx, title)

@@ -514,6 +514,16 @@ func (t *TUI) buildRightContent(tl *model.Title, ev *model.ReleaseEvent, rw int)
 	// Meta line
 	if hasFirstMeta(tl) {
 		var parts []string
+		if tl.OriginCountry != "" {
+			for _, c := range strings.Split(tl.OriginCountry, ",") {
+				if flag := countryFlag(c); flag != "" {
+					parts = append(parts, flag)
+				}
+			}
+		}
+		if lang := languageName(tl.OriginalLanguage); lang != "" {
+			parts = append(parts, lang)
+		}
 		if tl.USRating != "" {
 			parts = append(parts, "["+tl.USRating+"]")
 		}
@@ -605,7 +615,8 @@ func (t *TUI) buildConfirmContent() string {
 }
 
 func hasFirstMeta(tl *model.Title) bool {
-	return tl.USRating != "" || tl.Genres != "" || tl.Runtime > 0
+	return tl.USRating != "" || tl.Genres != "" || tl.Runtime > 0 ||
+		tl.OriginalLanguage != "" || tl.OriginCountry != ""
 }
 
 func fmtRating(v float64) string {

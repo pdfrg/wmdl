@@ -56,17 +56,19 @@ type TMDBTVExternalIDs struct {
 }
 
 type TMDBEnrichment struct {
-	TMDBID     int
-	MediaType  string // "movie" or "tv"
-	Title      string
-	Year       int
-	Rating     float64
-	IMDbID     string
-	TVDBID     int
-	Overview   string
-	Genres     string // comma-separated
-	Runtime    int
-	PosterPath string
+	TMDBID           int
+	MediaType        string // "movie" or "tv"
+	Title            string
+	Year             int
+	Rating           float64
+	IMDbID           string
+	TVDBID           int
+	Overview         string
+	Genres           string // comma-separated
+	Runtime          int
+	PosterPath       string
+	OriginalLanguage string // ISO 639-1
+	OriginCountry    string // ISO 3166-1, first country
 }
 
 type TMDBDiscoverResult struct {
@@ -184,9 +186,11 @@ type TMDBDetails struct {
 		ID   int    `json:"id"`
 		Name string `json:"name"`
 	} `json:"genres"`
-	Runtime     int     `json:"runtime"`
-	VoteAverage float64 `json:"vote_average"`
-	IMDbID      string  `json:"imdb_id,omitempty"`
+	Runtime          int      `json:"runtime"`
+	VoteAverage      float64  `json:"vote_average"`
+	IMDbID           string   `json:"imdb_id,omitempty"`
+	OriginalLanguage string   `json:"original_language"`
+	OriginCountry    []string `json:"origin_country"`
 }
 
 func (c *TMDBClient) GetMovieDetails(ctx context.Context, tmdbID int) (*TMDBDetails, error) {
@@ -362,6 +366,11 @@ func (c *TMDBClient) enrichWithPrefs(ctx context.Context, query string, year int
 		}
 		enrich.Genres = strings.Join(genreNames, ", ")
 		enrich.Runtime = details.Runtime
+		enrich.OriginalLanguage = details.OriginalLanguage
+		if len(details.OriginCountry) > 0 {
+			n := min(len(details.OriginCountry), 3)
+			enrich.OriginCountry = strings.Join(details.OriginCountry[:n], ",")
+		}
 	}
 
 	return enrich, nil
