@@ -2,6 +2,7 @@ package download
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -42,8 +43,8 @@ type trpcResponse struct {
 	Tag       int             `json:"tag,omitempty"`
 }
 
-func (t *TransmissionClient) getSessionID() error {
-	req, err := http.NewRequest(http.MethodPost, t.baseURL+"/transmission/rpc", nil)
+func (t *TransmissionClient) getSessionID(ctx context.Context) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, t.baseURL+"/transmission/rpc", nil)
 	if err != nil {
 		return err
 	}
@@ -66,9 +67,9 @@ func (t *TransmissionClient) getSessionID() error {
 	return fmt.Errorf("transmission: unexpected status %d getting session", resp.StatusCode)
 }
 
-func (t *TransmissionClient) do(method string, args interface{}) (*trpcResponse, error) {
+func (t *TransmissionClient) do(ctx context.Context, method string, args interface{}) (*trpcResponse, error) {
 	if t.sessionID == "" {
-		if err := t.getSessionID(); err != nil {
+		if err := t.getSessionID(ctx); err != nil {
 			return nil, err
 		}
 	}
@@ -82,7 +83,7 @@ func (t *TransmissionClient) do(method string, args interface{}) (*trpcResponse,
 		return nil, err
 	}
 
-	req, err := http.NewRequest(http.MethodPost, t.baseURL+"/transmission/rpc", bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, t.baseURL+"/transmission/rpc", bytes.NewReader(body))
 	if err != nil {
 		return nil, err
 	}
@@ -98,7 +99,7 @@ func (t *TransmissionClient) do(method string, args interface{}) (*trpcResponse,
 
 	if resp.StatusCode == http.StatusConflict {
 		t.sessionID = resp.Header.Get("X-Transmission-Session-Id")
-		return t.do(method, args)
+		return t.do(ctx, method, args)
 	}
 
 	if resp.StatusCode != http.StatusOK {
@@ -126,15 +127,19 @@ type torrentAddArgs struct {
 	Labels      []string `json:"labels,omitempty"`
 }
 
-func (t *TransmissionClient) AddTorrent(torrentURL string, opts ...Option) (string, error) {
-	return t.addTorrent(torrentURL, false, opts...)
+func (t *TransmissionClient) Ping(ctx context.Context) error {
+	return t.getSessionID(ctx)
 }
 
-func (t *TransmissionClient) AddMagnet(magnetURI string, opts ...Option) (string, error) {
-	return t.addTorrent(magnetURI, false, opts...)
+func (t *TransmissionClient) AddTorrent(ctx context.Context, torrentURL string, opts ...Option) (string, error) {
+	return t.addTorrent(ctx, torrentURL, false, opts...)
 }
 
-func (t *TransmissionClient) addTorrent(value string, isMagnet bool, opts ...Option) (string, error) {
+func (t *TransmissionClient) AddMagnet(ctx context.Context, magnetURI string, opts ...Option) (string, error) {
+	return t.addTorrent(ctx, magnetURI, false, opts...)
+}
+
+func (t *TransmissionClient) addTorrent(ctx context.Context, value string, isMagnet bool, opts ...Option) (string, error) {
 	opt := &AddOptions{}
 	for _, o := range opts {
 		o(opt)
@@ -152,7 +157,7 @@ func (t *TransmissionClient) addTorrent(value string, isMagnet bool, opts ...Opt
 		args.DownloadDir = opt.SavePath
 	}
 
-	resp, err := t.do("torrent-add", args)
+	resp, err := t.do(ctx, "torrent-add", args)
 	if err != nil {
 		return "", err
 	}

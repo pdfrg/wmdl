@@ -1,6 +1,7 @@
 package download
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"net/http"
@@ -15,6 +16,7 @@ type QbittorrentClient struct {
 	password string
 	http     *http.Client
 	cookies  []*http.Cookie
+	loggedIn bool
 }
 
 var _ Client = (*QbittorrentClient)(nil)
@@ -36,12 +38,16 @@ func NewQbittorrentClient(baseURL, username, password string) *QbittorrentClient
 	}
 }
 
-func (q *QbittorrentClient) login() error {
+func (q *QbittorrentClient) login(ctx context.Context) error {
+	if q.loggedIn && len(q.cookies) > 0 {
+		return nil
+	}
+
 	v := url.Values{}
 	v.Set("username", q.username)
 	v.Set("password", q.password)
 
-	req, err := http.NewRequest(http.MethodPost, q.baseURL+"/api/v2/auth/login", strings.NewReader(v.Encode()))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, q.baseURL+"/api/v2/auth/login", strings.NewReader(v.Encode()))
 	if err != nil {
 		return err
 	}
@@ -63,6 +69,7 @@ func (q *QbittorrentClient) login() error {
 	}
 
 	q.cookies = resp.Cookies()
+	q.loggedIn = true
 	return nil
 }
 
@@ -72,16 +79,20 @@ func (q *QbittorrentClient) setAuth(req *http.Request) {
 	}
 }
 
-func (q *QbittorrentClient) AddTorrent(torrentURL string, opts ...Option) (string, error) {
-	return q.add("urls", torrentURL, opts...)
+func (q *QbittorrentClient) Ping(ctx context.Context) error {
+	return q.login(ctx)
 }
 
-func (q *QbittorrentClient) AddMagnet(magnetURI string, opts ...Option) (string, error) {
-	return q.add("urls", magnetURI, opts...)
+func (q *QbittorrentClient) AddTorrent(ctx context.Context, torrentURL string, opts ...Option) (string, error) {
+	return q.add(ctx, "urls", torrentURL, opts...)
 }
 
-func (q *QbittorrentClient) add(field, value string, opts ...Option) (string, error) {
-	if err := q.login(); err != nil {
+func (q *QbittorrentClient) AddMagnet(ctx context.Context, magnetURI string, opts ...Option) (string, error) {
+	return q.add(ctx, "urls", magnetURI, opts...)
+}
+
+func (q *QbittorrentClient) add(ctx context.Context, field, value string, opts ...Option) (string, error) {
+	if err := q.login(ctx); err != nil {
 		return "", err
 	}
 
@@ -102,7 +113,7 @@ func (q *QbittorrentClient) add(field, value string, opts ...Option) (string, er
 		v.Set("paused", "true")
 	}
 
-	req, err := http.NewRequest(http.MethodPost, q.baseURL+"/api/v2/torrents/add", strings.NewReader(v.Encode()))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, q.baseURL+"/api/v2/torrents/add", strings.NewReader(v.Encode()))
 	if err != nil {
 		return "", err
 	}
@@ -115,9 +126,26 @@ func (q *QbittorrentClient) add(field, value string, opts ...Option) (string, er
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode == http.StatusForbidden {
+		q.loggedIn = false
+		if err := q.login(ctx); err != nil {
+			return "", err
+		}
+		q.setAuth(req)
+		resp.Body.Close()
+
+		resp, err = q.http.Do(req)
+		if err != nil {
+			return "", fmt.Errorf("qbittorrent add: %w", err)
+		}
+		defer resp.Body.Close()
+	}
+
 	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("qbittorrent add returned %d", resp.StatusCode)
 	}
+
+	_, _ = io.Copy(io.Discard, resp.Body)
 
 	return "", nil
 }

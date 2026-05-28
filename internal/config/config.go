@@ -89,6 +89,7 @@ type RadarrConfig struct {
 	RootFolder     string `mapstructure:"root_folder"`
 	QualityProfile string `mapstructure:"quality_profile"`
 	Monitor        bool   `mapstructure:"monitor"`
+	Timeout        int    `mapstructure:"timeout"`
 }
 
 type SonarrConfig struct {
@@ -98,6 +99,7 @@ type SonarrConfig struct {
 	QualityProfile     string `mapstructure:"quality_profile"`
 	MonitorNewEpisodes bool   `mapstructure:"monitor_new_episodes"`
 	SeasonFolders      bool   `mapstructure:"season_folders"`
+	Timeout            int    `mapstructure:"timeout"`
 }
 
 type QualityConfig struct {
@@ -208,6 +210,8 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("prowlarr.timeout", 120)
 	v.SetDefault("prowlarr.indexer_id", 0)
 	v.SetDefault("library.radarr.monitor", false)
+	v.SetDefault("library.radarr.timeout", 120)
 	v.SetDefault("library.sonarr.monitor_new_episodes", true)
 	v.SetDefault("library.sonarr.season_folders", true)
+	v.SetDefault("library.sonarr.timeout", 120)
 }

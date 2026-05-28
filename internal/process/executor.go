@@ -60,8 +60,8 @@ type Executor struct {
 
 func NewExecutor(logger zerolog.Logger, cfg *config.Config, database *db.DB) *Executor {
 	dl := createDownloadClient(logger, cfg)
-	radarr := library.NewRadarrClient(cfg.Library.Radarr.URL, cfg.Library.Radarr.APIKey)
-	sonarr := library.NewSonarrClient(cfg.Library.Sonarr.URL, cfg.Library.Sonarr.APIKey)
+	radarr := library.NewRadarrClient(cfg.Library.Radarr.URL, cfg.Library.Radarr.APIKey, cfg.Library.Radarr.Timeout)
+	sonarr := library.NewSonarrClient(cfg.Library.Sonarr.URL, cfg.Library.Sonarr.APIKey, cfg.Library.Sonarr.Timeout)
 	return &Executor{
 		log:    logger,
 		cfg:    cfg,
@@ -96,6 +96,48 @@ func createDownloadClient(logger zerolog.Logger, cfg *config.Config) download.Cl
 		logger.Warn().Str("type", cfg.Downloader.Type).Msg("unknown downloader type, downloads disabled")
 		return nil
 	}
+}
+
+type HealthCheckResult struct {
+	Critical []string
+	Warnings []string
+}
+
+func (e *Executor) PreWarmRadarr(ctx context.Context) {
+	if _, err := e.radarr.GetAllMovies(ctx); err != nil {
+		e.log.Warn().Err(err).Msg("background pre-warm Radarr")
+	}
+}
+
+func (e *Executor) PreWarmSonarr(ctx context.Context) {
+	if _, err := e.sonarr.GetAllSeries(ctx); err != nil {
+		e.log.Warn().Err(err).Msg("background pre-warm Sonarr")
+	}
+}
+
+func (e *Executor) HealthCheck(ctx context.Context) HealthCheckResult {
+	var result HealthCheckResult
+
+	if err := e.prowl.Ping(ctx); err != nil {
+		result.Critical = append(result.Critical, fmt.Sprintf("Prowlarr: %v", err))
+	}
+	if e.dl != nil {
+		if err := e.dl.Ping(ctx); err != nil {
+			result.Critical = append(result.Critical, fmt.Sprintf("Downloader (%s): %v", e.cfg.Downloader.Type, err))
+		}
+	}
+	if e.radarr != nil {
+		if err := e.radarr.Ping(ctx); err != nil {
+			result.Warnings = append(result.Warnings, fmt.Sprintf("Radarr: %v", err))
+		}
+	}
+	if e.sonarr != nil {
+		if err := e.sonarr.Ping(ctx); err != nil {
+			result.Warnings = append(result.Warnings, fmt.Sprintf("Sonarr: %v", err))
+		}
+	}
+
+	return result
 }
 
 type SearchResult struct {
@@ -178,9 +220,18 @@ func (e *Executor) addToClient(ctx context.Context, evt db.EventWithTitle, chose
 		return
 	}
 	title := evt.Title
+	if title == nil {
+		e.log.Warn().Msg("addToClient called with nil title")
+		return
+	}
 	category := e.cfg.Downloader.Categories.Movies
 	if title.MediaType == model.MediaTypeTV {
 		category = e.cfg.Downloader.Categories.TV
+	}
+
+	var releaseEventID int64
+	if evt.Event != nil {
+		releaseEventID = evt.Event.ID
 	}
 
 	for _, release := range chosen {
@@ -191,7 +242,7 @@ func (e *Executor) addToClient(ctx context.Context, evt db.EventWithTitle, chose
 		}
 		var torrentID string
 		if uri != "" {
-			tid, err := e.dl.AddTorrent(uri, download.WithCategory(category))
+			tid, err := e.dl.AddTorrent(ctx, uri, download.WithCategory(category))
 			if err != nil {
 				e.log.Warn().Err(err).Msg("direct add failed")
 			} else {
@@ -202,7 +253,7 @@ func (e *Executor) addToClient(ctx context.Context, evt db.EventWithTitle, chose
 
 		dl := &model.Download{
 			TitleID:         title.ID,
-			ReleaseEventID:  evt.Event.ID,
+			ReleaseEventID:  releaseEventID,
 			Quality:         fmt.Sprintf("%dp", release.Resolution),
 			SourceType:      release.Source,
 			Codec:           release.Codec,
@@ -328,6 +379,20 @@ func (e *Executor) ProcessLibraryDecisions(ctx context.Context, picked []PickedI
 
 	fmt.Fprintln(os.Stderr, "\n── Library decisions ──")
 
+	fmt.Fprintf(os.Stderr, "  Loading Radarr library...")
+	if movies, err := e.radarr.GetAllMovies(ctx); err != nil {
+		fmt.Fprintf(os.Stderr, " error: %v\n", err)
+	} else {
+		fmt.Fprintf(os.Stderr, " %d movies loaded\n", len(movies))
+	}
+
+	fmt.Fprintf(os.Stderr, "  Loading Sonarr library...")
+	if series, err := e.sonarr.GetAllSeries(ctx); err != nil {
+		fmt.Fprintf(os.Stderr, " error: %v\n", err)
+	} else {
+		fmt.Fprintf(os.Stderr, " %d series loaded\n", len(series))
+	}
+
 	// Phase 2a: Collect and prompt for library adds
 	type addAction struct {
 		evt    db.EventWithTitle
@@ -338,25 +403,89 @@ func (e *Executor) ProcessLibraryDecisions(ctx context.Context, picked []PickedI
 	}
 	var addActions []addAction
 
+	type retryAction int
+	const (
+		retryActionSkip retryAction = iota
+		retryActionRetry
+		retryActionQuit
+	)
+
+	promptRetry := func(label string, err error) retryAction {
+		fmt.Fprintf(os.Stderr, "  %s error: %v\n", label, err)
+		for {
+			fmt.Fprintf(os.Stderr, "    [r] retry  [s] skip this item  [q] quit pipeline\n")
+			fmt.Fprintf(os.Stderr, "  Choose: ")
+			ch := make(chan string, 1)
+			go func() {
+				scanner := bufio.NewScanner(os.Stdin)
+				scanner.Scan()
+				ch <- scanner.Text()
+			}()
+			select {
+			case ans := <-ch:
+				switch strings.ToLower(strings.TrimSpace(ans)) {
+				case "r", "retry":
+					return retryActionRetry
+				case "s", "skip":
+					return retryActionSkip
+				case "q", "quit":
+					return retryActionQuit
+				}
+			case <-ctx.Done():
+				return retryActionQuit
+			}
+		}
+	}
+
+processPicked:
 	for _, item := range picked {
 		if item.Event.Title.MediaType == model.MediaTypeMovie {
 			tmdbID := item.Event.Title.TmdbID
 			if tmdbID == 0 {
 				continue
 			}
-			existing, err := e.radarr.Exists(ctx, tmdbID)
-			if err != nil {
-				e.log.Warn().Err(err).Msg("checking Radarr existence")
-				continue
+			for {
+				existing, err := e.radarr.Exists(ctx, tmdbID)
+				if err != nil {
+					switch promptRetry("Radarr", err) {
+					case retryActionRetry:
+						continue
+					case retryActionSkip:
+						goto nextPicked
+					case retryActionQuit:
+						break processPicked
+					}
+				}
+				if existing != nil {
+					e.log.Info().Str("title", item.Event.Title.Title).Msg("already in Radarr")
+					if e.cfg.CheckCollections && existing.Collection != nil && existing.Collection.TMDBID > 0 {
+						profileID := e.resolveProfileID(ctx, e.cfg.Library.Radarr.QualityProfile)
+						phase3FromCollection := e.checkCollectionGaps(ctx, existing.TMDBID, existing.Collection.TMDBID, profileID)
+						e.phase3Movies = append(e.phase3Movies, phase3FromCollection...)
+					}
+					goto nextPicked
+				}
+				break
 			}
-			if existing != nil {
-				e.log.Info().Str("title", item.Event.Title.Title).Msg("already in Radarr")
-				continue
-			}
-			lookup, err := e.radarr.Lookup(ctx, tmdbID)
-			if err != nil || lookup == nil {
-				e.log.Warn().Err(err).Str("title", item.Event.Title.Title).Msg("cannot look up movie")
-				continue
+			var lookup *library.RadarrMovie
+			for {
+				var err error
+				lookup, err = e.radarr.Lookup(ctx, tmdbID)
+				if err != nil {
+					switch promptRetry("Radarr lookup", err) {
+					case retryActionRetry:
+						continue
+					case retryActionSkip:
+						goto nextPicked
+					case retryActionQuit:
+						break processPicked
+					}
+				}
+				if lookup == nil {
+					e.log.Warn().Str("title", item.Event.Title.Title).Int("tmdb", tmdbID).Msg("movie not found on TMDB")
+					goto nextPicked
+				}
+				break
 			}
 			e.log.Info().Msgf("Add to Radarr? %s (%d)", lookup.Title, lookup.Year)
 			if lookup.Overview != "" {
@@ -377,19 +506,59 @@ func (e *Executor) ProcessLibraryDecisions(ctx context.Context, picked []PickedI
 			if tvdbID == 0 {
 				continue
 			}
-			existing, err := e.sonarr.Exists(ctx, tvdbID)
-			if err != nil {
-				e.log.Warn().Err(err).Msg("checking Sonarr existence")
-				continue
+			for {
+				existing, err := e.sonarr.Exists(ctx, tvdbID)
+				if err != nil {
+					switch promptRetry("Sonarr", err) {
+					case retryActionRetry:
+						continue
+					case retryActionSkip:
+						goto nextPicked
+					case retryActionQuit:
+						break processPicked
+					}
+				}
+				if existing != nil {
+					e.log.Info().Str("title", existing.Title).Int("season", item.Season).Msg("already in Sonarr")
+					if item.Season > 1 {
+						missing := e.checkExistingSonarrSeasons(ctx, existing, item.Season)
+						for _, missingS := range missing {
+							if promptYesNo(ctx, fmt.Sprintf("    %s: Search for Season %d?", existing.Title, missingS.SeasonNumber)) {
+								e.phase3Seasons = append(e.phase3Seasons, struct {
+									SeriesID     int
+									SeasonNumber int
+									SeriesTitle  string
+								}{
+									SeriesID:     existing.ID,
+									SeasonNumber: missingS.SeasonNumber,
+									SeriesTitle:  existing.Title,
+								})
+							}
+						}
+					}
+					goto nextPicked
+				}
+				break
 			}
-			if existing != nil {
-				e.log.Info().Int("season", item.Season).Msg("already in Sonarr")
-				continue
-			}
-			lookup, err := e.sonarr.Lookup(ctx, tvdbID)
-			if err != nil || lookup == nil {
-				e.log.Warn().Err(err).Str("title", item.Event.Title.Title).Msg("cannot look up series")
-				continue
+			var lookup *library.SonarrSeries
+			for {
+				var err error
+				lookup, err = e.sonarr.Lookup(ctx, tvdbID)
+				if err != nil {
+					switch promptRetry("Sonarr lookup", err) {
+					case retryActionRetry:
+						continue
+					case retryActionSkip:
+						goto nextPicked
+					case retryActionQuit:
+						break processPicked
+					}
+				}
+				if lookup == nil {
+					e.log.Warn().Str("title", item.Event.Title.Title).Int("tvdb", tvdbID).Msg("series not found on TVDB")
+					goto nextPicked
+				}
+				break
 			}
 			e.log.Info().Msgf("Add to Sonarr? %s (%d)", lookup.Title, lookup.Year)
 			if lookup.Overview != "" {
@@ -407,24 +576,52 @@ func (e *Executor) ProcessLibraryDecisions(ctx context.Context, picked []PickedI
 				})
 			}
 		}
-	}
-
-	if len(addActions) == 0 {
-		return
+	nextPicked:
 	}
 
 	// Phase 2b: Execute adds + check collections/earlier seasons
-	fmt.Fprintln(os.Stderr, "\n── Executing library adds ──")
+	if len(addActions) > 0 {
+		fmt.Fprintln(os.Stderr, "\n── Executing library adds ──")
 
-	for _, a := range addActions {
-		var addErr error
-		if a.isTV {
-			addErr = e.addToSonarr(ctx, a.evt, a.season, true)
-		} else {
-			addErr = e.addToRadarr(ctx, a.evt, true)
-		}
-		if addErr != nil {
-			e.log.Warn().Err(addErr).Msg("library add failed")
+		for _, a := range addActions {
+			var title string
+			if a.isTV {
+				title = a.evt.Title.Title
+			} else {
+				title = a.evt.Title.Title
+			}
+
+			var addErr error
+		actionRetry:
+			if a.isTV {
+				addErr = e.addToSonarr(ctx, a.evt, a.season, true)
+			} else {
+				addErr = e.addToRadarr(ctx, a.evt, true)
+			}
+			if addErr != nil {
+				fmt.Fprintf(os.Stderr, "  Error adding %q to library: %v\n", title, addErr)
+				fmt.Fprintf(os.Stderr, "    [r] retry  [s] skip  [q] quit pipeline\n")
+				fmt.Fprintf(os.Stderr, "  Choose: ")
+				ch := make(chan string, 1)
+				go func() {
+					scanner := bufio.NewScanner(os.Stdin)
+					scanner.Scan()
+					ch <- scanner.Text()
+				}()
+				select {
+				case ans := <-ch:
+					switch strings.ToLower(strings.TrimSpace(ans)) {
+					case "r", "retry":
+						goto actionRetry
+					case "s", "skip":
+						e.log.Warn().Msgf("skipped adding %q to library", title)
+					case "q", "quit":
+						return
+					}
+				case <-ctx.Done():
+					return
+				}
+			}
 		}
 	}
 
@@ -769,9 +966,14 @@ func (e *Executor) addToRadarr(ctx context.Context, evt db.EventWithTitle, confi
 	}
 	e.log.Info().Str("title", added.Title).Int("id", added.ID).Msg("added to Radarr")
 
-	if e.cfg.CheckCollections && added.Collection != nil && added.Collection.TMDBID > 0 {
-		phase3FromCollection := e.checkCollectionGaps(ctx, tmdbID, added.Collection.TMDBID, profileID)
-		e.phase3Movies = append(e.phase3Movies, phase3FromCollection...)
+	if e.cfg.CheckCollections {
+		if added.Collection != nil && added.Collection.TMDBID > 0 {
+			e.log.Info().Str("title", title).Str("collection", added.Collection.Name).Int("tmdb", added.Collection.TMDBID).Msg("checking collection gaps")
+			phase3FromCollection := e.checkCollectionGaps(ctx, tmdbID, added.Collection.TMDBID, profileID)
+			e.phase3Movies = append(e.phase3Movies, phase3FromCollection...)
+		} else {
+			e.log.Info().Str("title", title).Msg("movie not part of a TMDB collection, skipping")
+		}
 	}
 
 	return nil
@@ -797,10 +999,10 @@ func (e *Executor) addToSonarr(ctx context.Context, evt db.EventWithTitle, seaso
 			if targetSeason != nil && targetSeason.Statistics != nil &&
 				targetSeason.Statistics.EpisodeFileCount >= targetSeason.Statistics.EpisodeCount &&
 				targetSeason.Statistics.EpisodeCount > 0 {
-				e.log.Info().Int("season", season).Msg("season already complete in Sonarr")
+				e.log.Info().Str("title", evt.Title.Title).Int("season", season).Msg("season already complete in Sonarr")
 				return nil
 			}
-			e.log.Info().Int("season", season).Msg("already in Sonarr, season incomplete")
+			e.log.Info().Str("title", evt.Title.Title).Int("season", season).Msg("already in Sonarr, season incomplete")
 			return nil
 		}
 
@@ -870,16 +1072,15 @@ func (e *Executor) addToSonarr(ctx context.Context, evt db.EventWithTitle, seaso
 	e.log.Info().Str("title", added.Title).Int("id", added.ID).Msg("added to Sonarr")
 
 	if season > 1 && added.ID > 0 {
-		earlierSeasons := e.checkEarlierSeasons(ctx, added.ID, season)
-		for _, s := range earlierSeasons {
-			if promptYesNo(ctx, fmt.Sprintf("    Search for Season %d?", s.SeasonNumber)) {
+		for s := 1; s < season; s++ {
+			if promptYesNo(ctx, fmt.Sprintf("    %s: Search for Season %d?", title, s)) {
 				e.phase3Seasons = append(e.phase3Seasons, struct {
 					SeriesID     int
 					SeasonNumber int
 					SeriesTitle  string
 				}{
 					SeriesID:     added.ID,
-					SeasonNumber: s.SeasonNumber,
+					SeasonNumber: s,
 					SeriesTitle:  title,
 				})
 			}
@@ -898,36 +1099,81 @@ func findSeasonByNumber(seasons []library.SonarrSeason, num int) *library.Sonarr
 	return nil
 }
 
-func (e *Executor) checkEarlierSeasons(ctx context.Context, seriesID int, currentSeason int) []library.SonarrSeason {
-	series, err := e.sonarr.GetSeries(ctx, seriesID)
-	if err != nil {
-		e.log.Warn().Err(err).Msg("cannot fetch series details")
-		return nil
-	}
-
-	var missingSeasons []library.SonarrSeason
+func (e *Executor) checkExistingSonarrSeasons(ctx context.Context, series *library.SonarrSeries, currentSeason int) []library.SonarrSeason {
+	var missing []library.SonarrSeason
 	for _, s := range series.Seasons {
-		if s.SeasonNumber == 0 {
+		if s.SeasonNumber == 0 || s.SeasonNumber >= currentSeason {
 			continue
 		}
-		if s.SeasonNumber >= currentSeason {
+		if s.Statistics != nil && s.Statistics.EpisodeFileCount > 0 {
 			continue
 		}
-		if s.Statistics != nil && s.Statistics.EpisodeFileCount == 0 && s.Statistics.EpisodeCount > 0 {
-			missingSeasons = append(missingSeasons, s)
+		if s.Statistics != nil && s.Statistics.TotalEpisodeCount == 0 {
+			continue
 		}
+		missing = append(missing, s)
 	}
-
-	if len(missingSeasons) > 0 {
-		e.log.Info().Msgf("Series has %d earlier season(s) with no files", len(missingSeasons))
+	if len(missing) > 0 {
+		e.log.Info().Str("series", series.Title).Msgf("Found %d earlier season(s) missing in Sonarr", len(missing))
+	} else {
+		e.log.Info().Str("series", series.Title).Msg("all earlier seasons already have files in Sonarr")
 	}
-	return missingSeasons
+	return missing
 }
 
 func (e *Executor) checkCollectionGaps(ctx context.Context, tmdbID int, colTMDBID int, profileID int) []Phase3Movie {
+	allMovies, err := e.radarr.GetAllMovies(ctx)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "  Radarr error fetching movie list: %v\n", err)
+		fmt.Fprintf(os.Stderr, "    [r] retry  [s] skip collections  [q] quit pipeline\n")
+		fmt.Fprintf(os.Stderr, "  Choose: ")
+		ch := make(chan string, 1)
+		go func() {
+			scanner := bufio.NewScanner(os.Stdin)
+			scanner.Scan()
+			ch <- scanner.Text()
+		}()
+		select {
+		case ans := <-ch:
+			switch strings.ToLower(strings.TrimSpace(ans)) {
+			case "r", "retry":
+				return e.checkCollectionGaps(ctx, tmdbID, colTMDBID, profileID)
+			case "q", "quit":
+				return nil
+			}
+		case <-ctx.Done():
+			return nil
+		}
+		return nil
+	}
+
+	movieByTMDB := make(map[int]library.RadarrMovie, len(allMovies))
+	for _, m := range allMovies {
+		movieByTMDB[m.TMDBID] = m
+	}
+
 	collections, err := e.radarr.GetCollections(ctx)
 	if err != nil {
-		e.log.Warn().Err(err).Msg("cannot check collections")
+		fmt.Fprintf(os.Stderr, "  Radarr collections error: %v\n", err)
+		fmt.Fprintf(os.Stderr, "    [r] retry  [s] skip collections  [q] quit pipeline\n")
+		fmt.Fprintf(os.Stderr, "  Choose: ")
+		ch := make(chan string, 1)
+		go func() {
+			scanner := bufio.NewScanner(os.Stdin)
+			scanner.Scan()
+			ch <- scanner.Text()
+		}()
+		select {
+		case ans := <-ch:
+			switch strings.ToLower(strings.TrimSpace(ans)) {
+			case "r", "retry":
+				return e.checkCollectionGaps(ctx, tmdbID, colTMDBID, profileID)
+			case "q", "quit":
+				return nil
+			}
+		case <-ctx.Done():
+			return nil
+		}
 		return nil
 	}
 
@@ -939,16 +1185,25 @@ func (e *Executor) checkCollectionGaps(ctx context.Context, tmdbID int, colTMDBI
 		}
 		var missing []library.RadarrMovie
 		for _, m := range col.Movies {
-			if !m.HasFile && m.TMDBID != tmdbID {
-				missing = append(missing, m)
+			if m.TMDBID == tmdbID {
+				continue
 			}
+			if m.Status != "" && m.Status != "released" {
+				e.log.Debug().Str("title", m.Title).Str("status", m.Status).Int("tmdb", m.TMDBID).Msg("collection movie not released, skipping")
+				continue
+			}
+			if existing, ok := movieByTMDB[m.TMDBID]; ok && existing.HasFile {
+				continue
+			}
+			missing = append(missing, m)
 		}
 		if len(missing) == 0 {
+			e.log.Info().Str("collection", col.Name).Msg("no missing movies in collection")
 			continue
 		}
-		e.log.Info().Str("name", col.Name).Msgf("Collection has %d missing movies", len(missing))
+		e.log.Info().Str("collection", col.Name).Msgf("collection has %d missing movie(s)", len(missing))
 		for _, m := range missing {
-			if promptYesNo(ctx, fmt.Sprintf("    Collection %q: Add %s (%d)?", col.Name, m.Title, m.Year)) {
+			if promptYesNo(ctx, fmt.Sprintf("    Collection %q: Add %s?", col.Name, m.Title)) {
 				if _, err := e.radarr.Add(ctx, m.TMDBID, m.Title, m.Year, library.AddMovieOptions{
 					Monitored:           e.cfg.Library.Radarr.Monitor,
 					MinimumAvailability: "released",

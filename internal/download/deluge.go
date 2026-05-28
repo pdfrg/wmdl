@@ -2,6 +2,7 @@ package download
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -95,15 +96,19 @@ func (d *DelugeClient) login() error {
 	return nil
 }
 
-func (d *DelugeClient) AddTorrent(torrentURL string, opts ...Option) (string, error) {
-	return d.add(torrentURL, opts...)
+func (d *DelugeClient) Ping(ctx context.Context) error {
+	return d.login()
 }
 
-func (d *DelugeClient) AddMagnet(magnetURI string, opts ...Option) (string, error) {
-	return d.add(magnetURI, opts...)
+func (d *DelugeClient) AddTorrent(ctx context.Context, torrentURL string, opts ...Option) (string, error) {
+	return d.add(ctx, torrentURL, opts...)
 }
 
-func (d *DelugeClient) add(uri string, opts ...Option) (string, error) {
+func (d *DelugeClient) AddMagnet(ctx context.Context, magnetURI string, opts ...Option) (string, error) {
+	return d.add(ctx, magnetURI, opts...)
+}
+
+func (d *DelugeClient) add(ctx context.Context, uri string, opts ...Option) (string, error) {
 	if err := d.login(); err != nil {
 		return "", err
 	}

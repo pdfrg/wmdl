@@ -11,17 +11,21 @@ import (
 )
 
 type SonarrClient struct {
-	baseURL string
-	apiKey  string
-	http    *http.Client
+	baseURL     string
+	apiKey      string
+	http        *http.Client
+	seriesCache []SonarrSeries
 }
 
-func NewSonarrClient(baseURL, apiKey string) *SonarrClient {
+func NewSonarrClient(baseURL, apiKey string, timeout int) *SonarrClient {
+	if timeout <= 0 {
+		timeout = 120
+	}
 	return &SonarrClient{
 		baseURL: strings.TrimRight(baseURL, "/"),
 		apiKey:  apiKey,
 		http: &http.Client{
-			Timeout: 30 * time.Second,
+			Timeout: time.Duration(timeout) * time.Second,
 		},
 	}
 }
@@ -85,24 +89,55 @@ type sonarrCommand struct {
 	EpisodeIDs   []int  `json:"episodeIds,omitempty"`
 }
 
-func (s *SonarrClient) Lookup(ctx context.Context, tvdbID int) (*SonarrSeries, error) {
-	u := fmt.Sprintf("%s/api/v3/series/lookup?term=tvdb:%d", s.baseURL, tvdbID)
-	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
-	req.Header.Set("X-Api-Key", s.apiKey)
+func (s *SonarrClient) Ping(ctx context.Context) error {
+	var health []map[string]interface{}
+	return s.retry(ctx, func() error {
+		return s.get(ctx, "/api/v3/health", &health)
+	})
+}
 
-	resp, err := s.http.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("sonarr lookup: %w", err)
+func (s *SonarrClient) retry(ctx context.Context, fn func() error) error {
+	var err error
+	delays := []time.Duration{time.Second, 3 * time.Second, 9 * time.Second}
+	for i := 0; i <= len(delays); i++ {
+		if i > 0 {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(delays[i-1]):
+			}
+		}
+		if err = fn(); err == nil {
+			return nil
+		}
 	}
-	defer resp.Body.Close()
+	return err
+}
 
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("sonarr lookup returned %d", resp.StatusCode)
+func (s *SonarrClient) GetAllSeries(ctx context.Context) ([]SonarrSeries, error) {
+	if s.seriesCache != nil {
+		return s.seriesCache, nil
 	}
 
 	var series []SonarrSeries
-	if err := json.NewDecoder(resp.Body).Decode(&series); err != nil {
+	err := s.retry(ctx, func() error {
+		return s.get(ctx, "/api/v3/series", &series)
+	})
+	if err != nil {
 		return nil, err
+	}
+	s.seriesCache = series
+	return series, nil
+}
+
+func (s *SonarrClient) Lookup(ctx context.Context, tvdbID int) (*SonarrSeries, error) {
+	u := fmt.Sprintf("/api/v3/series/lookup?term=tvdb:%d", tvdbID)
+	var series []SonarrSeries
+	err := s.retry(ctx, func() error {
+		return s.get(ctx, u, &series)
+	})
+	if err != nil {
+		return nil, fmt.Errorf("sonarr lookup: %w", err)
 	}
 	if len(series) == 0 {
 		return nil, nil
@@ -111,12 +146,14 @@ func (s *SonarrClient) Lookup(ctx context.Context, tvdbID int) (*SonarrSeries, e
 }
 
 func (s *SonarrClient) Exists(ctx context.Context, tvdbID int) (*SonarrSeries, error) {
-	lookup, err := s.Lookup(ctx, tvdbID)
+	series, err := s.GetAllSeries(ctx)
 	if err != nil {
 		return nil, err
 	}
-	if lookup != nil && lookup.ID > 0 {
-		return lookup, nil
+	for _, ser := range series {
+		if ser.TVDBID == tvdbID {
+			return &ser, nil
+		}
 	}
 	return nil, nil
 }
@@ -152,22 +189,11 @@ func (s *SonarrClient) Add(ctx context.Context, tvdbID int, title string, year i
 		return nil, err
 	}
 
-	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, s.baseURL+"/api/v3/series", bytes.NewReader(body))
-	req.Header.Set("X-Api-Key", s.apiKey)
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := s.http.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("sonarr add: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("sonarr add returned %d", resp.StatusCode)
-	}
-
 	var added SonarrSeries
-	if err := json.NewDecoder(resp.Body).Decode(&added); err != nil {
+	err = s.retry(ctx, func() error {
+		return s.post(ctx, "/api/v3/series", body, &added)
+	})
+	if err != nil {
 		return nil, err
 	}
 	return &added, nil
@@ -181,103 +207,115 @@ func (s *SonarrClient) TriggerSeasonSearch(ctx context.Context, seriesID, season
 	}
 	body, _ := json.Marshal(cmd)
 
-	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, s.baseURL+"/api/v3/command", bytes.NewReader(body))
-	req.Header.Set("X-Api-Key", s.apiKey)
-	req.Header.Set("Content-Type", "application/json")
+	return s.retry(ctx, func() error {
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.baseURL+"/api/v3/command", bytes.NewReader(body))
+		if err != nil {
+			return err
+		}
+		req.Header.Set("X-Api-Key", s.apiKey)
+		req.Header.Set("Content-Type", "application/json")
 
-	resp, err := s.http.Do(req)
-	if err != nil {
-		return fmt.Errorf("sonarr season search: %w", err)
-	}
-	defer resp.Body.Close()
+		resp, err := s.http.Do(req)
+		if err != nil {
+			return fmt.Errorf("sonarr season search: %w", err)
+		}
+		defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("sonarr season search returned %d", resp.StatusCode)
-	}
-	return nil
+		if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
+			return fmt.Errorf("sonarr season search returned %d", resp.StatusCode)
+		}
+		return nil
+	})
 }
 
 func (s *SonarrClient) GetQualityProfiles(ctx context.Context) ([]SonarrQualityProfile, error) {
-	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, s.baseURL+"/api/v3/qualityProfile", nil)
-	req.Header.Set("X-Api-Key", s.apiKey)
-
-	resp, err := s.http.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("sonarr profiles: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("sonarr profiles returned %d", resp.StatusCode)
-	}
-
 	var profiles []SonarrQualityProfile
-	if err := json.NewDecoder(resp.Body).Decode(&profiles); err != nil {
+	err := s.retry(ctx, func() error {
+		return s.get(ctx, "/api/v3/qualityProfile", &profiles)
+	})
+	if err != nil {
 		return nil, err
 	}
 	return profiles, nil
 }
 
 func (s *SonarrClient) GetLanguageProfiles(ctx context.Context) ([]SonarrLanguageProfile, error) {
-	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, s.baseURL+"/api/v3/languageProfile", nil)
-	req.Header.Set("X-Api-Key", s.apiKey)
-
-	resp, err := s.http.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("sonarr language profiles: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("sonarr language profiles returned %d", resp.StatusCode)
-	}
-
 	var profiles []SonarrLanguageProfile
-	if err := json.NewDecoder(resp.Body).Decode(&profiles); err != nil {
+	err := s.retry(ctx, func() error {
+		return s.get(ctx, "/api/v3/languageProfile", &profiles)
+	})
+	if err != nil {
 		return nil, err
 	}
 	return profiles, nil
 }
 
 func (s *SonarrClient) GetRootFolders(ctx context.Context) ([]SonarrRootFolder, error) {
-	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, s.baseURL+"/api/v3/rootFolder", nil)
-	req.Header.Set("X-Api-Key", s.apiKey)
-
-	resp, err := s.http.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("sonarr root folders: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("sonarr root folders returned %d", resp.StatusCode)
-	}
-
 	var folders []SonarrRootFolder
-	if err := json.NewDecoder(resp.Body).Decode(&folders); err != nil {
+	err := s.retry(ctx, func() error {
+		return s.get(ctx, "/api/v3/rootFolder", &folders)
+	})
+	if err != nil {
 		return nil, err
 	}
 	return folders, nil
 }
 
 func (s *SonarrClient) GetSeries(ctx context.Context, seriesID int) (*SonarrSeries, error) {
-	u := fmt.Sprintf("%s/api/v3/series/%d", s.baseURL, seriesID)
-	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	u := fmt.Sprintf("/api/v3/series/%d", seriesID)
+	var series SonarrSeries
+	err := s.retry(ctx, func() error {
+		return s.get(ctx, u, &series)
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &series, nil
+}
+
+func (s *SonarrClient) get(ctx context.Context, path string, dst interface{}) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.baseURL+path, nil)
+	if err != nil {
+		return err
+	}
 	req.Header.Set("X-Api-Key", s.apiKey)
 
 	resp, err := s.http.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("sonarr get series: %w", err)
+		return fmt.Errorf("sonarr request: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("sonarr get series returned %d", resp.StatusCode)
+		return fmt.Errorf("sonarr returned %d", resp.StatusCode)
 	}
 
-	var series SonarrSeries
-	if err := json.NewDecoder(resp.Body).Decode(&series); err != nil {
-		return nil, err
+	if dst != nil {
+		return json.NewDecoder(resp.Body).Decode(dst)
 	}
-	return &series, nil
+	return nil
+}
+
+func (s *SonarrClient) post(ctx context.Context, path string, body []byte, dst interface{}) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.baseURL+path, bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("X-Api-Key", s.apiKey)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := s.http.Do(req)
+	if err != nil {
+		return fmt.Errorf("sonarr request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("sonarr returned %d", resp.StatusCode)
+	}
+
+	if dst != nil {
+		return json.NewDecoder(resp.Body).Decode(dst)
+	}
+	return nil
 }

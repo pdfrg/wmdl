@@ -1,5 +1,7 @@
 package download
 
+import "context"
+
 type Option func(*AddOptions)
 
 type AddOptions struct {
@@ -28,6 +30,7 @@ func WithPaused(paused bool) Option {
 }
 
 type Client interface {
-	AddTorrent(url string, opts ...Option) (torrentID string, err error)
-	AddMagnet(uri string, opts ...Option) (torrentID string, err error)
+	AddTorrent(ctx context.Context, url string, opts ...Option) (torrentID string, err error)
+	AddMagnet(ctx context.Context, uri string, opts ...Option) (torrentID string, err error)
+	Ping(ctx context.Context) error
 }

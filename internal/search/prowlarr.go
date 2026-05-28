@@ -104,6 +104,26 @@ func (p *ProwlarrClient) Search(ctx context.Context, params SearchParams) ([]qua
 	return convertToReleases(results), nil
 }
 
+func (p *ProwlarrClient) Ping(ctx context.Context) error {
+	u := p.baseURL + "/api/v1/indexer"
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("X-Api-Key", p.apiKey)
+
+	resp, err := p.http.Do(req)
+	if err != nil {
+		return fmt.Errorf("prowlarr ping: %w", err)
+	}
+	resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("prowlarr ping returned %d", resp.StatusCode)
+	}
+	return nil
+}
+
 func (p *ProwlarrClient) GetIndexerName(ctx context.Context, id int) string {
 	if p.indexerNames == nil {
 		p.indexerNames = make(map[int]string)

@@ -1,9 +1,11 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/rs/zerolog/log"
 
@@ -240,6 +242,95 @@ func runProcessForWeek(ctx context.Context, database *db.DB, cfg *config.Config,
 
 	exec := process.NewExecutor(log.Logger, cfg, database)
 
+	health := exec.HealthCheck(ctx)
+	skipLibrary := false
+
+	if len(health.Critical) > 0 || len(health.Warnings) > 0 {
+		fmt.Fprintln(os.Stderr, "── Service health check ──")
+		for _, c := range health.Critical {
+			fmt.Fprintf(os.Stderr, "  ✗ %s\n", c)
+		}
+		for _, w := range health.Warnings {
+			fmt.Fprintf(os.Stderr, "  ! %s\n", w)
+		}
+	}
+
+	if len(health.Critical) > 0 {
+		fmt.Fprintln(os.Stderr, "  Critical services unreachable. Cannot proceed without them.")
+		for {
+			fmt.Fprintf(os.Stderr, "  [r] retry  [q] quit\n")
+			fmt.Fprintf(os.Stderr, "  Choose: ")
+			ch := make(chan string, 1)
+			go func() {
+				scanner := bufio.NewScanner(os.Stdin)
+				scanner.Scan()
+				ch <- scanner.Text()
+			}()
+			select {
+			case ans := <-ch:
+				switch strings.ToLower(strings.TrimSpace(ans)) {
+				case "r", "retry":
+					health = exec.HealthCheck(ctx)
+					if len(health.Critical) == 0 && len(health.Warnings) == 0 {
+						fmt.Fprintln(os.Stderr, "  All services OK")
+						break
+					}
+					if len(health.Critical) > 0 {
+						continue
+					}
+					// Warnings remain, fall through to warnings handler
+				case "q", "quit":
+					return nil
+				}
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+			break
+		}
+	}
+
+	if len(health.Warnings) > 0 && len(health.Critical) == 0 {
+		for {
+			fmt.Fprintf(os.Stderr, "  [r] retry  [p] proceed without library management  [q] quit\n")
+			fmt.Fprintf(os.Stderr, "  Choose: ")
+			ch := make(chan string, 1)
+			go func() {
+				scanner := bufio.NewScanner(os.Stdin)
+				scanner.Scan()
+				ch <- scanner.Text()
+			}()
+			select {
+			case ans := <-ch:
+				switch strings.ToLower(strings.TrimSpace(ans)) {
+				case "r", "retry":
+					health = exec.HealthCheck(ctx)
+					if len(health.Critical) > 0 {
+						fmt.Fprintln(os.Stderr, "  Critical services also unreachable now.")
+						return nil
+					}
+					if len(health.Warnings) > 0 {
+						continue
+					}
+					fmt.Fprintln(os.Stderr, "  All services OK")
+				case "p", "proceed":
+					skipLibrary = true
+				case "q", "quit":
+					return nil
+				}
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+			break
+		}
+	}
+
+	preWarmDone := make(chan struct{}, 2)
+	if !skipLibrary {
+		go func() { exec.PreWarmRadarr(ctx); preWarmDone <- struct{}{} }()
+		go func() { exec.PreWarmSonarr(ctx); preWarmDone <- struct{}{} }()
+		fmt.Fprintf(os.Stderr, "  Pre-warming library data in background...\n")
+	}
+
 	var picked []process.PickedItem
 
 	if cfg.ProcessMode == "batch" {
@@ -258,7 +349,12 @@ func runProcessForWeek(ctx context.Context, database *db.DB, cfg *config.Config,
 		}
 	}
 
-	exec.ProcessLibraryDecisions(ctx, picked)
+	if !skipLibrary {
+		fmt.Fprintf(os.Stderr, "  Waiting for library data...\n")
+		<-preWarmDone
+		<-preWarmDone
+		exec.ProcessLibraryDecisions(ctx, picked)
+	}
 
 	target.Processed = true
 	if err := database.UpsertWeekState(ctx, target); err != nil {

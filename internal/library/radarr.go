@@ -11,17 +11,21 @@ import (
 )
 
 type RadarrClient struct {
-	baseURL string
-	apiKey  string
-	http    *http.Client
+	baseURL     string
+	apiKey      string
+	http        *http.Client
+	moviesCache []RadarrMovie
 }
 
-func NewRadarrClient(baseURL, apiKey string) *RadarrClient {
+func NewRadarrClient(baseURL, apiKey string, timeout int) *RadarrClient {
+	if timeout <= 0 {
+		timeout = 120
+	}
 	return &RadarrClient{
 		baseURL: strings.TrimRight(baseURL, "/"),
 		apiKey:  apiKey,
 		http: &http.Client{
-			Timeout: 30 * time.Second,
+			Timeout: time.Duration(timeout) * time.Second,
 		},
 	}
 }
@@ -40,6 +44,7 @@ type RadarrMovie struct {
 	Images              []RadarrImage        `json:"images,omitempty"`
 	Collection          *RadarrCollectionRef `json:"collection,omitempty"`
 	HasFile             bool                 `json:"hasFile,omitempty"`
+	IsExisting          bool                 `json:"isExisting,omitempty"`
 	IsAvailable         bool                 `json:"isAvailable,omitempty"`
 	Status              string               `json:"status,omitempty"`
 	AddOptions          *radarrAddOptions    `json:"addOptions,omitempty"`
@@ -56,13 +61,13 @@ type RadarrImage struct {
 
 type RadarrCollectionRef struct {
 	ID     int    `json:"id"`
-	Name   string `json:"name"`
+	Name   string `json:"title"`
 	TMDBID int    `json:"tmdbId"`
 }
 
 type RadarrCollection struct {
 	ID     int           `json:"id"`
-	Name   string        `json:"name"`
+	Name   string        `json:"title"`
 	TMDBID int           `json:"tmdbId"`
 	Movies []RadarrMovie `json:"movies"`
 }
@@ -82,24 +87,55 @@ type radarrCommand struct {
 	MovieIDs []int  `json:"movieIds,omitempty"`
 }
 
-func (r *RadarrClient) Lookup(ctx context.Context, tmdbID int) (*RadarrMovie, error) {
-	u := fmt.Sprintf("%s/api/v3/movie/lookup?term=tmdb:%d", r.baseURL, tmdbID)
-	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
-	req.Header.Set("X-Api-Key", r.apiKey)
+func (r *RadarrClient) Ping(ctx context.Context) error {
+	var health []map[string]interface{}
+	return r.retry(ctx, func() error {
+		return r.get(ctx, "/api/v3/health", &health)
+	})
+}
 
-	resp, err := r.http.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("radarr lookup: %w", err)
+func (r *RadarrClient) retry(ctx context.Context, fn func() error) error {
+	var err error
+	delays := []time.Duration{time.Second, 3 * time.Second, 9 * time.Second}
+	for i := 0; i <= len(delays); i++ {
+		if i > 0 {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(delays[i-1]):
+			}
+		}
+		if err = fn(); err == nil {
+			return nil
+		}
 	}
-	defer resp.Body.Close()
+	return err
+}
 
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("radarr lookup returned %d", resp.StatusCode)
+func (r *RadarrClient) GetAllMovies(ctx context.Context) ([]RadarrMovie, error) {
+	if r.moviesCache != nil {
+		return r.moviesCache, nil
 	}
 
 	var movies []RadarrMovie
-	if err := json.NewDecoder(resp.Body).Decode(&movies); err != nil {
+	err := r.retry(ctx, func() error {
+		return r.get(ctx, "/api/v3/movie", &movies)
+	})
+	if err != nil {
 		return nil, err
+	}
+	r.moviesCache = movies
+	return movies, nil
+}
+
+func (r *RadarrClient) Lookup(ctx context.Context, tmdbID int) (*RadarrMovie, error) {
+	u := fmt.Sprintf("/api/v3/movie/lookup?term=tmdb:%d", tmdbID)
+	var movies []RadarrMovie
+	err := r.retry(ctx, func() error {
+		return r.get(ctx, u, &movies)
+	})
+	if err != nil {
+		return nil, fmt.Errorf("radarr lookup: %w", err)
 	}
 	if len(movies) == 0 {
 		return nil, nil
@@ -108,12 +144,14 @@ func (r *RadarrClient) Lookup(ctx context.Context, tmdbID int) (*RadarrMovie, er
 }
 
 func (r *RadarrClient) Exists(ctx context.Context, tmdbID int) (*RadarrMovie, error) {
-	lookup, err := r.Lookup(ctx, tmdbID)
+	movies, err := r.GetAllMovies(ctx)
 	if err != nil {
 		return nil, err
 	}
-	if lookup != nil && lookup.ID > 0 {
-		return lookup, nil
+	for _, m := range movies {
+		if m.TMDBID == tmdbID {
+			return &m, nil
+		}
 	}
 	return nil, nil
 }
@@ -145,85 +183,44 @@ func (r *RadarrClient) Add(ctx context.Context, tmdbID int, title string, year i
 		return nil, err
 	}
 
-	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, r.baseURL+"/api/v3/movie", bytes.NewReader(body))
-	req.Header.Set("X-Api-Key", r.apiKey)
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := r.http.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("radarr add: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("radarr add returned %d", resp.StatusCode)
-	}
-
 	var added RadarrMovie
-	if err := json.NewDecoder(resp.Body).Decode(&added); err != nil {
+	err = r.retry(ctx, func() error {
+		return r.post(ctx, "/api/v3/movie", body, &added)
+	})
+	if err != nil {
 		return nil, err
 	}
 	return &added, nil
 }
 
 func (r *RadarrClient) GetCollections(ctx context.Context) ([]RadarrCollection, error) {
-	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, r.baseURL+"/api/v3/collection", nil)
-	req.Header.Set("X-Api-Key", r.apiKey)
-
-	resp, err := r.http.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("radarr collections: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("radarr collections returned %d", resp.StatusCode)
-	}
-
 	var collections []RadarrCollection
-	if err := json.NewDecoder(resp.Body).Decode(&collections); err != nil {
+	err := r.retry(ctx, func() error {
+		return r.get(ctx, "/api/v3/collection", &collections)
+	})
+	if err != nil {
 		return nil, err
 	}
 	return collections, nil
 }
 
 func (r *RadarrClient) GetQualityProfiles(ctx context.Context) ([]RadarrQualityProfile, error) {
-	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, r.baseURL+"/api/v3/qualityProfile", nil)
-	req.Header.Set("X-Api-Key", r.apiKey)
-
-	resp, err := r.http.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("radarr profiles: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("radarr profiles returned %d", resp.StatusCode)
-	}
-
 	var profiles []RadarrQualityProfile
-	if err := json.NewDecoder(resp.Body).Decode(&profiles); err != nil {
+	err := r.retry(ctx, func() error {
+		return r.get(ctx, "/api/v3/qualityProfile", &profiles)
+	})
+	if err != nil {
 		return nil, err
 	}
 	return profiles, nil
 }
 
 func (r *RadarrClient) GetRootFolders(ctx context.Context) ([]RadarrRootFolder, error) {
-	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, r.baseURL+"/api/v3/rootFolder", nil)
-	req.Header.Set("X-Api-Key", r.apiKey)
-
-	resp, err := r.http.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("radarr root folders: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("radarr root folders returned %d", resp.StatusCode)
-	}
-
 	var folders []RadarrRootFolder
-	if err := json.NewDecoder(resp.Body).Decode(&folders); err != nil {
+	err := r.retry(ctx, func() error {
+		return r.get(ctx, "/api/v3/rootFolder", &folders)
+	})
+	if err != nil {
 		return nil, err
 	}
 	return folders, nil
@@ -240,14 +237,63 @@ func (r *RadarrClient) TriggerSearch(ctx context.Context, movieID int) error {
 	req.Header.Set("X-Api-Key", r.apiKey)
 	req.Header.Set("Content-Type", "application/json")
 
+	return r.retry(ctx, func() error {
+		resp, err := r.http.Do(req)
+		if err != nil {
+			return fmt.Errorf("radarr search: %w", err)
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
+			return fmt.Errorf("radarr search returned %d", resp.StatusCode)
+		}
+		return nil
+	})
+}
+
+func (r *RadarrClient) get(ctx context.Context, path string, dst interface{}) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, r.baseURL+path, nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("X-Api-Key", r.apiKey)
+
 	resp, err := r.http.Do(req)
 	if err != nil {
-		return fmt.Errorf("radarr search: %w", err)
+		return fmt.Errorf("radarr request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("radarr returned %d", resp.StatusCode)
+	}
+
+	if dst != nil {
+		return json.NewDecoder(resp.Body).Decode(dst)
+	}
+	return nil
+}
+
+func (r *RadarrClient) post(ctx context.Context, path string, body []byte, dst interface{}) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, r.baseURL+path, bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("X-Api-Key", r.apiKey)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := r.http.Do(req)
+	if err != nil {
+		return fmt.Errorf("radarr request: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("radarr search returned %d", resp.StatusCode)
+		return fmt.Errorf("radarr returned %d", resp.StatusCode)
+	}
+
+	if dst != nil {
+		return json.NewDecoder(resp.Body).Decode(dst)
 	}
 	return nil
 }
