@@ -249,10 +249,7 @@ func (r *Runner) processItem(ctx context.Context, item ScrapedItem, progYear, pr
 	var enrich *TMDBEnrichment
 	var imdbID string
 
-	var preferType string
-	if item.Source != "dvdsreleasedates" {
-		preferType = string(item.MediaType)
-	}
+	preferType := string(item.MediaType)
 
 	enrich, err := r.tmdb.enrichWithPrefs(apiCtx, searchTitle, item.Year, preferType)
 	if err == nil {
@@ -260,7 +257,42 @@ func (r *Runner) processItem(ctx context.Context, item ScrapedItem, progYear, pr
 		rating = enrich.Rating
 		imdbID = enrich.IMDbID
 		r.log.Info().Int("tmdb_id", tmdbID).Float64("rating", rating).Str("media", string(enrich.MediaType)).Msg("TMDB enriched")
-	} else {
+	}
+
+	// Retry with uncleaned original title if cleaned search gave a weak match
+	// (non-exact) or failed entirely.
+	if err != nil || (enrich != nil && !strings.EqualFold(enrich.Title, searchTitle)) {
+		origTitle := html.UnescapeString(item.Title)
+		if origTitle != searchTitle {
+			r.log.Info().Str("original", origTitle).Msg("retrying TMDB with original title")
+			enrich2, err2 := r.tmdb.enrichWithPrefs(apiCtx, origTitle, item.Year, preferType)
+			if err2 == nil {
+				enrich = enrich2
+				tmdbID = enrich.TMDBID
+				rating = enrich.Rating
+				imdbID = enrich.IMDbID
+				r.log.Info().Int("tmdb_id", tmdbID).Float64("rating", rating).Str("media", string(enrich.MediaType)).Msg("TMDB enriched (retry)")
+			}
+		}
+
+		// If original title retry also didn't yield an exact match, try
+		// parenthetical content as a last resort.
+		if enrich == nil || !strings.EqualFold(enrich.Title, searchTitle) {
+			if paren := extractParenthetical(item.Title); paren != "" && !strings.EqualFold(paren, searchTitle) && !strings.EqualFold(paren, origTitle) {
+				r.log.Info().Str("parenthetical", paren).Msg("retrying TMDB with parenthetical content")
+				enrich3, err3 := r.tmdb.enrichWithPrefs(apiCtx, paren, item.Year, preferType)
+				if err3 == nil {
+					enrich = enrich3
+					tmdbID = enrich.TMDBID
+					rating = enrich.Rating
+					imdbID = enrich.IMDbID
+					r.log.Info().Int("tmdb_id", tmdbID).Float64("rating", rating).Str("media", string(enrich.MediaType)).Msg("TMDB enriched (parenthetical)")
+				}
+			}
+		}
+	}
+
+	if enrich == nil {
 		r.log.Warn().Err(err).Msg("TMDB lookup failed")
 		imdbID = item.ImdbID
 	}
@@ -308,6 +340,18 @@ func (r *Runner) processItem(ctx context.Context, item ScrapedItem, progYear, pr
 		rtTitle = enrich.Title
 	}
 	rtURL := r.rt.FindURL(rtTitle, item.Year, string(mediaType))
+
+	// If URL guessing returned a search page (fallback) and we have a browser,
+	// try scraping the search results directly.
+	if strings.Contains(rtURL, "search?search=") {
+		if r.allocCtx != nil {
+			r.log.Info().Msg("trying RT search via chromedp")
+			if searchURL := SearchRTSite(ctx, r.allocCtx, rtTitle, item.Year, string(mediaType)); searchURL != "" {
+				rtURL = searchURL
+				r.log.Info().Str("url", rtURL).Msg("RT URL found via search")
+			}
+		}
+	}
 	apiCancel()
 
 	// Phase 4: Best-effort RT rating scrape via chromedp
@@ -338,8 +382,10 @@ func (r *Runner) processItem(ctx context.Context, item ScrapedItem, progYear, pr
 	posterPath := ""
 	originalLanguage := ""
 	originCountry := ""
+	tmdbTitle := ""
 	if enrich != nil {
 		tvdbID = enrich.TVDBID
+		tmdbTitle = enrich.Title
 		overview = enrich.Overview
 		genres = enrich.Genres
 		runtime = enrich.Runtime
@@ -352,6 +398,7 @@ func (r *Runner) processItem(ctx context.Context, item ScrapedItem, progYear, pr
 		TmdbID:           tmdbID,
 		TvdbID:           tvdbID,
 		Title:            item.Title,
+		TmdbTitle:        tmdbTitle,
 		Year:             item.Year,
 		MediaType:        mediaType,
 		ImdbID:           imdbID,
@@ -463,13 +510,15 @@ func isUpgrade(prevSource string, newReleaseType model.ReleaseType) bool {
 }
 
 var (
-	parenSuffix = regexp.MustCompile(`\s*\([^)]*\)`)
+	// Only strip metadata parentheticals like "(season 3)", "(complete series)", etc.
+	// Keep parentheticals that look like alternate titles e.g. "(good boy)".
+	metaParen   = regexp.MustCompile(`(?i)\s*\((season\s+\d+|complete\s+.*|series\s+\d+|vol\..*)\)`)
 	trailingFmt = regexp.MustCompile(`(?i)\s+(season\s+\d+|dvd|blu-ray|4k)\s*$`)
 )
 
 func cleanTitleForSearch(title string) string {
 	cleaned := html.UnescapeString(title)
-	cleaned = parenSuffix.ReplaceAllString(cleaned, "")
+	cleaned = metaParen.ReplaceAllString(cleaned, "")
 	// Strip colon-suffixes that look like season descriptors
 	if parts := strings.SplitN(cleaned, ":", 2); len(parts) == 2 {
 		suffix := strings.ToLower(strings.TrimSpace(parts[1]))
@@ -479,6 +528,17 @@ func cleanTitleForSearch(title string) string {
 	}
 	cleaned = trailingFmt.ReplaceAllString(cleaned, "")
 	return strings.TrimSpace(cleaned)
+}
+
+// extractParenthetical extracts the first parenthetical group from a title.
+// Used as a fallback search term when the primary search yields a non-exact match.
+func extractParenthetical(title string) string {
+	re := regexp.MustCompile(`\(([^)]+)\)`)
+	m := re.FindStringSubmatch(title)
+	if len(m) > 1 {
+		return strings.TrimSpace(m[1])
+	}
+	return ""
 }
 
 func weekStateFromItems(items []ScrapedItem) *model.WeekState {

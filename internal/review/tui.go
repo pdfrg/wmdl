@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 	"image"
+	"net/url"
 	"os/exec"
+	"regexp"
 	"strings"
 
 	"charm.land/bubbles/v2/viewport"
@@ -14,6 +16,10 @@ import (
 	"github.com/pdfrg/wmdl/internal/db"
 	"github.com/pdfrg/wmdl/internal/model"
 )
+
+// Strip metadata parentheticals before comparing scraped vs TMDB titles,
+// so "(season 3)" differences don't trigger false mismatch warnings.
+var reviewMetaParen = regexp.MustCompile(`(?i)\s*\((season\s+\d+|complete\s+.*|series\s+\d+|vol\..*)\)`)
 
 type decision int
 
@@ -231,10 +237,12 @@ func (t *TUI) updateReview(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		t.items[t.cursor].decision = decisionNone
 
 	case "o":
-		rtURL := t.items[t.cursor].event.Title.RTURL
-		if rtURL != "" {
-			_ = exec.Command("xdg-open", rtURL).Start()
+		tl := t.items[t.cursor].event.Title
+		rtURL := tl.RTURL
+		if rtURL == "" {
+			rtURL = "https://www.rottentomatoes.com/search?search=" + url.QueryEscape(tl.Title)
 		}
+		_ = exec.Command("xdg-open", rtURL).Start()
 
 	case "enter":
 		remaining := 0
@@ -462,6 +470,16 @@ func (t *TUI) buildRightContent(tl *model.Title, ev *model.ReleaseEvent, rw int)
 	if tl.Year > 0 {
 		title = fmt.Sprintf("%s (%d)", title, tl.Year)
 	}
+	tmdbNote := ""
+	if tl.TmdbTitle != "" {
+		// Strip metadata patterns before comparing, so "(season 3)" or
+		// "(complete series)" don't trigger false mismatch warnings.
+		scrapedClean := strings.TrimSpace(reviewMetaParen.ReplaceAllString(tl.Title, ""))
+		tmdbClean := strings.TrimSpace(reviewMetaParen.ReplaceAllString(tl.TmdbTitle, ""))
+		if !strings.EqualFold(scrapedClean, tmdbClean) {
+			tmdbNote = fmt.Sprintf("TMDB: %s", tl.TmdbTitle)
+		}
+	}
 
 	mediaType := "movie"
 	if tl.MediaType == model.MediaTypeTV {
@@ -510,6 +528,12 @@ func (t *TUI) buildRightContent(tl *model.Title, ev *model.ReleaseEvent, rw int)
 	// Line 2: [movie] streaming
 	b.WriteString("\n\n")
 	b.WriteString(tagStyle.Render(fmt.Sprintf("[%s] %s", mediaType, releaseType)))
+
+	// TMDB match note (shown when TMDB title differs from scraped title)
+	if tmdbNote != "" {
+		b.WriteString("\n")
+		b.WriteString(rtStyle.Render(tmdbNote))
+	}
 
 	// Meta line
 	if hasFirstMeta(tl) {

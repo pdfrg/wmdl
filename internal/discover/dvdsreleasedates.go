@@ -96,9 +96,10 @@ func mostRecentTuesday(t time.Time) time.Time {
 
 var yearPattern = regexp.MustCompile(`(\d{4})`)
 
-func extractYear(imgAlt, title string) int {
-	// Try to get year from IMDB-style title: "GOAT (2026)" or "GOAT DVD Release Date"
-	for _, s := range []string{imgAlt, title} {
+func extractYear(imgAlt, imgSrc, title string) int {
+	// Try to get year from image src (e.g., "GOAT-2026.jpg"), then img alt,
+	// then title text.
+	for _, s := range []string{imgSrc, imgAlt, title} {
 		matches := yearPattern.FindStringSubmatch(s)
 		if len(matches) > 1 {
 			if y, err := strconv.Atoi(matches[1]); err == nil && y >= 1900 && y <= 2100 {
@@ -170,18 +171,34 @@ func (d *DVDReleaseDates) scrapeCurrent(doc *goquery.Document, targetDate time.T
 }
 
 func (d *DVDReleaseDates) parseDVDCell(cell *goquery.Selection, releaseDate string) *ScrapedItem {
-	title := strings.TrimSpace(cell.Find("a[style*='color:#000']").Text())
+	link := cell.Find("a[style*='color:#000']")
+	title := strings.TrimSpace(link.Text())
 	if title == "" {
 		return nil
 	}
 
 	imgAlt, _ := cell.Find("img.movieimg").Attr("alt")
-	year := extractYear(imgAlt, title)
+	imgSrc, _ := cell.Find("img.movieimg").Attr("src")
+	year := extractYear(imgAlt, imgSrc, title)
 
-	mediaType := model.MediaTypeMovie
-	lower := strings.ToLower(title)
-	if strings.Contains(lower, "season") || strings.Contains(lower, "complete") {
-		mediaType = model.MediaTypeTV
+	mediaType := d.detectMediaType(title, cell)
+
+	// Fetch detail page for accurate production year and resolve uncertain type.
+	// The listing image src has the DVD release year (e.g., "Dreams-2026.jpg")
+	// which may differ from the production year shown in <h1>Title (YYYY)</h1>.
+	if href, ok := link.Attr("href"); ok && href != "" {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		mt, detYear := d.fetchDetailPage(ctx, href)
+		if detYear > 0 {
+			year = detYear
+		}
+		if mt != "" {
+			mediaType = mt
+		}
+	}
+	if mediaType == "" {
+		mediaType = model.MediaTypeMovie // last resort
 	}
 
 	imdbID := ""
@@ -211,6 +228,88 @@ func (d *DVDReleaseDates) parseDVDCell(cell *goquery.Selection, releaseDate stri
 		ImdbRating:  imdbRating,
 		Source:      "dvdsreleasedates",
 	}
+}
+
+// detectMediaType attempts to determine movie vs TV from the cell's title text
+// and rating badge in td.imdblink.right (e.g., "R", "PG-13" for movies,
+// or "TV-MA", "TV-14" for TV shows).
+func (d *DVDReleaseDates) detectMediaType(title string, cell *goquery.Selection) model.MediaType {
+	lower := strings.ToLower(title)
+
+	// Title-based detection
+	if strings.Contains(lower, "season") ||
+		strings.Contains(lower, "complete") ||
+		strings.Contains(lower, "tv series") ||
+		strings.Contains(lower, "mini-series") ||
+		strings.Contains(lower, "miniseries") {
+		return model.MediaTypeTV
+	}
+
+	// Rating badge from td.imdblink.right — e.g., "R", "PG-13", "TV-MA"
+	ratingBadge := strings.TrimSpace(cell.Find("td.imdblink.right").Text())
+	ratingLower := strings.ToLower(ratingBadge)
+
+	// TV-style ratings
+	if strings.HasPrefix(ratingLower, "tv-") ||
+		strings.HasPrefix(ratingLower, "tv") {
+		return model.MediaTypeTV
+	}
+
+	// Movie-style ratings (common ones)
+	switch ratingLower {
+	case "r", "pg-13", "pg", "g", "nc-17", "nr":
+		return model.MediaTypeMovie
+	}
+
+	return ""
+}
+
+// fetchDetailPage fetches the item's detail page to determine movie vs TV and
+// extract the actual production year from the <h1> tag in "Title (YYYY)" format.
+// The listing page's image src has the DVD release year (may differ from production year).
+func (d *DVDReleaseDates) fetchDetailPage(ctx context.Context, href string) (model.MediaType, int) {
+	u := "https://www.dvdsreleasedates.com" + href
+	if !strings.HasPrefix(href, "/") {
+		u = href
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	if err != nil {
+		return "", 0
+	}
+	resp, err := d.http.Do(req)
+	if err != nil {
+		return "", 0
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return "", 0
+	}
+
+	doc, err := goquery.NewDocumentFromReader(resp.Body)
+	if err != nil {
+		return "", 0
+	}
+
+	// Media type from page text
+	var mediaType model.MediaType
+	text := doc.Text()
+	lower := strings.ToLower(text)
+	if strings.Contains(lower, "tv series") || strings.Contains(lower, "first air date") {
+		mediaType = model.MediaTypeTV
+	} else if strings.Contains(lower, "theater date") {
+		mediaType = model.MediaTypeMovie
+	}
+
+	// Production year from <h1> in "Dreams (2025)" format
+	year := 0
+	h1Text := doc.Find("h1").First().Text()
+	if m := yearPattern.FindStringSubmatch(h1Text); len(m) > 1 {
+		if y, err := strconv.Atoi(m[1]); err == nil && y >= 1900 && y <= 2100 {
+			year = y
+		}
+	}
+
+	return mediaType, year
 }
 
 func cleanTitle(title string) string {

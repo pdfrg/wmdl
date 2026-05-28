@@ -37,6 +37,7 @@ type Title struct {
 	TmdbID           int
 	TvdbID           int
 	Title            string
+	TmdbTitle        string // TMDB-matched title (may differ from scraped Title)
 	Year             int
 	MediaType        MediaType
 	ImdbID           string

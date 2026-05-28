@@ -54,14 +54,15 @@ type flixItem struct {
 }
 
 var (
-	flixDatePat    = regexp.MustCompile(`text-sm sm:text-base">([^<]+)`)
-	flixTitlePat   = regexp.MustCompile(`group-hover:underline">\s*([^<]+?)\s*</div>`)
-	flixIMDbPat    = regexp.MustCompile(`(\d+\.\d+)/10`)
-	flixRTPat      = regexp.MustCompile(`<span>(\d+)%</span>`)
-	flixYTViewsPat = regexp.MustCompile(`title="([\d,]+) views"`)
-	flixTVPat      = regexp.MustCompile(`TV Show`)
-	flixMoviePat   = regexp.MustCompile(`Movie`)
-	flixTitleYear  = regexp.MustCompile(`\((\d{4})\)`)
+	flixDatePat     = regexp.MustCompile(`text-sm sm:text-base">([^<]+)`)
+	flixTitlePat    = regexp.MustCompile(`group-hover:underline">\s*([^<]+?)\s*</div>`)
+	flixIMDbPat     = regexp.MustCompile(`(\d+\.\d+)/10`)
+	flixRTPat       = regexp.MustCompile(`<span>(\d+)%</span>`)
+	flixYTViewsPat  = regexp.MustCompile(`title="([\d,]+) views"`)
+	flixTVPat       = regexp.MustCompile(`TV Show`)
+	flixMoviePat    = regexp.MustCompile(`Movie`)
+	flixTitleYear   = regexp.MustCompile(`\((\d{4})\)`)
+	flixPremierePat = regexp.MustCompile(`title="Premiere">\s*<div>\s*<span[^>]*>\d{2}/\d{2}/</span>(\d{4})`)
 )
 
 func (f *FlixPatrolProvider) Scrape() ([]ScrapedItem, error) {
@@ -199,9 +200,15 @@ func parseFlixRow(row string) flixItem {
 			item.Year = y
 		}
 	}
-	// Fall back to year from date
+	// Fall back to year from premiere date in the row HTML.
+	// FlixPatrol provides a full premiere date (MM/DD/YYYY) in a tooltip
+	// that is more reliable than defaulting to current year.
 	if item.Year == 0 {
-		item.Year = time.Now().Year()
+		if m := flixPremierePat.FindStringSubmatch(row); len(m) > 1 {
+			if y, err := strconv.Atoi(m[1]); err == nil && y >= 1900 && y <= 2100 {
+				item.Year = y
+			}
+		}
 	}
 	if m := flixIMDbPat.FindStringSubmatch(row); len(m) > 1 {
 		item.IMDbRating, _ = strconv.ParseFloat(m[1], 64)

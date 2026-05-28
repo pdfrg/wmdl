@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"strings"
 	"time"
+	"unicode"
 )
 
 type TMDBClient struct {
@@ -235,7 +236,46 @@ func (c *TMDBClient) SearchMulti(ctx context.Context, query string, year int) (*
 		q.Set("year", fmt.Sprintf("%d", year))
 	}
 	u.RawQuery = q.Encode()
+	return c.searchJSON(ctx, u)
+}
 
+func (c *TMDBClient) SearchMovie(ctx context.Context, query string, year int) (*TMDBMultiResult, error) {
+	u, _ := url.Parse(tmdbBase + "/search/movie")
+	q := u.Query()
+	q.Set("query", query)
+	if year > 0 {
+		q.Set("year", fmt.Sprintf("%d", year))
+	}
+	u.RawQuery = q.Encode()
+	result, err := c.searchJSON(ctx, u)
+	if err != nil {
+		return nil, err
+	}
+	for i := range result.Results {
+		result.Results[i].MediaType = "movie"
+	}
+	return result, nil
+}
+
+func (c *TMDBClient) SearchTV(ctx context.Context, query string, year int) (*TMDBMultiResult, error) {
+	u, _ := url.Parse(tmdbBase + "/search/tv")
+	q := u.Query()
+	q.Set("query", query)
+	if year > 0 {
+		q.Set("first_air_date_year", fmt.Sprintf("%d", year))
+	}
+	u.RawQuery = q.Encode()
+	result, err := c.searchJSON(ctx, u)
+	if err != nil {
+		return nil, err
+	}
+	for i := range result.Results {
+		result.Results[i].MediaType = "tv"
+	}
+	return result, nil
+}
+
+func (c *TMDBClient) searchJSON(ctx context.Context, u *url.URL) (*TMDBMultiResult, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
 	if err != nil {
 		return nil, fmt.Errorf("creating request: %w", err)
@@ -269,7 +309,7 @@ func (c *TMDBClient) Enrich(ctx context.Context, query string, year int) (*TMDBE
 }
 
 func (c *TMDBClient) enrichWithPrefs(ctx context.Context, query string, year int, preferType string) (*TMDBEnrichment, error) {
-	res, err := c.SearchMulti(ctx, query, year)
+	res, err := c.searchWithFallback(ctx, query, year, preferType)
 	if err != nil {
 		return nil, err
 	}
@@ -279,7 +319,7 @@ func (c *TMDBClient) enrichWithPrefs(ctx context.Context, query string, year int
 	var best *tmdbCandidate
 
 	for _, r := range res.Results {
-		if r.MediaType != "movie" && r.MediaType != "tv" {
+		if preferType == "" && r.MediaType != "movie" && r.MediaType != "tv" {
 			continue
 		}
 
@@ -291,11 +331,20 @@ func (c *TMDBClient) enrichWithPrefs(ctx context.Context, query string, year int
 		if title == "" {
 			title = r.Name
 		}
+		origTitle := r.OriginalTitle
+		if origTitle == "" {
+			origTitle = r.OriginalName
+		}
 
-		// Exclude results whose title doesn't start with the search query.
-		// Prevents false matches like "Baki Dou: The Invincible Samurai"
-		// when searching for "INVINCIBLE".
-		if !strings.HasPrefix(strings.ToLower(title), qLower) {
+		titleLower := strings.ToLower(title)
+		origLower := strings.ToLower(origTitle)
+
+		var matchScore int
+		if titleLower == qLower || (origLower != "" && origLower == qLower) {
+			matchScore = 20
+		} else if matchTitle(qLower, title) || (origLower != "" && matchTitle(qLower, origTitle)) {
+			matchScore = 10
+		} else {
 			continue
 		}
 
@@ -308,16 +357,19 @@ func (c *TMDBClient) enrichWithPrefs(ctx context.Context, query string, year int
 			fmt.Sscanf(releaseDate[:4], "%d", &releaseYear)
 		}
 
-		score := 0
+		yearScore := 0
 		if year > 0 && releaseYear > 0 {
 			diff := year - releaseYear
 			if diff < 0 {
 				diff = -diff
 			}
-			if diff == 0 {
-				score += 3
-			} else if diff <= 1 {
-				score += 1
+			switch diff {
+			case 0:
+				yearScore = 5
+			case 1:
+				yearScore = 2
+			default:
+				yearScore = -3
 			}
 		}
 
@@ -330,10 +382,11 @@ func (c *TMDBClient) enrichWithPrefs(ctx context.Context, query string, year int
 				Rating:     r.VoteAverage,
 				PosterPath: r.PosterPath,
 			},
-			score: score,
+			score: matchScore + yearScore,
 		}
 
-		if best == nil || cand.score > best.score {
+		if best == nil || cand.score > best.score ||
+			(cand.score == best.score && cand.enrich.Year > best.enrich.Year) {
 			best = cand
 		}
 	}
@@ -374,6 +427,90 @@ func (c *TMDBClient) enrichWithPrefs(ctx context.Context, query string, year int
 	}
 
 	return enrich, nil
+}
+
+// searchWithFallback tries a type-specific search with year, then without,
+// then falls back to multi-search when type is unknown.
+func (c *TMDBClient) searchWithFallback(ctx context.Context, query string, year int, preferType string) (*TMDBMultiResult, error) {
+	if preferType != "" {
+		var res *TMDBMultiResult
+		var err error
+
+		if preferType == "movie" {
+			res, err = c.SearchMovie(ctx, query, year)
+		} else {
+			res, err = c.SearchTV(ctx, query, year)
+		}
+		if err != nil {
+			return nil, err
+		}
+		if len(res.Results) > 0 {
+			return res, nil
+		}
+
+		// Year-filtered returned nothing — retry without year
+		if preferType == "movie" {
+			res, err = c.SearchMovie(ctx, query, 0)
+		} else {
+			res, err = c.SearchTV(ctx, query, 0)
+		}
+		if err != nil {
+			return nil, err
+		}
+		return res, nil
+	}
+
+	return c.SearchMulti(ctx, query, year)
+}
+
+// matchTitle checks if query matches the start of title at word boundaries.
+// Query words must correspond to the initial words of the result title.
+// Leading articles (the, a, an) in the title are skipped.
+// Non-alphanumeric characters are stripped from each word for matching,
+// so "(good" and "good" are treated as the same word.
+func matchTitle(qLower, title string) bool {
+	tLower := strings.ToLower(title)
+
+	// Skip one leading article in the title
+	for _, art := range []string{"the ", "a ", "an "} {
+		if strings.HasPrefix(tLower, art) {
+			tLower = tLower[len(art):]
+			break
+		}
+	}
+
+	qWords := tokenize(qLower)
+	tWords := tokenize(tLower)
+
+	if len(qWords) == 0 || len(qWords) > len(tWords) {
+		return false
+	}
+
+	for i, qw := range qWords {
+		if !strings.HasPrefix(tWords[i], qw) {
+			return false
+		}
+	}
+	return true
+}
+
+// tokenize splits a string into words, stripping non-alphanumeric characters
+// from each word. This ensures "(good" normalizes to "good" for matching.
+func tokenize(s string) []string {
+	fields := strings.Fields(s)
+	result := make([]string, 0, len(fields))
+	for _, f := range fields {
+		var b strings.Builder
+		for _, r := range f {
+			if unicode.IsLetter(r) || unicode.IsDigit(r) {
+				b.WriteRune(unicode.ToLower(r))
+			}
+		}
+		if b.Len() > 0 {
+			result = append(result, b.String())
+		}
+	}
+	return result
 }
 
 func (c *TMDBClient) getExternalIDs(ctx context.Context, tmdbID int, mediaType string) (*TMDBExternalIDs, error) {

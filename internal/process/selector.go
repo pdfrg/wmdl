@@ -20,14 +20,14 @@ type colWidths struct {
 }
 
 type Selector struct {
-	title    string
-	releases []quality.ParsedRelease
-	cursor   int
-	width    int
-	height   int
-	selected []quality.ParsedRelease
-	toggles  map[int]bool
-	quit     bool
+	title     string
+	releases  []quality.ParsedRelease
+	cursor    int
+	width     int
+	height    int
+	selected  []quality.ParsedRelease
+	toggles   map[int]bool
+	quit      bool
 	colWidths colWidths
 }
 
