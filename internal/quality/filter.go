@@ -17,6 +17,7 @@ type ParsedRelease struct {
 	Seeders      int
 	SizeBytes    int64
 	Score        int
+	ExtraWords   bool // true if release has non-metadata words after the title
 
 	// Prowlarr-specific
 	IndexerID   int
@@ -134,6 +135,9 @@ func Score(r ParsedRelease, prefs QualityPrefs) int {
 	score += codecScore(r.Codec, prefs.CodecPriority)
 	score += groupBonus(r.ReleaseGroup, prefs.PreferredGroups)
 	score += seederScore(r.Seeders, prefs.MinSeeders)
+	if r.ExtraWords {
+		score -= 100000
+	}
 	return score
 }
 
@@ -227,7 +231,10 @@ func ExtractShowName(rawTitle string) string {
 	s := strings.ReplaceAll(rawTitle, ".", " ")
 
 	firstIdx := len(s)
-	for _, pat := range []*regexp.Regexp{episodeMarkerPat, shortSeasonPat, seasonNumPat, releaseYearPat} {
+	for _, pat := range []*regexp.Regexp{
+		episodeMarkerPat, shortSeasonPat, seasonNumPat,
+		releaseYearPat, resPattern, srcPattern, codecPattern, hdrPattern,
+	} {
 		loc := pat.FindStringIndex(s)
 		if loc != nil && loc[0] < firstIdx {
 			firstIdx = loc[0]
@@ -298,6 +305,33 @@ func FilterReleases(releases []ParsedRelease, searchTitle string, searchYear, se
 		}
 	}
 	return filtered
+}
+
+// IsExactTitleMatch checks whether a release title is an exact match for the
+// search title — no extra non-metadata words between the title and the first
+// quality marker (year, resolution, source, codec, season/episode, HDR).
+func IsExactTitleMatch(releaseTitle, searchTitle string) bool {
+	extracted := normalizeTitle(ExtractShowName(releaseTitle))
+	search := normalizeTitle(searchTitle)
+	return extracted == search
+}
+
+// PartitionReleases filters releases and splits them into exact and fuzzy
+// buckets. Fuzzy releases have extra non-metadata words after the title and
+// have their ExtraWords flag set to true.
+func PartitionReleases(releases []ParsedRelease, searchTitle string, searchYear, searchSeason int, mediaType string) (exact, fuzzy []ParsedRelease) {
+	for _, r := range releases {
+		if !FilterRelease(r, searchTitle, searchYear, searchSeason, mediaType) {
+			continue
+		}
+		if IsExactTitleMatch(r.RawTitle, searchTitle) {
+			exact = append(exact, r)
+		} else {
+			r.ExtraWords = true
+			fuzzy = append(fuzzy, r)
+		}
+	}
+	return
 }
 
 func parseReleaseSeason(rawTitle string) int {

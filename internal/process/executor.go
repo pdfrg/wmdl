@@ -732,9 +732,11 @@ func (e *Executor) searchPhase3Season(ctx context.Context, s struct {
 func (e *Executor) searchRelease(ctx context.Context, title *model.Title, stripped string, season int) ([]quality.ParsedRelease, error) {
 	resCfg := e.cfg.Quality.Movies
 	searchType := "movie"
+	searchCats := []int{search.CatMovie}
 	if title.MediaType == model.MediaTypeTV {
 		resCfg = e.cfg.Quality.TV
 		searchType = "tvsearch"
+		searchCats = []int{search.CatTV}
 	}
 
 	resKeyword := resolutionSearchKeyword(resCfg.Resolution)
@@ -749,7 +751,7 @@ func (e *Executor) searchRelease(ctx context.Context, title *model.Title, stripp
 
 	indexerID := e.cfg.Prowlarr.IndexerID
 	numTiers := len(queries)
-	var pool []quality.ParsedRelease
+	var exactPool, fuzzyPool []quality.ParsedRelease
 
 	// Phase 1: all tiers on preferred indexer only
 	if indexerID > 0 {
@@ -759,48 +761,57 @@ func (e *Executor) searchRelease(ctx context.Context, title *model.Title, stripp
 		for i, q := range queries {
 			e.log.Info().Msgf("[%d/%d] preferred: %s", i+1, numTiers, q)
 			results, err := e.prowl.Search(ctx, search.SearchParams{
-				Query:     q,
-				Type:      searchType,
-				IndexerID: indexerID,
-				Limit:     50,
+				Query:      q,
+				Type:       searchType,
+				IndexerID:  indexerID,
+				Limit:      50,
+				Categories: searchCats,
 			})
 			if err != nil {
 				return nil, err
 			}
-			filtered := quality.FilterReleases(results, stripped, title.Year, season, string(title.MediaType))
-			before := len(pool)
-			pool = mergeReleases(pool, filtered)
-			e.log.Debug().Msgf("→ %d filtered (%d total)", len(pool)-before, len(pool))
-			if len(pool) >= 10 {
-				return pool, nil
+			exact, fuzzy := quality.PartitionReleases(results, stripped, title.Year, season, string(title.MediaType))
+			exactPool = mergeReleases(exactPool, exact)
+			fuzzyPool = mergeReleases(fuzzyPool, fuzzy)
+			e.log.Debug().Msgf("→ %d exact, %d fuzzy (exact total: %d)", len(exact), len(fuzzy), len(exactPool))
+			if len(exactPool) >= 10 {
+				return exactPool, nil
 			}
 		}
 
-		e.log.Info().Msgf("→ %d total from preferred, searching all indexers", len(pool))
+		e.log.Info().Msgf("→ %d exact from preferred, searching all indexers", len(exactPool))
 	}
 
 	// Phase 2: all tiers on all indexers
 	for i, q := range queries {
 		e.log.Info().Msgf("[%d/%d] searching all: %s", i+1, numTiers, q)
 		results, err := e.prowl.Search(ctx, search.SearchParams{
-			Query: q,
-			Type:  searchType,
-			Limit: 50,
+			Query:      q,
+			Type:       searchType,
+			Limit:      50,
+			Categories: searchCats,
 		})
 		if err != nil {
 			return nil, err
 		}
-		filtered := quality.FilterReleases(results, stripped, title.Year, season, string(title.MediaType))
-		before := len(pool)
-		pool = mergeReleases(pool, filtered)
-		e.log.Debug().Msgf("→ %d filtered (%d total)", len(pool)-before, len(pool))
-		if len(pool) >= 10 {
-			return pool, nil
+		exact, fuzzy := quality.PartitionReleases(results, stripped, title.Year, season, string(title.MediaType))
+		exactPool = mergeReleases(exactPool, exact)
+		fuzzyPool = mergeReleases(fuzzyPool, fuzzy)
+		e.log.Debug().Msgf("→ %d exact, %d fuzzy (exact total: %d)", len(exact), len(fuzzy), len(exactPool))
+		if len(exactPool) >= 10 {
+			return exactPool, nil
 		}
 	}
 
-	if len(pool) > 0 {
-		return pool, nil
+	if len(exactPool) > 0 || len(fuzzyPool) > 0 {
+		result := exactPool
+		if n := 10 - len(exactPool); n > 0 && len(fuzzyPool) > 0 {
+			if n > len(fuzzyPool) {
+				n = len(fuzzyPool)
+			}
+			result = append(result, fuzzyPool[:n]...)
+		}
+		return result, nil
 	}
 	return nil, nil
 }

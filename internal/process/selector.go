@@ -10,6 +10,15 @@ import (
 	"github.com/pdfrg/wmdl/internal/quality"
 )
 
+type colWidths struct {
+	resolution int
+	hdr        int
+	source     int
+	codec      int
+	seeders    int
+	size       int
+}
+
 type Selector struct {
 	title    string
 	releases []quality.ParsedRelease
@@ -19,14 +28,40 @@ type Selector struct {
 	selected []quality.ParsedRelease
 	toggles  map[int]bool
 	quit     bool
+	colWidths colWidths
 }
 
 func NewSelector(title string, releases []quality.ParsedRelease) *Selector {
-	return &Selector{
+	s := &Selector{
 		title:    title,
 		releases: releases,
 		toggles:  make(map[int]bool),
 	}
+	for _, r := range releases {
+		if w := len(fmt.Sprintf("%dp", r.Resolution)); w > s.colWidths.resolution {
+			s.colWidths.resolution = w
+		}
+		hdrStr := ""
+		if r.HDR {
+			hdrStr = "HDR"
+		}
+		if len(hdrStr) > s.colWidths.hdr {
+			s.colWidths.hdr = len(hdrStr)
+		}
+		if len(r.Source) > s.colWidths.source {
+			s.colWidths.source = len(r.Source)
+		}
+		if len(r.Codec) > s.colWidths.codec {
+			s.colWidths.codec = len(r.Codec)
+		}
+		if w := len(fmt.Sprintf("%d", r.Seeders)); w > s.colWidths.seeders {
+			s.colWidths.seeders = w
+		}
+		if w := len(fmtSize(r.SizeBytes)); w > s.colWidths.size {
+			s.colWidths.size = w
+		}
+	}
+	return s
 }
 
 func (s *Selector) Run() ([]quality.ParsedRelease, error) {
@@ -121,24 +156,30 @@ func (s *Selector) View() tea.View {
 			prefix = "▸ "
 		}
 
-		var info []string
+		resStr := ""
 		if r.Resolution > 0 {
-			info = append(info, fmt.Sprintf("%dp", r.Resolution))
+			resStr = fmt.Sprintf("%dp", r.Resolution)
 		}
+		hdrStr := ""
 		if r.HDR {
-			info = append(info, "HDR")
+			hdrStr = "HDR"
 		}
-		info = append(info, r.Source)
-		info = append(info, r.Codec)
 
-		line := fmt.Sprintf("%s[%s] %-4s %s\n     %s  S: %d  %s",
+		attrs := fmt.Sprintf("%-*s ┃ %-*s ┃ %-*s ┃ %-*s",
+			s.colWidths.resolution, resStr,
+			s.colWidths.hdr, hdrStr,
+			s.colWidths.source, r.Source,
+			s.colWidths.codec, r.Codec,
+		)
+
+		line := fmt.Sprintf("%s[%s] %-4s %s\n     %s  S: %*d  %-*s",
 			prefix,
 			toggleMark,
 			fmt.Sprintf("[%d]", idx+1),
 			r.RawTitle,
-			strings.Join(info, " ┃ "),
-			r.Seeders,
-			fmtSize(r.SizeBytes),
+			attrs,
+			s.colWidths.seeders, r.Seeders,
+			s.colWidths.size, fmtSize(r.SizeBytes),
 		)
 
 		if r.ReleaseGroup != "" {

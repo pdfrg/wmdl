@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 
 	"github.com/pdfrg/wmdl/internal/quality"
@@ -56,11 +57,18 @@ type prowlarrRelease struct {
 	} `json:"categories"`
 }
 
+// Newznab category IDs for narrowing search results.
+const (
+	CatMovie = 2000 // Movies (parent)
+	CatTV    = 5000 // TV (parent)
+)
+
 type SearchParams struct {
-	Query     string
-	Type      string // "search", "movie", "tvsearch"
-	IndexerID int
-	Limit     int
+	Query      string
+	Type       string // "search", "movie", "tvsearch"
+	IndexerID  int
+	Limit      int
+	Categories []int // Newznab category IDs to restrict search to
 }
 
 func (p *ProwlarrClient) Search(ctx context.Context, params SearchParams) ([]quality.ParsedRelease, error) {
@@ -77,6 +85,13 @@ func (p *ProwlarrClient) Search(ctx context.Context, params SearchParams) ([]qua
 		q.Set("limit", fmt.Sprintf("%d", params.Limit))
 	} else {
 		q.Set("limit", "50")
+	}
+	if len(params.Categories) > 0 {
+		catStrs := make([]string, len(params.Categories))
+		for i, c := range params.Categories {
+			catStrs[i] = fmt.Sprintf("%d", c)
+		}
+		q.Set("categories", strings.Join(catStrs, ","))
 	}
 	u.RawQuery = q.Encode()
 
@@ -161,17 +176,19 @@ func (p *ProwlarrClient) GetIndexerName(ctx context.Context, id int) string {
 
 func (p *ProwlarrClient) SearchMovies(ctx context.Context, query string) ([]quality.ParsedRelease, error) {
 	return p.Search(ctx, SearchParams{
-		Query: query,
-		Type:  "movie",
-		Limit: 50,
+		Query:      query,
+		Type:       "movie",
+		Limit:      50,
+		Categories: []int{CatMovie},
 	})
 }
 
 func (p *ProwlarrClient) SearchTV(ctx context.Context, query string) ([]quality.ParsedRelease, error) {
 	return p.Search(ctx, SearchParams{
-		Query: query,
-		Type:  "tvsearch",
-		Limit: 50,
+		Query:      query,
+		Type:       "tvsearch",
+		Limit:      50,
+		Categories: []int{CatTV},
 	})
 }
 
