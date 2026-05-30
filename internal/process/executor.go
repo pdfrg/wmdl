@@ -3,6 +3,7 @@ package process
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -25,6 +26,8 @@ const (
 	ResultSkipped
 	ResultNotFound
 )
+
+var ErrAbort = errors.New("pipeline aborted by user")
 
 type Phase3Movie struct {
 	Title     string
@@ -325,6 +328,10 @@ func (e *Executor) SearchAndPickAll(ctx context.Context, events []db.EventWithTi
 			continue
 		}
 		chosen, err := e.presentPicker(ctx, sr)
+		if errors.Is(err, ErrAbort) {
+			e.log.Info().Msg("pipeline aborted by user")
+			break
+		}
 		if err != nil {
 			e.log.Warn().Err(err).Str("title", sr.Event.Title.Title).Msg("picker error")
 			continue
@@ -354,6 +361,10 @@ func (e *Executor) SearchAndPickOne(ctx context.Context, evt db.EventWithTitle) 
 		return nil
 	}
 	chosen, err := e.presentPicker(ctx, sr)
+	if errors.Is(err, ErrAbort) {
+		e.log.Info().Msg("pipeline aborted by user")
+		return nil
+	}
 	if err != nil {
 		e.log.Warn().Err(err).Str("title", evt.Title.Title).Msg("picker error")
 		return nil

@@ -28,6 +28,7 @@ type Selector struct {
 	selected  []quality.ParsedRelease
 	toggles   map[int]bool
 	quit      bool
+	abort     bool
 	colWidths colWidths
 }
 
@@ -71,6 +72,9 @@ func (s *Selector) Run() ([]quality.ParsedRelease, error) {
 		return nil, err
 	}
 	m := final.(*Selector)
+	if m.abort {
+		return nil, ErrAbort
+	}
 	return m.selected, nil
 }
 
@@ -88,6 +92,10 @@ func (s *Selector) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch {
 		case msg.String() == "s", msg.String() == "ctrl+c":
 			s.quit = true
+			return s, tea.Quit
+
+		case msg.String() == "q":
+			s.abort = true
 			return s, tea.Quit
 
 		case msg.String() == "j", msg.String() == "down":
@@ -210,7 +218,7 @@ func (s *Selector) View() tea.View {
 	}
 
 	footer := fmt.Sprintf("\n%s%s",
-		selHelpStyle.Render("[↑/↓] navigate  [space] toggle  [enter] confirm  [s] skip"),
+		selHelpStyle.Render("[↑/↓] navigate  [space] toggle  [enter] confirm  [s] skip  [q] abort"),
 		selHelpStyle.Render(fmt.Sprintf("  [%d/%d]%s", s.cursor+1, len(s.releases), footerExtra)),
 	)
 	b.WriteString(footer)
