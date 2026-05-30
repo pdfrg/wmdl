@@ -64,7 +64,7 @@ func newReviewCmd() *cobra.Command {
 	return cmd
 }
 
-func printReviewExport(events []db.EventWithTitle) {
+func printReviewExport(events []db.EventWithTitle, albumEvents []db.EventWithAlbum) {
 	var approved, rejected []string
 	for _, ev := range events {
 		title := ev.Title.Title
@@ -72,6 +72,15 @@ func printReviewExport(events []db.EventWithTitle) {
 			title = fmt.Sprintf("%s (%d)", title, ev.Title.Year)
 		}
 		switch ev.Event.Status {
+		case model.StatusApproved:
+			approved = append(approved, title)
+		case model.StatusRejected:
+			rejected = append(rejected, title)
+		}
+	}
+	for _, ae := range albumEvents {
+		title := fmt.Sprintf("%s - %s (%d)", ae.Artist.Name, ae.Album.Title, ae.Album.Year)
+		switch ae.Event.Status {
 		case model.StatusApproved:
 			approved = append(approved, title)
 		case model.StatusRejected:

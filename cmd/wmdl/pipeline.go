@@ -126,7 +126,7 @@ func runReviewForWeek(ctx context.Context, database *db.DB, cfg *config.Config, 
 				}
 				return approved, nil
 			case "e":
-				printReviewExport(events)
+				printReviewExport(events, albumEvents)
 				return 0, nil
 			case "q":
 				return 0, nil
