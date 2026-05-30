@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"regexp"
+	"strings"
 	"sync"
 	"time"
 )
@@ -22,7 +24,7 @@ type MBClient struct {
 
 func NewMBClient() *MBClient {
 	return &MBClient{
-		client:    &http.Client{Timeout: 15 * time.Second},
+		client:    &http.Client{Timeout: 30 * time.Second},
 		userAgent: "wmdl/0.1.0 (https://github.com/pdfrg/wmdl)",
 	}
 }
@@ -60,9 +62,12 @@ type mbReleaseGroupResult struct {
 
 // mbReleaseGroupDetail holds detailed info about a release group.
 type mbReleaseGroupDetail struct {
-	ID               string `json:"id"`
-	Title            string `json:"title"`
-	PrimaryType      string `json:"primary-type,omitempty"`
+	ID                string `json:"id"`
+	Title             string `json:"title"`
+	PrimaryType       string `json:"primary-type,omitempty"`
+	SecondaryTypeList []struct {
+		Name string `json:"name"`
+	} `json:"secondary-type-list,omitempty"`
 	FirstReleaseDate string `json:"first-release-date,omitempty"`
 	Rating           *struct {
 		Value     float64 `json:"value"`
@@ -95,10 +100,31 @@ type MBReleaseGroupResult struct {
 	MBID             string
 	Title            string
 	PrimaryType      string
+	SecondaryTypes   []string
 	FirstReleaseDate string
 	ArtistMBID       string
 	ArtistName       string
 	Rating           float64 // MusicBrainz rating (1-5 scale)
+	Genres           []string
+	Tags             []string
+}
+
+// MBArtistDetail holds detailed info about an artist fetched by MBID.
+type MBArtistDetail struct {
+	MBID           string
+	Name           string
+	Type           string // "Person" or "Group"
+	Country        string // ISO code (e.g. "US", "AU")
+	Area           string
+	BeginArea      string // birthplace or origin area name
+	BeginDate      string
+	EndDate        string
+	Disambiguation string
+	Tags           []string
+	Genres         []string
+	Rating         float64
+	RatingVotes    int
+	WikidataURL    string
 }
 
 // SearchArtist searches MusicBrainz for an artist by name.
@@ -140,13 +166,136 @@ func (c *MBClient) SearchArtist(ctx context.Context, artistName string) (*MBArti
 	}, nil
 }
 
-// SearchReleaseGroup searches for a release group by album title and artist.
-// Returns the best-matching result.
-func (c *MBClient) SearchReleaseGroup(ctx context.Context, albumTitle, artistName string) (*MBReleaseGroupResult, error) {
+// GetArtist fetches detailed artist info by MBID (not a search — direct lookup).
+func (c *MBClient) GetArtist(ctx context.Context, mbid string) (*MBArtistDetail, error) {
 	c.rateLimit()
 
-	query := url.QueryEscape(fmt.Sprintf(`release:"%s" AND artist:"%s"`, albumTitle, artistName))
-	u := fmt.Sprintf("%s/release-group/?query=%s&fmt=json&limit=5", mbBase, query)
+	u := fmt.Sprintf("%s/artist/%s?inc=tags+genres+ratings+annotation+url-rels+aliases&fmt=json", mbBase, mbid)
+
+	req, err := http.NewRequestWithContext(ctx, "GET", u, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("User-Agent", c.userAgent)
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("mb artist detail: %w", err)
+	}
+	defer resp.Body.Close()
+
+	var raw struct {
+		ID             string `json:"id"`
+		Name           string `json:"name"`
+		Type           string `json:"type"`
+		Country        string `json:"country"`
+		Disambiguation string `json:"disambiguation"`
+		Area           *struct {
+			Name string `json:"name"`
+		} `json:"area,omitempty"`
+		BeginArea *struct {
+			Name string `json:"name"`
+		} `json:"begin-area,omitempty"`
+		LifeSpan *struct {
+			Begin string `json:"begin"`
+			End   string `json:"end"`
+		} `json:"life-span,omitempty"`
+		Tags []struct {
+			Name  string `json:"name"`
+			Count int    `json:"count"`
+		} `json:"tags,omitempty"`
+		Genres []struct {
+			Name  string `json:"name"`
+			Count int    `json:"count"`
+		} `json:"genres,omitempty"`
+		Rating *struct {
+			Value     float64 `json:"value"`
+			VoteCount int     `json:"votes-count"`
+		} `json:"rating,omitempty"`
+		Relations []struct {
+			Type string `json:"type"`
+			URL  *struct {
+				Resource string `json:"resource"`
+			} `json:"url,omitempty"`
+		} `json:"relations,omitempty"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
+		return nil, fmt.Errorf("decoding mb artist detail: %w", err)
+	}
+
+	det := &MBArtistDetail{
+		MBID:           raw.ID,
+		Name:           raw.Name,
+		Type:           raw.Type,
+		Country:        raw.Country,
+		Disambiguation: raw.Disambiguation,
+	}
+	if raw.Area != nil {
+		det.Area = raw.Area.Name
+	}
+	if raw.BeginArea != nil {
+		det.BeginArea = raw.BeginArea.Name
+	}
+	if raw.LifeSpan != nil {
+		det.BeginDate = raw.LifeSpan.Begin
+		det.EndDate = raw.LifeSpan.End
+	}
+	for _, g := range raw.Genres {
+		det.Genres = append(det.Genres, g.Name)
+	}
+	for _, t := range raw.Tags {
+		det.Tags = append(det.Tags, t.Name)
+	}
+	if raw.Rating != nil {
+		det.Rating = raw.Rating.Value
+		det.RatingVotes = raw.Rating.VoteCount
+	}
+	for _, r := range raw.Relations {
+		if r.URL != nil && r.Type == "wikidata" {
+			det.WikidataURL = r.URL.Resource
+			break
+		}
+	}
+
+	return det, nil
+}
+
+// SearchReleaseGroup searches for a release group by album title and artist.
+// Tries multiple query strategies in order of specificity, returning the first
+// high-confidence match.
+func (c *MBClient) SearchReleaseGroup(ctx context.Context, albumTitle, artistName string) (*MBReleaseGroupResult, error) {
+	cleanTitle := stripTitleParens(albumTitle)
+	firstArtist := firstArtistName(artistName)
+
+	queries := []string{
+		fmt.Sprintf(`release:"%s" AND artist:"%s"`, albumTitle, artistName),
+		fmt.Sprintf(`release:"%s" AND artist:"%s"`, albumTitle, firstArtist),
+	}
+	if cleanTitle != albumTitle {
+		queries = append(queries,
+			fmt.Sprintf(`release:"%s" AND artist:"%s"`, cleanTitle, artistName),
+			fmt.Sprintf(`release:"%s" AND artist:"%s"`, cleanTitle, firstArtist),
+		)
+	}
+
+	for _, q := range queries {
+		result, err := c.searchReleaseGroupOnce(ctx, q)
+		if err != nil {
+			// Network/API error — try next fallback
+			continue
+		}
+		if result != nil {
+			return result, nil
+		}
+	}
+	return nil, nil
+}
+
+func (c *MBClient) searchReleaseGroupOnce(ctx context.Context, query string) (*MBReleaseGroupResult, error) {
+	c.rateLimit()
+
+	u := fmt.Sprintf("%s/release-group/?query=%s&fmt=json&limit=5", mbBase, url.QueryEscape(query))
 
 	req, err := http.NewRequestWithContext(ctx, "GET", u, nil)
 	if err != nil {
@@ -170,7 +319,6 @@ func (c *MBClient) SearchReleaseGroup(ctx context.Context, albumTitle, artistNam
 		return nil, nil
 	}
 
-	// Return the best-scored result
 	best := &result.ReleaseGroups[0]
 
 	var artistMBID, artistCreditName string
@@ -187,6 +335,19 @@ func (c *MBClient) SearchReleaseGroup(ctx context.Context, albumTitle, artistNam
 		ArtistMBID:       artistMBID,
 		ArtistName:       artistCreditName,
 	}, nil
+}
+
+// stripTitleParens removes trailing parenthetical groups like "(The Piano Versions)".
+func stripTitleParens(title string) string {
+	re := regexp.MustCompile(`\s*\([^)]*\)\s*$`)
+	return strings.TrimSpace(re.ReplaceAllString(title, ""))
+}
+
+// firstArtistName returns the artist name before the first conjunction separator.
+// "Jeff Parker & ETA IVtet" → "Jeff Parker"
+func firstArtistName(name string) string {
+	re := regexp.MustCompile(`\s*(&|feat\.|ft\.|with|vs\.|\+)\s*.*$`)
+	return strings.TrimSpace(re.ReplaceAllString(name, ""))
 }
 
 // GetReleaseGroupDetail fetches detailed info about a release group including
@@ -225,7 +386,7 @@ func (c *MBClient) GetReleaseGroupDetail(ctx context.Context, mbid string) (*MBR
 		rating = detail.Rating.Value
 	}
 
-	return &MBReleaseGroupResult{
+	result := &MBReleaseGroupResult{
 		MBID:             detail.ID,
 		Title:            detail.Title,
 		PrimaryType:      detail.PrimaryType,
@@ -233,7 +394,17 @@ func (c *MBClient) GetReleaseGroupDetail(ctx context.Context, mbid string) (*MBR
 		ArtistMBID:       artistMBID,
 		ArtistName:       artistName,
 		Rating:           rating,
-	}, nil
+	}
+	for _, st := range detail.SecondaryTypeList {
+		result.SecondaryTypes = append(result.SecondaryTypes, st.Name)
+	}
+	for _, g := range detail.Genres {
+		result.Genres = append(result.Genres, g.Name)
+	}
+	for _, t := range detail.Tags {
+		result.Tags = append(result.Tags, t.Name)
+	}
+	return result, nil
 }
 
 // rateLimit ensures at most 1 request per second to MusicBrainz.

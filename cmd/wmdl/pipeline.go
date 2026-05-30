@@ -73,6 +73,11 @@ func runReviewForWeek(ctx context.Context, database *db.DB, cfg *config.Config, 
 		return 0, fmt.Errorf("loading events: %w", err)
 	}
 
+	albumEvents, err := database.ListAlbumEventsByWeek(ctx, year, week)
+	if err != nil {
+		return 0, fmt.Errorf("loading album events: %w", err)
+	}
+
 	hasPending := false
 	for _, ev := range events {
 		if ev.Event.Status == model.StatusPending {
@@ -96,7 +101,7 @@ func runReviewForWeek(ctx context.Context, database *db.DB, cfg *config.Config, 
 			}
 			switch choice {
 			case "r":
-				tui, err := review.NewReviewTUIWithEvents(events, nil, database, cfg.PosterMode)
+				tui, err := review.NewReviewTUIWithEvents(events, albumEvents, database, cfg.PosterMode)
 				if err != nil {
 					return 0, err
 				}
@@ -130,7 +135,14 @@ func runReviewForWeek(ctx context.Context, database *db.DB, cfg *config.Config, 
 		}
 	}
 
-	tui, err := review.NewReviewTUIWithEvents(pendingEvents, nil, database, cfg.PosterMode)
+	var pendingAlbumEvents []db.EventWithAlbum
+	for _, ev := range albumEvents {
+		if ev.Event.Status == model.StatusPending {
+			pendingAlbumEvents = append(pendingAlbumEvents, ev)
+		}
+	}
+
+	tui, err := review.NewReviewTUIWithEvents(pendingEvents, pendingAlbumEvents, database, cfg.PosterMode)
 	if err != nil {
 		return 0, err
 	}

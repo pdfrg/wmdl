@@ -207,6 +207,19 @@ func (p *AOTYProvider) parseBlock(s *goquery.Selection) *ScrapedItem {
 
 	mustHear := s.Find("div.mustHear, div.image.mustHear").Length() > 0
 
+	// Extract cover art URL from div.image
+	imageURL := extractImageURL(s.Find("div.image").First())
+
+	// Extract AOTY detail page URL from the <a> tag wrapping the block
+	aotyURL := ""
+	if href, exists := s.Find("a.albumBlock").Attr("href"); exists {
+		aotyURL = "https://www.albumoftheyear.org" + href
+	} else if href, exists := s.Find("a").First().Attr("href"); exists {
+		if strings.HasPrefix(href, "/album/") {
+			aotyURL = "https://www.albumoftheyear.org" + href
+		}
+	}
+
 	// Extract year from date
 	year := 0
 	if t, err := time.Parse("2006-01-02", releaseDate); err == nil {
@@ -224,10 +237,64 @@ func (p *AOTYProvider) parseBlock(s *goquery.Selection) *ScrapedItem {
 		AOTYUserScore:   userScore,
 		AOTYUserCount:   userCount,
 		AOTYMustHear:    mustHear,
+		ImageURL:        imageURL,
+		AOTYURL:         aotyURL,
 	}
 }
 
-// parseAOTYDate converts "May 29" or "May 29 • LP" to "2026-05-29"
+// extractImageURL tries to find a cover art URL from a div.image element.
+// AOTY uses various formats: inline style, img tag, or data-src.
+func extractImageURL(sel *goquery.Selection) string {
+	if sel.Length() == 0 {
+		return ""
+	}
+
+	var u string
+
+	// Strategy 1: style="background-image: url(...)"
+	if style, exists := sel.Attr("style"); exists {
+		if idx := strings.Index(style, "url("); idx >= 0 {
+			urlStart := idx + 4
+			end := strings.LastIndex(style, ")")
+			if end > urlStart {
+				u = strings.Trim(style[urlStart:end], "'\" ")
+				if strings.HasPrefix(u, "//") {
+					u = "https:" + u
+				}
+			}
+		}
+	}
+
+	// Strategy 2: <img src="...">
+	if u == "" {
+		if src, exists := sel.Find("img").First().Attr("src"); exists {
+			u = src
+			if strings.HasPrefix(u, "//") {
+				u = "https:" + u
+			}
+		}
+	}
+
+	// Strategy 3: data-src attribute on the element itself or a child
+	if u == "" {
+		for _, attr := range []string{"data-src", "data-lazy", "data-original"} {
+			if val, exists := sel.Attr(attr); exists && val != "" {
+				u = val
+				if strings.HasPrefix(u, "//") {
+					u = "https:" + u
+				}
+				break
+			}
+		}
+	}
+
+	// Upgrade to larger size: /200x0/ → /500x0/
+	if u != "" && strings.HasPrefix(u, "http") {
+		u = strings.Replace(u, "/200x0/", "/500x0/", 1)
+	}
+	return u
+}
+
 func parseAOTYDate(s string) string {
 	s = strings.Split(s, " • ")[0]
 	s = strings.TrimSpace(s)

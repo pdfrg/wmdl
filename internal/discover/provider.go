@@ -48,4 +48,6 @@ type ScrapedItem struct {
 	AOTYUserScore   float64
 	AOTYUserCount   int
 	AOTYMustHear    bool
+	ImageURL        string
+	AOTYURL         string
 }

@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"regexp"
 	"strings"
+	"time"
 
 	"charm.land/bubbles/v2/viewport"
 	"charm.land/bubbletea/v2"
@@ -225,8 +226,17 @@ func (t *TUI) loadPosterCmd() tea.Cmd {
 	}
 
 	if it.albumEvent != nil {
-		// Music poster loading not yet implemented (AOTY cover art via URL)
-		return t.clearPosterCmd()
+		url := it.albumEvent.Album.PosterPath
+		if url == "" {
+			return t.clearPosterCmd()
+		}
+		return func() tea.Msg {
+			img, err := getAlbumPosterImage(url)
+			if err != nil {
+				return posterReadyMsg{err: err}
+			}
+			return posterReadyMsg{img: img}
+		}
 	}
 
 	tl := it.event.Title
@@ -487,13 +497,23 @@ func (t *TUI) updateReview(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		if it == nil {
 			return t, nil
 		}
-		tl := it.event.Title
-		rtURL := tl.RTURL
-		if rtURL == "" {
-			rtURL = "https://www.rottentomatoes.com/search?search=" + url.QueryEscape(tl.Title)
-		}
-		if err := exec.Command("xdg-open", rtURL).Start(); err != nil {
-			t.flashMsg = fmt.Sprintf("Failed to open browser: %v", err)
+		if it.albumEvent != nil {
+			u := it.albumEvent.Album.AOTYURL
+			if u == "" {
+				u = "https://www.albumoftheyear.org/search/?q=" + url.QueryEscape(it.albumEvent.Album.Title)
+			}
+			if err := exec.Command("xdg-open", u).Start(); err != nil {
+				t.flashMsg = fmt.Sprintf("Failed to open browser: %v", err)
+			}
+		} else {
+			tl := it.event.Title
+			rtURL := tl.RTURL
+			if rtURL == "" {
+				rtURL = "https://www.rottentomatoes.com/search?search=" + url.QueryEscape(tl.Title)
+			}
+			if err := exec.Command("xdg-open", rtURL).Start(); err != nil {
+				t.flashMsg = fmt.Sprintf("Failed to open browser: %v", err)
+			}
 		}
 
 	case "enter":
@@ -578,7 +598,7 @@ func (t *TUI) View() tea.View {
 			keyStyle.Render("t") + helpStyle.Render(" tv  ") +
 			keyStyle.Render("b") + helpStyle.Render(" albums  ") +
 			keyStyle.Render("enter") + helpStyle.Render(" confirm  ") +
-			keyStyle.Render("o") + helpStyle.Render(" open RT  ") +
+			keyStyle.Render("o") + helpStyle.Render(" open    ") +
 			keyStyle.Render("q") + helpStyle.Render(" quit")
 	case phaseConfirm:
 		footer = keyStyle.Render("j") + helpStyle.Render("/") + keyStyle.Render("k") + helpStyle.Render(" scroll  ") +
@@ -667,14 +687,48 @@ func (t *TUI) buildReviewContent() string {
 		return "no items match the current filter"
 	}
 
+	var b strings.Builder
+
 	if it.albumEvent != nil {
-		return t.buildMusicContent(it.albumEvent, rw)
+		if t.shouldPadForPoster() {
+			posterBlock := t.buildPosterBlock()
+			posterLines := strings.Split(posterBlock, "\n")
+			musicContent := t.buildMusicContent(it.albumEvent, rw)
+			musicLines := strings.Split(musicContent, "\n")
+
+			maxLines := len(posterLines)
+			if len(musicLines) > maxLines {
+				maxLines = len(musicLines)
+			}
+
+			for i := 0; i < maxLines; i++ {
+				leftPart := ""
+				if i < len(posterLines) {
+					leftPart = posterLines[i] + " "
+				} else {
+					leftPart = strings.Repeat(" ", posterCols+1)
+				}
+
+				rightPart := ""
+				if i < len(musicLines) {
+					rightPart = musicLines[i]
+				}
+
+				b.WriteString(leftPart)
+				b.WriteString(" ")
+				b.WriteString(rightPart)
+				if i < maxLines-1 {
+					b.WriteString("\n")
+				}
+			}
+		} else {
+			b.WriteString(t.buildMusicContent(it.albumEvent, rw))
+		}
+		return b.String()
 	}
 
 	tl := it.event.Title
 	ev := it.event.Event
-
-	var b strings.Builder
 
 	if t.shouldPadForPoster() {
 		posterBlock := t.buildPosterBlock()
@@ -750,33 +804,36 @@ func (t *TUI) buildMusicContent(ae *db.EventWithAlbum, rw int) string {
 	b.WriteString(decorationStyle.Render(decoration))
 	b.WriteString(titleStyle.Width(avail - 2).Render(title))
 
-	// Line 2: [album] type + date
+	// Line 2: empty
 	b.WriteString("\n\n")
-	albumTag := fmt.Sprintf("[album] %s", string(al.AlbumType))
+
+	// Line 3: [album] type · source · release_date
+	var tagParts []string
+	tagParts = append(tagParts, fmt.Sprintf("[album] %s", string(al.AlbumType)))
 	if ev.Source != "" {
-		albumTag += " · " + ev.Source
+		tagParts = append(tagParts, ev.Source)
 	}
 	if al.ReleaseDate != "" {
-		albumTag += " · " + al.ReleaseDate
+		tagParts = append(tagParts, al.ReleaseDate)
 	}
-	b.WriteString(tagStyle.Render(albumTag))
+	b.WriteString(tagStyle.Render(strings.Join(tagParts, " · ")))
 
-	// MusicBrainz info
+	// Line 4: MB info or warning
 	if al.MBID != "" {
 		b.WriteString("\n")
-		b.WriteString(rtStyle.Render("MusicBrainz: matched"))
+		b.WriteString(rtStyle.Render(fmt.Sprintf("%s · %s", string(al.AlbumType), al.ReleaseDate)))
 	}
-
-	// Must Hear
-	if al.AOTYMustHear {
+	if al.MBID == "" {
 		b.WriteString("\n")
-		b.WriteString(approvedStyle.Render("★ Must Hear (Editor's Pick)"))
+		b.WriteString(rejectedStyle.Render("⚠ No MusicBrainz match — may not add to Lidarr"))
 	}
 
-	// Scores
+	// Line 5: empty
+	b.WriteString("\n")
+
+	// Line 6: AOTY scores
 	hasScore := al.AOTYCriticScore > 0 || al.AOTYUserScore > 0
 	if hasScore {
-		b.WriteString("\n")
 		var scoreParts []string
 		if al.AOTYCriticScore > 0 {
 			scoreParts = append(scoreParts, fmt.Sprintf("critic: %.0f (%d reviews)", al.AOTYCriticScore, al.AOTYCriticCount))
@@ -784,26 +841,108 @@ func (t *TUI) buildMusicContent(ae *db.EventWithAlbum, rw int) string {
 		if al.AOTYUserScore > 0 {
 			scoreParts = append(scoreParts, fmt.Sprintf("user: %.0f (%d ratings)", al.AOTYUserScore, al.AOTYUserCount))
 		}
-		b.WriteString(strings.Join(scoreParts, " · "))
-	}
-
-	// Genres
-	if al.Genres != "" {
 		b.WriteString("\n")
-		b.WriteString(al.Genres)
+		b.WriteString(ratingsLine.Render(strings.Join(scoreParts, " · ")))
 	}
 
-	// Overview
-	if al.Overview != "" {
+	// Line 7: empty before must-hear
+	if al.AOTYMustHear || hasScore {
+		b.WriteString("\n")
+	}
+
+	// Line 8: Must Hear (if true)
+	if al.AOTYMustHear {
+		b.WriteString(approvedStyle.Render("★ Must Hear (Editor's Pick)"))
+	}
+
+	// Only show artist data for MB-matched items
+	if ar.MBID != "" && !strings.HasPrefix(ar.MBID, "_nm_") {
+		// Line 9: empty line before artist info
 		b.WriteString("\n\n")
-		b.WriteString(al.Overview)
+
+		// Line 10: country flag · begin-area, area · begin_date[-end_date] (age)
+		var locParts []string
+		if ar.Country != "" {
+			locParts = append(locParts, countryFlag(ar.Country))
+		}
+		var fromParts []string
+		if ar.BeginArea != "" {
+			fromParts = append(fromParts, ar.BeginArea)
+		}
+		if ar.Area != "" && ar.Area != ar.BeginArea {
+			fromParts = append(fromParts, ar.Area)
+		}
+		if len(fromParts) > 0 {
+			locParts = append(locParts, strings.Join(fromParts, ", "))
+		}
+		if ar.BeginDate != "" {
+			dateStr := ar.BeginDate
+			if ar.EndDate != "" {
+				dateStr += " – " + ar.EndDate
+			}
+			age := calcAge(ar.BeginDate, ar.EndDate)
+			if age >= 0 {
+				dateStr += fmt.Sprintf(" (%d)", age)
+			}
+			locParts = append(locParts, dateStr)
+		}
+		if len(locParts) > 0 {
+			b.WriteString(strings.Join(locParts, " · "))
+		}
+
+		// Line 11: disambiguation
+		if ar.Disambiguation != "" {
+			b.WriteString("\n")
+			b.WriteString(rtStyle.Render(ar.Disambiguation))
+		}
+
+		// Line 12: tags
+		if ar.Tags != "" {
+			b.WriteString("\n")
+			b.WriteString(rtStyle.Width(rw).Render("tags: " + ar.Tags))
+		}
+
+		// Line 13: genres
+		if ar.Genres != "" {
+			b.WriteString("\n")
+			b.WriteString(rtStyle.Width(rw).Render("genres: " + ar.Genres))
+		}
+
+		// Line 14: MB artist rating (always shown, — when none)
+		b.WriteString("\n")
+		b.WriteString(ratingsLine.Render(fmt.Sprintf("MB artist rating: %s", fmtRating(ar.MBRating))))
 	}
 
 	return b.String()
 }
 
+func calcAge(beginDate, endDate string) int {
+	layout := "2006-01-02"
+	start, err := time.Parse(layout, beginDate)
+	if err != nil {
+		return -1
+	}
+	var end time.Time
+	if endDate != "" {
+		end, err = time.Parse(layout, endDate)
+		if err != nil {
+			return -1
+		}
+	} else {
+		end = time.Now()
+	}
+	if end.Before(start) {
+		return -1
+	}
+	age := end.Year() - start.Year()
+	if end.YearDay() < start.YearDay() {
+		age--
+	}
+	return age
+}
+
 func (t *TUI) buildPosterBlock() string {
-	ph := posterHeight()
+	ph := t.posterHeight()
 	if !posterAvailable || t.posterMode == PosterText {
 		return renderTextPlaceholder(posterCols, ph)
 	}
@@ -813,12 +952,16 @@ func (t *TUI) buildPosterBlock() string {
 	return strings.Repeat(" ", posterCols)
 }
 
-func posterHeight() int {
+func (t *TUI) posterHeight() int {
 	if fontW <= 0 || fontH <= 0 {
 		return 16
 	}
-	// Estimate poster rows assuming ~2:3 aspect ratio at posterCols width
-	h := int(float64(posterCols*fontW) * 1.5 / float64(fontH))
+	// Estimate poster rows assuming 2:3 aspect ratio for movies, 1:1 for albums
+	aspect := 1.5
+	if it := t.currentItem(); it != nil && it.albumEvent != nil {
+		aspect = 1.0
+	}
+	h := int(float64(posterCols*fontW) * aspect / float64(fontH))
 	if h < 10 {
 		h = 10
 	}
@@ -963,8 +1106,8 @@ func (t *TUI) buildConfirmContent() string {
 	hasApproved := false
 	for _, it := range t.items {
 		if it.decision == decisionApproved {
-			title := it.event.Title.Title
-			if it.event.Title.Year > 0 {
+			title := it.displayTitle()
+			if it.albumEvent == nil && it.event.Title.Year > 0 {
 				title = fmt.Sprintf("%s (%d)", title, it.event.Title.Year)
 			}
 			b.WriteString(confirmApprovedStyle.Render("  ✓ " + title))
@@ -983,8 +1126,8 @@ func (t *TUI) buildConfirmContent() string {
 	hasRejected := false
 	for _, it := range t.items {
 		if it.decision == decisionRejected {
-			title := it.event.Title.Title
-			if it.event.Title.Year > 0 {
+			title := it.displayTitle()
+			if it.albumEvent == nil && it.event.Title.Year > 0 {
 				title = fmt.Sprintf("%s (%d)", title, it.event.Title.Year)
 			}
 			b.WriteString(confirmRejectedStyle.Render("  ✗ " + title))

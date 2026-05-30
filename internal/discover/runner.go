@@ -208,11 +208,6 @@ func (r *Runner) Run(ctx context.Context) error {
 
 	// Process music items (with MusicBrainz enrichment)
 	if len(uniqueMusic) > 0 {
-		musicYear, musicWeek := r.targetYear, r.targetWeek
-		if r.hasTargetWeek {
-			musicYear, musicWeek = r.musicTargetWeek(ctx)
-		}
-
 		var muMusic sync.Mutex
 		var wgMusic sync.WaitGroup
 		var musicProcessed int
@@ -225,7 +220,8 @@ func (r *Runner) Run(ctx context.Context) error {
 				defer func() { <-semMusic }()
 				itemCtx, itemCancel := context.WithTimeout(ctx, 2*time.Minute)
 				defer itemCancel()
-				if err := r.processMusicItem(itemCtx, item, musicYear, musicWeek); err != nil {
+				// Store under the atomic wmdl week so review finds them
+				if err := r.processMusicItem(itemCtx, item, progYear, progWeek); err != nil {
 					r.log.Warn().Err(err).Str("album", item.Title).Str("artist", item.ArtistName).Msg("error processing music item")
 				}
 				muMusic.Lock()
@@ -236,9 +232,12 @@ func (r *Runner) Run(ctx context.Context) error {
 		wgMusic.Wait()
 		processed += musicProcessed
 
-		// Track music discovery week in settings
-		_ = r.db.SetSetting(ctx, "music_last_iso_year", fmt.Sprintf("%d", musicYear))
-		_ = r.db.SetSetting(ctx, "music_last_iso_week", fmt.Sprintf("%d", musicWeek))
+		// Track scrape offset in settings for next run's progression
+		if r.hasTargetWeek {
+			sy, sw := r.musicTargetWeek(ctx)
+			_ = r.db.SetSetting(ctx, "music_last_iso_year", fmt.Sprintf("%d", sy))
+			_ = r.db.SetSetting(ctx, "music_last_iso_week", fmt.Sprintf("%d", sw))
+		}
 	}
 
 	r.log.Info().Msgf("Processed %d/%d items", processed, len(uniqueVideos)+len(uniqueMusic))
@@ -613,75 +612,85 @@ func (r *Runner) musicTargetWeek(ctx context.Context) (int, int) {
 	return nextYear, nextWeek
 }
 
-// processMusicItem enriches a scraped music item with MusicBrainz data and
-// stores it in the artists + albums + album_release_events tables.
+// processMusicItem stores a scraped music item and enriches with MusicBrainz
+// data when available. MB lookup is best-effort — items are always stored.
 func (r *Runner) processMusicItem(ctx context.Context, item ScrapedItem, progYear, progWeek int) error {
-	apiCtx, apiCancel := context.WithTimeout(ctx, 20*time.Second)
+	apiCtx, apiCancel := context.WithTimeout(ctx, 30*time.Second)
 	defer apiCancel()
 
-	// Filter: skip low-quality albums immediately — no MB enrichment needed
+	// Filter: skip low-quality albums immediately
 	if !passesMusicFilter(r.cfg.MediaTypes.Music.Filter, item) {
 		r.log.Info().Str("artist", item.ArtistName).Str("album", item.Title).Msg("does not pass filter, skipping")
 		return nil
 	}
 	r.log.Info().Str("artist", item.ArtistName).Str("album", item.Title).Msg("musicbrainz: searching release group")
 
-	// Step 1: MusicBrainz enrichment
+	// Step 1: MusicBrainz enrichment (best-effort)
+	mbAlbumID := ""
+	mbArtistID := ""
+	mbArtistName := item.ArtistName
+	var artistDetail *MBArtistDetail
+	var mbGenres []string
+	mbRating := 0.0
+
 	rgResult, err := r.mb.SearchReleaseGroup(apiCtx, item.Title, item.ArtistName)
 	if err != nil {
-		r.log.Warn().Err(err).Str("album", item.Title).Msg("MusicBrainz search failed, skipping")
-		return nil
-	}
-	if rgResult == nil {
-		r.log.Info().Str("album", item.Title).Msg("not found in MusicBrainz, skipping")
-		return nil
-	}
+		r.log.Warn().Err(err).Str("album", item.Title).Msg("MusicBrainz search failed, storing without MB data")
+	} else if rgResult == nil {
+		r.log.Info().Str("album", item.Title).Msg("not found in MusicBrainz, storing without MB data")
+	} else {
+		mbAlbumID = rgResult.MBID
+		mbArtistID = rgResult.ArtistMBID
+		if rgResult.ArtistName != "" {
+			mbArtistName = rgResult.ArtistName
+		}
 
-	// If MB returned a result, search for artist
-	mbArtistID := rgResult.ArtistMBID
-	mbAlbumID := rgResult.MBID
-	mbArtistName := rgResult.ArtistName
-	if mbArtistName == "" {
-		mbArtistName = item.ArtistName
-	}
+		// Fetch artist detail by MBID for enrichment
+		if mbArtistID != "" {
+			r.log.Info().Str("mbid", mbArtistID).Msg("musicbrainz: fetching artist detail")
+			ad, err := r.mb.GetArtist(apiCtx, mbArtistID)
+			if err != nil {
+				r.log.Warn().Err(err).Str("mbid", mbArtistID).Msg("musicbrainz: artist detail fetch failed")
+			} else {
+				artistDetail = ad
+			}
+		}
 
-	if mbArtistID == "" {
-		r.log.Info().Str("artist", item.ArtistName).Msg("musicbrainz: searching artist")
-		artResult, err := r.mb.SearchArtist(apiCtx, item.ArtistName)
-		if err == nil && artResult != nil {
-			mbArtistID = artResult.MBID
+		// Fetch release group detail for rating and genres
+		if mbAlbumID != "" {
+			r.log.Info().Str("mbid", mbAlbumID).Msg("musicbrainz: fetching release group detail")
+			detail, err := r.mb.GetReleaseGroupDetail(apiCtx, mbAlbumID)
+			if err == nil && detail != nil {
+				mbRating = detail.Rating
+				mbGenres = detail.Genres
+			}
 		}
 	}
 
-	if mbArtistID == "" {
-		r.log.Info().Str("artist", item.ArtistName).Msg("artist not found in MusicBrainz, skipping")
-		return nil
-	}
-
-	// Step 2: Fetch detail for MB rating
-	if mbAlbumID != "" {
-		r.log.Info().Str("mbid", mbAlbumID).Msg("musicbrainz: fetching release group detail")
-		detail, err := r.mb.GetReleaseGroupDetail(apiCtx, mbAlbumID)
-		if err == nil && detail != nil && detail.Rating > 0 {
-			_ = detail // rating available in detail.Rating
-		}
-	}
-
-	// Step 3: Upsert artist
+	// Step 2: Upsert artist (always — with or without MB data)
 	artist := &model.Artist{
 		MBID: mbArtistID,
 		Name: mbArtistName,
+	}
+	if artistDetail != nil {
+		artist.Country = artistDetail.Country
+		artist.ArtistType = artistDetail.Type
+		artist.BeginDate = artistDetail.BeginDate
+		artist.EndDate = artistDetail.EndDate
+		artist.BeginArea = artistDetail.BeginArea
+		artist.Area = artistDetail.Area
+		artist.Disambiguation = artistDetail.Disambiguation
+		artist.Tags = strings.Join(artistDetail.Tags, ", ")
+		artist.Genres = strings.Join(artistDetail.Genres, ", ")
+		artist.MBRating = artistDetail.Rating
 	}
 	artistID, err := r.db.UpsertArtist(ctx, artist)
 	if err != nil {
 		return fmt.Errorf("saving artist: %w", err)
 	}
 
-	// Step 4: Upsert album
-	mbRating := 0.0
-	if rgResult != nil {
-		mbRating = rgResult.Rating
-	}
+	// Step 3: Upsert album (always)
+	genresStr := strings.Join(mbGenres, ", ")
 
 	album := &model.Album{
 		ArtistID:        artistID,
@@ -690,6 +699,9 @@ func (r *Runner) processMusicItem(ctx context.Context, item ScrapedItem, progYea
 		MBID:            mbAlbumID,
 		AlbumType:       item.AlbumType,
 		ReleaseDate:     item.ReleaseDate,
+		Genres:          genresStr,
+		PosterPath:      item.ImageURL,
+		AOTYURL:         item.AOTYURL,
 		AOTYCriticScore: item.AOTYCriticScore,
 		AOTYCriticCount: item.AOTYCriticCount,
 		AOTYUserScore:   item.AOTYUserScore,
@@ -702,7 +714,7 @@ func (r *Runner) processMusicItem(ctx context.Context, item ScrapedItem, progYea
 		return fmt.Errorf("saving album: %w", err)
 	}
 
-	// Step 5: Create release event
+	// Step 4: Create release event
 	existing, err := r.db.GetLatestAlbumReleaseEvent(ctx, albumID)
 	if err != nil {
 		return fmt.Errorf("checking existing events: %w", err)

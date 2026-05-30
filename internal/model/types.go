@@ -117,11 +117,21 @@ const (
 )
 
 type Artist struct {
-	ID        int64
-	MBID      string
-	Name      string
-	LidarrID  int64
-	CreatedAt string
+	ID             int64
+	MBID           string
+	Name           string
+	LidarrID       int64
+	Country        string // ISO country code (e.g. "US", "AU")
+	ArtistType     string // "Person" or "Group"
+	BeginDate      string // birth/formation date (ISO 8601)
+	EndDate        string // death/dissolution date
+	BeginArea      string // birthplace or origin area name
+	Area           string // area name (e.g. "United States")
+	Disambiguation string
+	Tags           string // comma-separated MB tags
+	Genres         string // comma-separated MB genre tags
+	MBRating       float64
+	CreatedAt      string
 }
 
 type Album struct {
@@ -137,6 +147,7 @@ type Album struct {
 	AOTYUserScore   float64
 	AOTYUserCount   int
 	AOTYMustHear    bool
+	AOTYURL         string
 
 	MBRating float64
 

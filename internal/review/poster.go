@@ -3,6 +3,7 @@ package review
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"fmt"
 	"image"
 	"image/png"
@@ -78,6 +79,34 @@ func getPosterImage(tl *model.Title) (image.Image, error) {
 	return img, nil
 }
 
+func getAlbumPosterImage(imageURL string) (image.Image, error) {
+	if imageURL == "" {
+		return nil, fmt.Errorf("no album art URL")
+	}
+
+	cacheDir, err := posterCacheDir()
+	if err != nil {
+		return nil, err
+	}
+	// Use a hash of the URL as the cache key
+	cacheKey := fmt.Sprintf("%x", sha256.Sum256([]byte(imageURL)))[:16]
+	cachePath := filepath.Join(cacheDir, "album_"+cacheKey+".png")
+
+	if img, err := loadCachedPoster(cachePath); err == nil {
+		return img, nil
+	}
+
+	img, err := fetchPoster(imageURL)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := savePosterCache(cachePath, img); err != nil {
+		log.Warn().Err(err).Msg("failed to save album art cache")
+	}
+	return img, nil
+}
+
 func posterCacheDir() (string, error) {
 	cacheBase := os.Getenv("XDG_CACHE_HOME")
 	if cacheBase == "" {
@@ -121,6 +150,7 @@ func fetchPoster(url string) (image.Image, error) {
 	if err != nil {
 		return nil, err
 	}
+	req.Header.Set("User-Agent", "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return nil, err

@@ -3,6 +3,7 @@ package browser
 import (
 	"context"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"os/exec"
@@ -62,8 +63,8 @@ func EnsureRunning(binary string, debugPort int, profile string, headless bool) 
 	args = append(args, "--new-window", "about:blank")
 
 	cmd := exec.Command(binary, args...)
-	cmd.Stdout = os.Stderr
-	cmd.Stderr = os.Stderr
+	cmd.Stdout = io.Discard
+	cmd.Stderr = io.Discard
 
 	if err := cmd.Start(); err != nil {
 		return nil, fmt.Errorf("launching %s: %w", binary, err)
