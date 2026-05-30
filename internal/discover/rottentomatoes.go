@@ -1,6 +1,7 @@
 package discover
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -47,7 +48,7 @@ func NewRTFinder() *RTFinder {
 	}
 }
 
-func (r *RTFinder) FindURL(title string, year int, mediaType string) string {
+func (r *RTFinder) FindURL(ctx context.Context, title string, year int, mediaType string) string {
 	slug := slugify(title)
 	prefix := "m"
 	if mediaType == "tv" {
@@ -113,7 +114,7 @@ func (r *RTFinder) FindURL(title string, year int, mediaType string) string {
 
 	var found []scoredURL
 	for _, u := range candidates {
-		if !r.urlExists(u) {
+		if !r.urlExists(ctx, u) {
 			continue
 		}
 		s := scoredURL{url: u}
@@ -138,7 +139,7 @@ func (r *RTFinder) FindURL(title string, year int, mediaType string) string {
 
 		// Page dateCreated year validation (movies only)
 		if prefix != "tv" && year > 0 {
-			if yrStr, ok := r.extractRTYear(u); ok {
+			if yrStr, ok := r.extractRTYear(ctx, u); ok {
 				pgYr, _ := strconv.Atoi(yrStr)
 				if pgYr > 0 {
 					s.pageYear = pgYr
@@ -209,8 +210,8 @@ func extractURLYear(u string) int {
 	return 0
 }
 
-func (r *RTFinder) extractRTYear(url string) (string, bool) {
-	req, err := http.NewRequest(http.MethodGet, url, nil)
+func (r *RTFinder) extractRTYear(ctx context.Context, url string) (string, bool) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return "", false
 	}
@@ -245,8 +246,8 @@ func (r *RTFinder) extractRTYear(url string) (string, bool) {
 	return "", false
 }
 
-func (r *RTFinder) urlExists(url string) bool {
-	req, err := http.NewRequest(http.MethodHead, url, nil)
+func (r *RTFinder) urlExists(ctx context.Context, url string) bool {
+	req, err := http.NewRequestWithContext(ctx, http.MethodHead, url, nil)
 	if err != nil {
 		return false
 	}

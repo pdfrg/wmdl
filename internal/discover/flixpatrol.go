@@ -235,7 +235,12 @@ func parseFlixDate(dateStr string) time.Time {
 	if err != nil {
 		return time.Time{}
 	}
-	return truncateToDay(t.AddDate(time.Now().Year(), 0, 0))
+	now := time.Now()
+	year := now.Year()
+	if now.Month() < t.Month() {
+		year--
+	}
+	return truncateToDay(t.AddDate(year, 0, 0))
 }
 
 func truncateToDay(t time.Time) time.Time {

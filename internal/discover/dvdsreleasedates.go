@@ -62,6 +62,7 @@ func (d *DVDReleaseDates) Scrape() ([]ScrapedItem, error) {
 	if err != nil {
 		return nil, fmt.Errorf("creating request: %w", err)
 	}
+	req.Header.Set("User-Agent", "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36")
 	resp, err := d.http.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("fetching dvdsreleasedates: %w", err)
@@ -80,9 +81,9 @@ func (d *DVDReleaseDates) Scrape() ([]ScrapedItem, error) {
 	var items []ScrapedItem
 
 	if d.hasTargetWeek {
-		items = d.scrapeHistorical(doc)
+		items = d.scrapeHistorical(doc, reqCtx)
 	} else {
-		items = d.scrapeCurrent(doc, targetDate, targetStr)
+		items = d.scrapeCurrent(doc, targetDate, targetStr, reqCtx)
 	}
 
 	return items, nil
@@ -118,7 +119,7 @@ func (d *DVDReleaseDates) historicalURL() string {
 		t.Year(), monthNum, monthName, t.Year())
 }
 
-func (d *DVDReleaseDates) scrapeHistorical(doc *goquery.Document) []ScrapedItem {
+func (d *DVDReleaseDates) scrapeHistorical(doc *goquery.Document, ctx context.Context) []ScrapedItem {
 	weekMon := isoWeekToDate(d.targetYear, d.targetWeek)
 	weekSun := weekMon.AddDate(0, 0, 6)
 
@@ -142,7 +143,7 @@ func (d *DVDReleaseDates) scrapeHistorical(doc *goquery.Document) []ScrapedItem 
 		}
 		dateStr := releaseDate.Format("2006-01-02")
 		sel.Closest("table").Find("td.dvdcell").Each(func(_ int, cell *goquery.Selection) {
-			item := d.parseDVDCell(cell, dateStr)
+			item := d.parseDVDCell(cell, dateStr, ctx)
 			if item != nil {
 				items = append(items, *item)
 			}
@@ -151,7 +152,7 @@ func (d *DVDReleaseDates) scrapeHistorical(doc *goquery.Document) []ScrapedItem 
 	return items
 }
 
-func (d *DVDReleaseDates) scrapeCurrent(doc *goquery.Document, targetDate time.Time, targetStr string) []ScrapedItem {
+func (d *DVDReleaseDates) scrapeCurrent(doc *goquery.Document, targetDate time.Time, targetStr string, ctx context.Context) []ScrapedItem {
 	var items []ScrapedItem
 	doc.Find("td.reldate").EachWithBreak(func(_ int, sel *goquery.Selection) bool {
 		distance := sel.Find("div.distance").Text()
@@ -160,7 +161,7 @@ func (d *DVDReleaseDates) scrapeCurrent(doc *goquery.Document, targetDate time.T
 		}
 		dateStr := targetDate.Format("2006-01-02")
 		sel.Closest("table").Find("td.dvdcell").Each(func(_ int, cell *goquery.Selection) {
-			item := d.parseDVDCell(cell, dateStr)
+			item := d.parseDVDCell(cell, dateStr, ctx)
 			if item != nil {
 				items = append(items, *item)
 			}
@@ -170,7 +171,7 @@ func (d *DVDReleaseDates) scrapeCurrent(doc *goquery.Document, targetDate time.T
 	return items
 }
 
-func (d *DVDReleaseDates) parseDVDCell(cell *goquery.Selection, releaseDate string) *ScrapedItem {
+func (d *DVDReleaseDates) parseDVDCell(cell *goquery.Selection, releaseDate string, ctx context.Context) *ScrapedItem {
 	link := cell.Find("a[style*='color:#000']")
 	title := strings.TrimSpace(link.Text())
 	if title == "" {
@@ -187,9 +188,10 @@ func (d *DVDReleaseDates) parseDVDCell(cell *goquery.Selection, releaseDate stri
 	// The listing image src has the DVD release year (e.g., "Dreams-2026.jpg")
 	// which may differ from the production year shown in <h1>Title (YYYY)</h1>.
 	if href, ok := link.Attr("href"); ok && href != "" {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		time.Sleep(200 * time.Millisecond)
+		detailCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 		defer cancel()
-		mt, detYear := d.fetchDetailPage(ctx, href)
+		mt, detYear := d.fetchDetailPage(detailCtx, href)
 		if detYear > 0 {
 			year = detYear
 		}
@@ -276,6 +278,7 @@ func (d *DVDReleaseDates) fetchDetailPage(ctx context.Context, href string) (mod
 	if err != nil {
 		return "", 0
 	}
+	req.Header.Set("User-Agent", "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36")
 	resp, err := d.http.Do(req)
 	if err != nil {
 		return "", 0

@@ -339,7 +339,7 @@ func (r *Runner) processItem(ctx context.Context, item ScrapedItem, progYear, pr
 	if enrich != nil && enrich.Title != "" {
 		rtTitle = enrich.Title
 	}
-	rtURL := r.rt.FindURL(rtTitle, item.Year, string(mediaType))
+	rtURL := r.rt.FindURL(apiCtx, rtTitle, item.Year, string(mediaType))
 
 	// If URL guessing returned a search page (fallback) and we have a browser,
 	// try scraping the search results directly.

@@ -72,7 +72,10 @@ type SearchParams struct {
 }
 
 func (p *ProwlarrClient) Search(ctx context.Context, params SearchParams) ([]quality.ParsedRelease, error) {
-	u, _ := url.Parse(p.baseURL + "/api/v1/search")
+	u, err := url.Parse(p.baseURL + "/api/v1/search")
+	if err != nil {
+		return nil, fmt.Errorf("parsing prowlarr url: %w", err)
+	}
 	q := u.Query()
 	q.Set("query", params.Query)
 	if params.Type != "" {
