@@ -72,6 +72,8 @@ type TUI struct {
 	vpConfirm  viewport.Model
 	filter     model.MediaType // "" = all, "movie" or "tv"
 	filtered   []int           // indices into items matching current filter
+	pendingQuit bool
+	filterUndecided bool
 }
 
 func NewReviewTUIWithEvents(events []db.EventWithTitle, database *db.DB, posterMode string) (*TUI, error) {
@@ -214,9 +216,13 @@ func (t *TUI) clearPosterCmd() tea.Cmd {
 func (t *TUI) rebuildFiltered() {
 	t.filtered = nil
 	for i, it := range t.items {
-		if t.filter == "" || it.event.Title.MediaType == t.filter {
-			t.filtered = append(t.filtered, i)
+		if t.filter != "" && it.event.Title.MediaType != t.filter {
+			continue
 		}
+		if t.filterUndecided && it.decision != decisionNone {
+			continue
+		}
+		t.filtered = append(t.filtered, i)
 	}
 	if t.cursor >= len(t.filtered) {
 		t.cursor = 0
@@ -230,11 +236,29 @@ func (t *TUI) currentItem() *itemState {
 	return &t.items[t.filtered[t.cursor]]
 }
 
+func (t *TUI) hasDecisions() bool {
+	for _, it := range t.items {
+		if it.decision != decisionNone {
+			return true
+		}
+	}
+	return false
+}
+
 func (t *TUI) updateReview(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	t.flashMsg = ""
+	t.pendingQuit = false
 
 	switch msg.String() {
 	case "q", "ctrl+c":
+		if t.hasDecisions() {
+			if t.pendingQuit {
+				return t, t.quitCmd()
+			}
+			t.pendingQuit = true
+			t.flashMsg = "Press q again to quit without saving"
+			return t, nil
+		}
 		return t, t.quitCmd()
 
 	case "j", "down":
@@ -250,6 +274,32 @@ func (t *TUI) updateReview(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			t.posterImg = nil
 			return t, t.loadCurrentPosterCmd()
 		}
+
+	case "g", "home":
+		t.cursor = 0
+		t.posterImg = nil
+		return t, t.loadCurrentPosterCmd()
+
+	case "G", "end":
+		t.cursor = len(t.filtered) - 1
+		t.posterImg = nil
+		return t, t.loadCurrentPosterCmd()
+
+	case "pgup":
+		t.cursor -= 5
+		if t.cursor < 0 {
+			t.cursor = 0
+		}
+		t.posterImg = nil
+		return t, t.loadCurrentPosterCmd()
+
+	case "pgdown":
+		t.cursor += 5
+		if t.cursor >= len(t.filtered) {
+			t.cursor = len(t.filtered) - 1
+		}
+		t.posterImg = nil
+		return t, t.loadCurrentPosterCmd()
 
 	case "a":
 		it := t.currentItem()
@@ -281,6 +331,7 @@ func (t *TUI) updateReview(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		it.decision = decisionNone
 
 	case "m":
+		t.filterUndecided = false
 		if t.filter == model.MediaTypeMovie {
 			t.filter = ""
 		} else {
@@ -291,11 +342,18 @@ func (t *TUI) updateReview(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return t, t.loadCurrentPosterCmd()
 
 	case "t":
+		t.filterUndecided = false
 		if t.filter == model.MediaTypeTV {
 			t.filter = ""
 		} else {
 			t.filter = model.MediaTypeTV
 		}
+		t.rebuildFiltered()
+		t.posterImg = nil
+		return t, t.loadCurrentPosterCmd()
+
+	case "n":
+		t.filterUndecided = !t.filterUndecided
 		t.rebuildFiltered()
 		t.posterImg = nil
 		return t, t.loadCurrentPosterCmd()
@@ -310,17 +368,31 @@ func (t *TUI) updateReview(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		if rtURL == "" {
 			rtURL = "https://www.rottentomatoes.com/search?search=" + url.QueryEscape(tl.Title)
 		}
-		_ = exec.Command("xdg-open", rtURL).Start()
+		if err := exec.Command("xdg-open", rtURL).Start(); err != nil {
+			t.flashMsg = fmt.Sprintf("Failed to open browser: %v", err)
+		}
 
 	case "enter":
-		remaining := 0
-		for _, f := range t.filtered {
+		firstUndecided := -1
+		re := 0
+		for idx, f := range t.filtered {
 			if t.items[f].decision == decisionNone {
-				remaining++
+				if firstUndecided == -1 {
+					firstUndecided = idx
+				}
+				re++
 			}
 		}
-		if remaining > 0 {
-			t.flashMsg = fmt.Sprintf("%d title(s) still need a decision — [a] approve or [r] reject each", remaining)
+		if re > 0 {
+			if !t.filterUndecided {
+				t.filterUndecided = true
+				t.rebuildFiltered()
+				t.cursor = 0
+				t.posterImg = nil
+				t.flashMsg = fmt.Sprintf("%d title(s) need a decision — make choices, then press Enter again", re)
+				return t, t.loadCurrentPosterCmd()
+			}
+			t.flashMsg = fmt.Sprintf("%d title(s) still need a decision", re)
 			return t, nil
 		}
 		t.phase = phaseConfirm
@@ -372,7 +444,7 @@ func (t *TUI) updateConfirm(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 
 	case "n":
 		t.phase = phaseReview
-		return t, t.renderPosterCmd()
+		return t, t.loadCurrentPosterCmd()
 	}
 
 	return t, nil
@@ -394,9 +466,12 @@ func (t *TUI) View() tea.View {
 	case phaseReview:
 		content = t.buildReviewContent()
 		footer = keyStyle.Render("j") + helpStyle.Render("/") + keyStyle.Render("k") + helpStyle.Render(" navigate  ") +
+			keyStyle.Render("g") + helpStyle.Render("/") + keyStyle.Render("G") + helpStyle.Render(" first/last  ") +
+			keyStyle.Render("pgup") + helpStyle.Render("/") + keyStyle.Render("pgdn") + helpStyle.Render(" ±5  ") +
 			keyStyle.Render("a") + helpStyle.Render(" approve  ") +
 			keyStyle.Render("r") + helpStyle.Render(" reject  ") +
 			keyStyle.Render("u") + helpStyle.Render(" undo  ") +
+			keyStyle.Render("n") + helpStyle.Render(" undecided  ") +
 			keyStyle.Render("m") + helpStyle.Render(" movies  ") +
 			keyStyle.Render("t") + helpStyle.Render(" tv  ") +
 			keyStyle.Render("enter") + helpStyle.Render(" confirm  ") +
@@ -417,10 +492,13 @@ func (t *TUI) View() tea.View {
 	case model.MediaTypeTV:
 		filterLabel = "  [tv]"
 	}
+	if t.filterUndecided {
+		filterLabel = "  [undecided]"
+	}
 
 	if t.phase == phaseConfirm {
-		b.WriteString(headerStyle.Render(fmt.Sprintf("wmdl review — %d pending%s       [%d/%d]",
-			len(t.items), filterLabel, t.cursor+1, len(t.filtered))))
+		b.WriteString(headerStyle.Render(fmt.Sprintf("wmdl review — %d pending%s — confirm decisions",
+			len(t.items), filterLabel)))
 		b.WriteString("\n\n")
 		b.WriteString(t.vpConfirm.View())
 	} else {
