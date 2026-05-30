@@ -245,18 +245,52 @@ func (t *TUI) hasDecisions() bool {
 	return false
 }
 
+func (t *TUI) saveDecisions() error {
+	ctx := context.Background()
+	return t.database.Transaction(ctx, func(ctx context.Context) error {
+		for _, it := range t.items {
+			if it.decision == decisionNone {
+				continue
+			}
+			status := model.StatusApproved
+			if it.decision == decisionRejected {
+				status = model.StatusRejected
+			}
+			if err := t.database.UpdateReleaseEventStatus(ctx, it.event.Event.ID, status); err != nil {
+				return err
+			}
+			if it.decision == decisionApproved {
+				t.approved = append(t.approved, it.event)
+			}
+		}
+		return nil
+	})
+}
+
 func (t *TUI) updateReview(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	t.flashMsg = ""
-	t.pendingQuit = false
+
+	// Handle pending quit prompt: y = save+quit, n = discard+quit, any other key = cancel
+	if t.pendingQuit {
+		t.pendingQuit = false
+		switch msg.String() {
+		case "y":
+			if err := t.saveDecisions(); err != nil {
+				t.err = err
+			}
+			return t, t.quitCmd()
+		case "n":
+			return t, t.quitCmd()
+		default:
+			return t, nil
+		}
+	}
 
 	switch msg.String() {
 	case "q", "ctrl+c":
 		if t.hasDecisions() {
-			if t.pendingQuit {
-				return t, t.quitCmd()
-			}
 			t.pendingQuit = true
-			t.flashMsg = "Press q again to quit without saving"
+			t.flashMsg = "Save changes? (y/n)"
 			return t, nil
 		}
 		return t, t.quitCmd()
@@ -418,26 +452,7 @@ func (t *TUI) updateConfirm(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		t.vpConfirm.ScrollUp(1)
 
 	case "y":
-		ctx := context.Background()
-		err := t.database.Transaction(ctx, func(ctx context.Context) error {
-			for _, it := range t.items {
-				if it.decision == decisionNone {
-					continue
-				}
-				status := model.StatusApproved
-				if it.decision == decisionRejected {
-					status = model.StatusRejected
-				}
-				if err := t.database.UpdateReleaseEventStatus(ctx, it.event.Event.ID, status); err != nil {
-					return err
-				}
-				if it.decision == decisionApproved {
-					t.approved = append(t.approved, it.event)
-				}
-			}
-			return nil
-		})
-		if err != nil {
+		if err := t.saveDecisions(); err != nil {
 			t.err = err
 		}
 		return t, t.quitCmd()
