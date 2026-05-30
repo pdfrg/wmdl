@@ -1141,6 +1141,19 @@ func (t *TUI) buildConfirmContent() string {
 	}
 
 	b.WriteString("\n")
+
+	undecided := 0
+	for _, it := range t.items {
+		if it.decision == decisionNone {
+			undecided++
+		}
+	}
+	if undecided > 0 {
+		b.WriteString(confirmEmptyStyle.Render(fmt.Sprintf("  %d item(s) still undecided — will be skipped", undecided)))
+		b.WriteString("\n")
+		b.WriteString("\n")
+	}
+
 	b.WriteString(confirmPromptStyle.Render("Are you sure?"))
 
 	return b.String()

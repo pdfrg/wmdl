@@ -94,8 +94,12 @@ func runReviewForWeek(ctx context.Context, database *db.DB, cfg *config.Config, 
 		}
 	}
 
-	if !hasPending {
-		fmt.Fprintf(os.Stderr, "No pending releases for %d-W%02d.\n", year, week)
+	if !hasPending || target.Reviewed {
+		if !hasPending && !target.Reviewed {
+			fmt.Fprintf(os.Stderr, "No pending releases for %d-W%02d.\n", year, week)
+		} else {
+			fmt.Fprintf(os.Stderr, "All releases for %d-W%02d have already been reviewed.\n", year, week)
+		}
 		for {
 			fmt.Fprintf(os.Stderr, "[r] review again  [e] export choices  [q] quit\n")
 			fmt.Fprintf(os.Stderr, "Choose: ")
@@ -203,6 +207,8 @@ func runProcessForWeek(ctx context.Context, database *db.DB, cfg *config.Config,
 		return nil
 	}
 
+	albumEventsForProcess, _ := database.ListApprovedAlbumEventsWithAlbums(ctx)
+
 	var pending, downloaded []db.EventWithTitle
 	for _, ev := range allEvents {
 		switch ev.Event.Status {
@@ -216,7 +222,7 @@ func runProcessForWeek(ctx context.Context, database *db.DB, cfg *config.Config,
 	var events []db.EventWithTitle
 
 	switch {
-	case len(pending) == 0 && len(downloaded) == 0:
+	case len(pending) == 0 && len(downloaded) == 0 && len(albumEventsForProcess) == 0:
 		log.Info().Msgf("No processable releases for week %d-W%02d.", year, week)
 		return nil
 
@@ -254,146 +260,132 @@ func runProcessForWeek(ctx context.Context, database *db.DB, cfg *config.Config,
 		events = pending
 	}
 
-	log.Info().Msgf("Processing %d release(s) for %d-W%02d", len(events), year, week)
-
 	exec := process.NewExecutor(log.Logger, cfg, database)
 
-	health := exec.HealthCheck(ctx)
-	skipLibrary := false
+	if len(events) > 0 {
+		log.Info().Msgf("Processing %d movie/TV release(s) for %d-W%02d", len(events), year, week)
 
-	if len(health.Critical) > 0 || len(health.Warnings) > 0 {
-		fmt.Fprintln(os.Stderr, "── Service health check ──")
-		for _, c := range health.Critical {
-			fmt.Fprintf(os.Stderr, "  ✗ %s\n", c)
-		}
-		for _, w := range health.Warnings {
-			fmt.Fprintf(os.Stderr, "  ! %s\n", w)
-		}
-	}
+		health := exec.HealthCheck(ctx)
+		skipLibrary := false
 
-	if len(health.Critical) > 0 {
-		fmt.Fprintln(os.Stderr, "  Critical services unreachable. Cannot proceed without them.")
-		for {
-			fmt.Fprintf(os.Stderr, "  [r] retry  [q] quit\n")
-			fmt.Fprintf(os.Stderr, "  Choose: ")
-			ch := make(chan string, 1)
-			go func() {
-				scanner := bufio.NewScanner(os.Stdin)
-				scanner.Scan()
-				ch <- scanner.Text()
-			}()
-			select {
-			case ans := <-ch:
-				switch strings.ToLower(strings.TrimSpace(ans)) {
-				case "r", "retry":
-					health = exec.HealthCheck(ctx)
-					if len(health.Critical) == 0 && len(health.Warnings) == 0 {
-						fmt.Fprintln(os.Stderr, "  All services OK")
-						break
-					}
-					if len(health.Critical) > 0 {
-						continue
-					}
-					// Warnings remain, fall through to warnings handler
-				case "q", "quit":
-					return nil
-				}
-			case <-ctx.Done():
-				return ctx.Err()
+		if len(health.Critical) > 0 || len(health.Warnings) > 0 {
+			fmt.Fprintln(os.Stderr, "── Service health check ──")
+			for _, c := range health.Critical {
+				fmt.Fprintf(os.Stderr, "  ✗ %s\n", c)
 			}
-			break
+			for _, w := range health.Warnings {
+				fmt.Fprintf(os.Stderr, "  ! %s\n", w)
+			}
 		}
-	}
 
-	if len(health.Warnings) > 0 && len(health.Critical) == 0 {
-		for {
-			fmt.Fprintf(os.Stderr, "  [r] retry  [p] proceed without library management  [q] quit\n")
-			fmt.Fprintf(os.Stderr, "  Choose: ")
-			ch := make(chan string, 1)
-			go func() {
-				scanner := bufio.NewScanner(os.Stdin)
-				scanner.Scan()
-				ch <- scanner.Text()
-			}()
-			select {
-			case ans := <-ch:
-				switch strings.ToLower(strings.TrimSpace(ans)) {
-				case "r", "retry":
-					health = exec.HealthCheck(ctx)
-					if len(health.Critical) > 0 {
-						fmt.Fprintln(os.Stderr, "  Critical services also unreachable now.")
+		if len(health.Critical) > 0 {
+			fmt.Fprintln(os.Stderr, "  Critical services unreachable. Cannot proceed without them.")
+			for {
+				fmt.Fprintf(os.Stderr, "  [r] retry  [q] quit\n")
+				fmt.Fprintf(os.Stderr, "  Choose: ")
+				ch := make(chan string, 1)
+				go func() {
+					scanner := bufio.NewScanner(os.Stdin)
+					scanner.Scan()
+					ch <- scanner.Text()
+				}()
+				select {
+				case ans := <-ch:
+					switch strings.ToLower(strings.TrimSpace(ans)) {
+					case "r", "retry":
+						health = exec.HealthCheck(ctx)
+						if len(health.Critical) == 0 && len(health.Warnings) == 0 {
+							fmt.Fprintln(os.Stderr, "  All services OK")
+							break
+						}
+						if len(health.Critical) > 0 {
+							continue
+						}
+					case "q", "quit":
 						return nil
 					}
-					if len(health.Warnings) > 0 {
-						continue
-					}
-					fmt.Fprintln(os.Stderr, "  All services OK")
-				case "p", "proceed":
-					skipLibrary = true
-				case "q", "quit":
-					return nil
+				case <-ctx.Done():
+					return ctx.Err()
 				}
-			case <-ctx.Done():
-				return ctx.Err()
-			}
-			break
-		}
-	}
-
-	preWarmDone := make(chan struct{}, 2)
-	if !skipLibrary {
-		go func() { exec.PreWarmRadarr(ctx); preWarmDone <- struct{}{} }()
-		go func() { exec.PreWarmSonarr(ctx); preWarmDone <- struct{}{} }()
-		fmt.Fprintf(os.Stderr, "  Pre-warming library data in background...\n")
-	}
-
-	var picked []process.PickedItem
-
-	if cfg.ProcessMode == "batch" {
-		picked = exec.SearchAndPickAll(ctx, events)
-	} else {
-		for _, ev := range events {
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			default:
-			}
-
-			if item := exec.SearchAndPickOne(ctx, ev); item != nil {
-				picked = append(picked, *item)
+				break
 			}
 		}
-	}
 
-	if !skipLibrary {
-		fmt.Fprintf(os.Stderr, "  Waiting for library data...\n")
-		<-preWarmDone
-		<-preWarmDone
-		exec.ProcessLibraryDecisions(ctx, picked)
-	}
-
-	target.Processed = true
-	if err := database.UpsertWeekState(ctx, target); err != nil {
-		log.Warn().Err(err).Msg("tracking week state")
-	}
-
-	log.Info().Msgf("Processed %d/%d releases", len(picked), len(events))
-
-	if len(exec.Unfound) > 0 {
-		log.Warn().Msgf("No results found for %d item(s):", len(exec.Unfound))
-		for _, u := range exec.Unfound {
-			log.Info().Str("title", u).Msg("unfound")
+		if len(health.Warnings) > 0 && len(health.Critical) == 0 {
+			for {
+				fmt.Fprintf(os.Stderr, "  [r] retry  [p] proceed without library management  [q] quit\n")
+				fmt.Fprintf(os.Stderr, "  Choose: ")
+				ch := make(chan string, 1)
+				go func() {
+					scanner := bufio.NewScanner(os.Stdin)
+					scanner.Scan()
+					ch <- scanner.Text()
+				}()
+				select {
+				case ans := <-ch:
+					switch strings.ToLower(strings.TrimSpace(ans)) {
+					case "r", "retry":
+						health = exec.HealthCheck(ctx)
+						if len(health.Critical) > 0 {
+							fmt.Fprintln(os.Stderr, "  Critical services also unreachable now.")
+							return nil
+						}
+						if len(health.Warnings) > 0 {
+							continue
+						}
+						fmt.Fprintln(os.Stderr, "  All services OK")
+					case "p", "proceed":
+						skipLibrary = true
+					case "q", "quit":
+						return nil
+					}
+				case <-ctx.Done():
+					return ctx.Err()
+				}
+				break
+			}
 		}
+
+		preWarmDone := make(chan struct{}, 2)
+		if !skipLibrary {
+			go func() { exec.PreWarmRadarr(ctx); preWarmDone <- struct{}{} }()
+			go func() { exec.PreWarmSonarr(ctx); preWarmDone <- struct{}{} }()
+			fmt.Fprintf(os.Stderr, "  Pre-warming library data in background...\n")
+		}
+
+		var picked []process.PickedItem
+
+		if cfg.ProcessMode == "batch" {
+			picked = exec.SearchAndPickAll(ctx, events)
+		} else {
+			for _, ev := range events {
+				select {
+				case <-ctx.Done():
+					return ctx.Err()
+				default:
+				}
+
+				if item := exec.SearchAndPickOne(ctx, ev); item != nil {
+					picked = append(picked, *item)
+				}
+			}
+		}
+
+		if !skipLibrary {
+			fmt.Fprintf(os.Stderr, "  Waiting for library data...\n")
+			<-preWarmDone
+			<-preWarmDone
+			exec.ProcessLibraryDecisions(ctx, picked)
+		}
+
+		log.Info().Msgf("Processed %d/%d movie/TV releases", len(picked), len(events))
 	}
 
 	// ─── Music album processing ──────────────────────────────────────────
-	albumEvents, err := database.ListApprovedAlbumEventsWithAlbums(ctx)
-	if err != nil {
-		log.Warn().Err(err).Msg("loading approved album events")
-	} else if len(albumEvents) > 0 {
-		log.Info().Msgf("Processing %d music album(s)...", len(albumEvents))
+	if len(albumEventsForProcess) > 0 {
+		log.Info().Msgf("Processing %d music album(s)...", len(albumEventsForProcess))
 		var albumResults []process.MusicAlbumResult
-		for _, ae := range albumEvents {
+		for _, ae := range albumEventsForProcess {
 			select {
 			case <-ctx.Done():
 				return ctx.Err()
@@ -409,6 +401,20 @@ func runProcessForWeek(ctx context.Context, database *db.DB, cfg *config.Config,
 			}
 		}
 		exec.ProcessMusicAlbumDecisions(ctx, albumResults)
+	}
+
+	if len(events) > 0 || len(albumEventsForProcess) > 0 {
+		target.Processed = true
+		if err := database.UpsertWeekState(ctx, target); err != nil {
+			log.Warn().Err(err).Msg("tracking week state")
+		}
+	}
+
+	if len(exec.Unfound) > 0 {
+		log.Warn().Msgf("No results found for %d item(s):", len(exec.Unfound))
+		for _, u := range exec.Unfound {
+			log.Info().Str("title", u).Msg("unfound")
+		}
 	}
 
 	return nil

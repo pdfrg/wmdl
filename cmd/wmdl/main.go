@@ -106,20 +106,21 @@ func trimLogFile(path string) {
 	if err != nil {
 		return
 	}
-	defer f.Close()
-
 	readFrom := size - keepAfterTrim
 	if _, err := f.Seek(readFrom, io.SeekStart); err != nil {
+		_ = f.Close()
 		return
 	}
 
 	// Skip partial line so we keep only whole lines
 	br := bufio.NewReader(f)
 	if _, err := br.ReadString('\n'); err != nil {
+		_ = f.Close()
 		return
 	}
 
 	rest, err := io.ReadAll(br)
+	_ = f.Close()
 	if err != nil {
 		return
 	}
