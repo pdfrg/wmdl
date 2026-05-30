@@ -481,11 +481,8 @@ func (t *TUI) View() tea.View {
 	case phaseReview:
 		content = t.buildReviewContent()
 		footer = keyStyle.Render("j") + helpStyle.Render("/") + keyStyle.Render("k") + helpStyle.Render(" navigate  ") +
-			keyStyle.Render("g") + helpStyle.Render("/") + keyStyle.Render("G") + helpStyle.Render(" first/last  ") +
-			keyStyle.Render("pgup") + helpStyle.Render("/") + keyStyle.Render("pgdn") + helpStyle.Render(" ±5  ") +
 			keyStyle.Render("a") + helpStyle.Render(" approve  ") +
 			keyStyle.Render("r") + helpStyle.Render(" reject  ") +
-			keyStyle.Render("u") + helpStyle.Render(" undo  ") +
 			keyStyle.Render("n") + helpStyle.Render(" undecided  ") +
 			keyStyle.Render("m") + helpStyle.Render(" movies  ") +
 			keyStyle.Render("t") + helpStyle.Render(" tv  ") +
