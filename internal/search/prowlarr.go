@@ -201,7 +201,7 @@ func (p *ProwlarrClient) SearchMusic(ctx context.Context, query string) ([]quali
 		Query:      query,
 		Type:       "search",
 		Limit:      50,
-		Categories: []int{CatMusic, 3010, 3020, 3040, 3050},
+		Categories: []int{CatMusic},
 	})
 }
 
