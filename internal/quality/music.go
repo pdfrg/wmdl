@@ -101,6 +101,7 @@ func normalizeMusic(s string) string {
 	s = strings.NewReplacer(
 		".", " ", "-", " ", "_", " ",
 		"'", "", "`", "", "’", "", "‘", "",
+		"&amp;", "", "&", "", "+", "",
 	).Replace(s)
 	return strings.Join(strings.Fields(s), " ")
 }
