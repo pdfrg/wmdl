@@ -204,13 +204,13 @@ func (d *DB) GetTitleByTmdbID(ctx context.Context, tmdbID int) (*model.Title, er
 	err := d.db.QueryRowContext(ctx, `
 		SELECT id, tmdb_id, tvdb_id, title, tmdb_title, year, media_type, imdb_id,
 		       imdb_rating, rt_url, rt_critics_score, rt_audience_score,
-		       tmdb_rating, metacritic_score, us_rating, original_language, origin_country,
+		       tmdb_rating, metacritic_score, yt_trailer_views, us_rating, original_language, origin_country,
 		       overview, genres, runtime, poster_path, created_at
 		FROM titles WHERE tmdb_id = ?
 	`, tmdbID).Scan(
 		&t.ID, &t.TmdbID, &t.TvdbID, &t.Title, &t.TmdbTitle, &t.Year, &mediaType,
 		&t.ImdbID, &t.ImdbRating, &t.RTURL, &t.RTCriticsScore, &t.RTAudienceScore,
-		&t.TmdbRating, &t.MetacriticScore, &t.USRating, &t.OriginalLanguage, &t.OriginCountry,
+		&t.TmdbRating, &t.MetacriticScore, &t.YoutubeViews, &t.USRating, &t.OriginalLanguage, &t.OriginCountry,
 		&t.Overview, &t.Genres, &t.Runtime, &t.PosterPath, &createdAt,
 	)
 	if err != nil {

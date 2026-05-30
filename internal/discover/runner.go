@@ -512,6 +512,9 @@ func (r *Runner) processItem(ctx context.Context, item ScrapedItem, progYear, pr
 // Physical (BluRay) is an upgrade over streaming (Web-DL/WebRip).
 // A higher-quality source within the same category is also an upgrade.
 func isUpgrade(prevSource string, newReleaseType model.ReleaseType) bool {
+	if prevSource == "" {
+		return false
+	}
 	if newReleaseType != model.ReleasePhysical {
 		return false
 	}
