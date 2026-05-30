@@ -713,6 +713,25 @@ func (d *DB) GetWeekProcessCounts(ctx context.Context, year, week int) (download
 	if err != nil {
 		return 0, 0, fmt.Errorf("counting approved events: %w", err)
 	}
+
+	var albumDL, albumApproved int
+	err = d.db.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM album_release_events
+		WHERE iso_year = ? AND iso_week = ? AND status = 'downloaded'
+	`, year, week).Scan(&albumDL)
+	if err != nil {
+		return 0, 0, fmt.Errorf("counting downloaded album events: %w", err)
+	}
+	err = d.db.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM album_release_events
+		WHERE iso_year = ? AND iso_week = ? AND status IN ('approved', 'downloaded')
+	`, year, week).Scan(&albumApproved)
+	if err != nil {
+		return 0, 0, fmt.Errorf("counting approved album events: %w", err)
+	}
+
+	downloaded += albumDL
+	approved += albumApproved
 	return downloaded, approved, nil
 }
 
