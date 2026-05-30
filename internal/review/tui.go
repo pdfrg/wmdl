@@ -143,6 +143,7 @@ func (t *TUI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			t.vpConfirm.SetHeight(max(1, t.height-4))
 			t.vpConfirm.SetWidth(t.width)
 		}
+		return t, t.renderPosterCmd()
 
 	case posterReadyMsg:
 		if msg.err == nil {
