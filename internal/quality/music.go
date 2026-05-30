@@ -96,6 +96,97 @@ func BestMusic(releases []ParsedRelease, prefs MusicQualityPrefs) *ParsedRelease
 	return best
 }
 
+func normalizeMusic(s string) string {
+	s = strings.ToLower(s)
+	s = strings.NewReplacer(
+		".", " ", "-", " ", "_", " ",
+		"'", "", "`", "", "’", "", "‘", "",
+	).Replace(s)
+	return strings.Join(strings.Fields(s), " ")
+}
+
+func CleanArtist(raw string) string {
+	s := strings.TrimSpace(raw)
+	// Split on collaborator markers, take the first artist
+	for _, sep := range []string{" feat. ", " ft. ", " featuring ", " feat ", " ft "} {
+		if idx := strings.Index(strings.ToLower(s), sep); idx > 0 {
+			s = s[:idx]
+		}
+	}
+	if idx := strings.Index(s, ", "); idx > 0 {
+		s = s[:idx]
+	}
+	// " & " — but watch for "&" at end of band name (e.g. "M&Ms")
+	// Only split if " & " is followed by at least 2 chars
+	if idx := strings.Index(s, " & "); idx > 0 && len(s)-idx-3 >= 2 {
+		s = s[:idx]
+	}
+	if idx := strings.Index(s, " vs. "); idx > 0 {
+		s = s[:idx]
+	}
+	// Strip parenthetical annotations
+	if idx := strings.Index(s, " ("); idx > 0 {
+		s = s[:idx]
+	}
+	return strings.TrimSpace(s)
+}
+
+func CleanAlbum(raw string) string {
+	s := strings.TrimSpace(raw)
+	// Strip subtitle after ": "
+	if idx := strings.Index(s, ": "); idx > 0 {
+		s = s[:idx]
+	}
+	// Strip trailing " - EP", " - Single", " - Bonus" etc.
+	cleanSuffixPat := regexp.MustCompile(`\s+-\s+(EP|Single|Bonus|Deluxe|Edition|Remaster|Remix)\s*$`)
+	s = cleanSuffixPat.ReplaceAllString(s, "")
+	// Strip trailing parenthetical qualifiers (anything in parens at the end)
+	for {
+		stripped := trailingParenPat.ReplaceAllString(s, "")
+		stripped = strings.TrimSpace(stripped)
+		if stripped == s {
+			break
+		}
+		s = stripped
+	}
+	// Strip trailing ", Pt." / ", No." etc.
+	numberedPat := regexp.MustCompile(`,\s*(Pt|No|Vol)\.?\s*\d+\s*$`)
+	s = numberedPat.ReplaceAllString(s, "")
+	return strings.TrimSpace(s)
+}
+
+var (
+	trailingParenPat = regexp.MustCompile(`\s*\([^)]*\)\s*$`)
+)
+
+// PartitionMusicReleases filters music releases and splits them into exact and
+// fuzzy buckets based on artist/album word matching.
+func PartitionMusicReleases(releases []ParsedRelease, artist, album string) (exact, fuzzy []ParsedRelease) {
+	cleanArtist := CleanArtist(artist)
+	cleanAlbum := CleanAlbum(album)
+	cleanSearch := normalizeMusic(cleanArtist + " " + cleanAlbum)
+	searchWords := strings.Fields(cleanSearch)
+	artistWords := strings.Fields(normalizeMusic(cleanArtist))
+
+	if len(searchWords) == 0 || len(artistWords) == 0 {
+		return releases, nil
+	}
+
+	for _, r := range releases {
+		norm := normalizeMusic(r.RawTitle)
+		if !wordsInOrder(norm, searchWords) {
+			continue
+		}
+		if titleAtStart(norm, artistWords) {
+			exact = append(exact, r)
+		} else {
+			r.ExtraWords = true
+			fuzzy = append(fuzzy, r)
+		}
+	}
+	return
+}
+
 func SortMusicTop(releases []ParsedRelease, prefs MusicQualityPrefs, n int) []ParsedRelease {
 	for i := range releases {
 		releases[i].Score = ScoreMusic(releases[i], prefs)

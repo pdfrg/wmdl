@@ -199,7 +199,17 @@ func (p *ProwlarrClient) SearchTV(ctx context.Context, query string) ([]quality.
 func (p *ProwlarrClient) SearchMusic(ctx context.Context, query string) ([]quality.ParsedRelease, error) {
 	return p.Search(ctx, SearchParams{
 		Query:      query,
-		Type:       "search",
+		Type:       "music",
+		Limit:      50,
+		Categories: []int{CatMusic},
+	})
+}
+
+func (p *ProwlarrClient) SearchMusicWithIndexer(ctx context.Context, query string, indexerID int) ([]quality.ParsedRelease, error) {
+	return p.Search(ctx, SearchParams{
+		Query:      query,
+		Type:       "music",
+		IndexerID:  indexerID,
 		Limit:      50,
 		Categories: []int{CatMusic},
 	})

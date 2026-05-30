@@ -1290,20 +1290,83 @@ type MusicAlbumResult struct {
 	Downloaded bool
 }
 
-func (e *Executor) SearchMusicRelease(ctx context.Context, ae db.EventWithAlbum) (*MusicSearchResult, error) {
-	query := fmt.Sprintf("%s %s", ae.Artist.Name, ae.Album.Title)
-	e.log.Info().Str("artist", ae.Artist.Name).Str("album", ae.Album.Title).Str("query", query).Msg("searching music")
+func musicSearchQueries(artist, album string, year int) []string {
+	cleanArtist := quality.CleanArtist(artist)
+	cleanAlbum := quality.CleanAlbum(album)
 
-	releases, err := e.prowl.SearchMusic(ctx, query)
+	return []string{
+		fmt.Sprintf("%s %s %d", artist, album, year),
+		fmt.Sprintf("%s %s", artist, album),
+		fmt.Sprintf("%s %d", artist, year),
+		fmt.Sprintf("%s %s %d", cleanArtist, cleanAlbum, year),
+		fmt.Sprintf("%s %s", cleanArtist, cleanAlbum),
+		fmt.Sprintf("%s %d", cleanAlbum, year),
+		cleanAlbum,
+	}
+}
+
+func (e *Executor) searchMusicRelease(ctx context.Context, artist, album string, year int) ([]quality.ParsedRelease, error) {
+	queries := musicSearchQueries(artist, album, year)
+	indexerID := e.cfg.Prowlarr.IndexerID
+	numTiers := len(queries)
+	var exactPool, fuzzyPool []quality.ParsedRelease
+
+	if indexerID > 0 {
+		name := e.prowl.GetIndexerName(ctx, indexerID)
+		e.log.Info().Str("name", name).Int("id", indexerID).Msg("preferred indexer (music)")
+
+		for i, q := range queries {
+			e.log.Info().Msgf("[%d/%d] preferred: %s", i+1, numTiers, q)
+			results, err := e.prowl.SearchMusicWithIndexer(ctx, q, indexerID)
+			if err != nil {
+				return nil, err
+			}
+			exact, fuzzy := quality.PartitionMusicReleases(results, artist, album)
+			exactPool = mergeReleases(exactPool, exact)
+			fuzzyPool = mergeReleases(fuzzyPool, fuzzy)
+			e.log.Debug().Msgf("→ %d exact, %d fuzzy (exact total: %d)", len(exact), len(fuzzy), len(exactPool))
+			if len(exactPool) >= e.cfg.ShowTopN {
+				return exactPool, nil
+			}
+		}
+
+		e.log.Info().Msgf("→ %d exact from preferred, searching all indexers", len(exactPool))
+	}
+
+	for i, q := range queries {
+		e.log.Info().Msgf("[%d/%d] searching all: %s", i+1, numTiers, q)
+		results, err := e.prowl.SearchMusic(ctx, q)
+		if err != nil {
+			return nil, err
+		}
+		exact, fuzzy := quality.PartitionMusicReleases(results, artist, album)
+		exactPool = mergeReleases(exactPool, exact)
+		fuzzyPool = mergeReleases(fuzzyPool, fuzzy)
+		e.log.Debug().Msgf("→ %d exact, %d fuzzy (exact total: %d)", len(exact), len(fuzzy), len(exactPool))
+		if len(exactPool) >= e.cfg.ShowTopN {
+			return exactPool, nil
+		}
+	}
+
+	if len(exactPool) > 0 || len(fuzzyPool) > 0 {
+		result := exactPool
+		if n := e.cfg.ShowTopN - len(exactPool); n > 0 && len(fuzzyPool) > 0 {
+			if n > len(fuzzyPool) {
+				n = len(fuzzyPool)
+			}
+			result = append(result, fuzzyPool[:n]...)
+		}
+		return result, nil
+	}
+	return nil, nil
+}
+
+func (e *Executor) SearchMusicRelease(ctx context.Context, ae db.EventWithAlbum) (*MusicSearchResult, error) {
+	e.log.Info().Str("artist", ae.Artist.Name).Str("album", ae.Album.Title).Int("year", ae.Album.Year).Msg("searching music")
+
+	releases, err := e.searchMusicRelease(ctx, ae.Artist.Name, ae.Album.Title, ae.Album.Year)
 	if err != nil {
 		return nil, fmt.Errorf("searching music: %w", err)
-	}
-	if len(releases) == 0 {
-		// Try with just the album title
-		releases, err = e.prowl.SearchMusic(ctx, ae.Album.Title)
-		if err != nil {
-			return nil, fmt.Errorf("searching music (fallback): %w", err)
-		}
 	}
 
 	if len(releases) == 0 {
