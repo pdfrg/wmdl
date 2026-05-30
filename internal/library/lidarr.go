@@ -34,19 +34,19 @@ func NewLidarrClient(baseURL, apiKey string, timeout int) *LidarrClient {
 }
 
 type LidarrArtist struct {
-	ID               int               `json:"id,omitempty"`
-	ForeignArtistID  string            `json:"foreignArtistId"`
-	ArtistName       string            `json:"artistName"`
-	MBID             string            `json:"mbId,omitempty"`
-	Monitored        bool              `json:"monitored"`
-	QualityProfileID int               `json:"qualityProfileId"`
-	MetadataProfileID int              `json:"metadataProfileId"`
-	RootFolderPath   string            `json:"rootFolderPath"`
-	Path             string            `json:"path,omitempty"`
-	Genres           []string          `json:"genres,omitempty"`
-	Images           []LidarrImage    `json:"images,omitempty"`
-	AddOptions       *LidarrAddOptions `json:"addOptions,omitempty"`
-	Statistics       *LidarrArtistStats `json:"statistics,omitempty"`
+	ID                int                `json:"id,omitempty"`
+	ForeignArtistID   string             `json:"foreignArtistId"`
+	ArtistName        string             `json:"artistName"`
+	MBID              string             `json:"mbId,omitempty"`
+	Monitored         bool               `json:"monitored"`
+	QualityProfileID  int                `json:"qualityProfileId"`
+	MetadataProfileID int                `json:"metadataProfileId"`
+	RootFolderPath    string             `json:"rootFolderPath"`
+	Path              string             `json:"path,omitempty"`
+	Genres            []string           `json:"genres,omitempty"`
+	Images            []LidarrImage      `json:"images,omitempty"`
+	AddOptions        *LidarrAddOptions  `json:"addOptions,omitempty"`
+	Statistics        *LidarrArtistStats `json:"statistics,omitempty"`
 }
 
 type LidarrAddOptions struct {
@@ -79,14 +79,14 @@ type LidarrRootFolder struct {
 }
 
 type LidarrAlbum struct {
-	ID           int                `json:"id,omitempty"`
-	ForeignAlbumID string           `json:"foreignAlbumId"`
-	ArtistID     int                `json:"artistId"`
-	Title        string             `json:"title"`
-	Monitored    bool               `json:"monitored"`
-	ReleaseDate  string             `json:"releaseDate,omitempty"`
-	AlbumType    string             `json:"albumType,omitempty"`
-	AddOptions   *LidarrAlbumAddOptions `json:"addOptions,omitempty"`
+	ID             int                    `json:"id,omitempty"`
+	ForeignAlbumID string                 `json:"foreignAlbumId"`
+	ArtistID       int                    `json:"artistId"`
+	Title          string                 `json:"title"`
+	Monitored      bool                   `json:"monitored"`
+	ReleaseDate    string                 `json:"releaseDate,omitempty"`
+	AlbumType      string                 `json:"albumType,omitempty"`
+	AddOptions     *LidarrAlbumAddOptions `json:"addOptions,omitempty"`
 }
 
 type LidarrAlbumAddOptions struct {
@@ -243,12 +243,12 @@ func (c *LidarrClient) GetArtist(ctx context.Context, mbid string) (*LidarrArtis
 }
 
 type AddArtistOptions struct {
-	Monitored        bool
-	QualityProfileID int
+	Monitored         bool
+	QualityProfileID  int
 	MetadataProfileID int
-	RootFolderPath   string
-	Monitor          string // all, future, missing, latest, none
-	SearchNow        bool
+	RootFolderPath    string
+	Monitor           string // all, future, missing, latest, none
+	SearchNow         bool
 }
 
 func (c *LidarrClient) AddArtist(ctx context.Context, mbid string, name string, opts AddArtistOptions) (*LidarrArtist, error) {
@@ -304,8 +304,8 @@ func (c *LidarrClient) LookupAlbum(ctx context.Context, mbid string) (*LidarrAlb
 }
 
 type AddAlbumOptions struct {
-	Monitored     bool
-	SearchNow     bool
+	Monitored bool
+	SearchNow bool
 }
 
 func (c *LidarrClient) AddAlbum(ctx context.Context, mbid string, artistID int, title string, opts AddAlbumOptions) (*LidarrAlbum, error) {

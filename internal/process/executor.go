@@ -1280,9 +1280,9 @@ func promptYesNo(ctx context.Context, prompt string) bool {
 // ─── Music album processing ─────────────────────────────────────────────
 
 type MusicSearchResult struct {
-	Event  db.EventWithAlbum
-	Top    []quality.ParsedRelease
-	Error  error
+	Event db.EventWithAlbum
+	Top   []quality.ParsedRelease
+	Error error
 }
 
 func (e *Executor) SearchMusicRelease(ctx context.Context, ae db.EventWithAlbum) (*MusicSearchResult, error) {
@@ -1373,14 +1373,14 @@ func (e *Executor) ProcessMusicAlbum(ctx context.Context, ae db.EventWithAlbum) 
 
 		// Create download record in DB
 		dl := &model.Download{
-			TitleID:        0,
-			ReleaseEventID: releaseEventID,
-			Quality:        release.Source,
-			SourceType:     release.Source,
-			Codec:          release.Codec,
-			InfoHash:       release.InfoHash,
-			Category:       category,
-			Status:         model.DownloadAdded,
+			TitleID:         0,
+			ReleaseEventID:  releaseEventID,
+			Quality:         release.Source,
+			SourceType:      release.Source,
+			Codec:           release.Codec,
+			InfoHash:        release.InfoHash,
+			Category:        category,
+			Status:          model.DownloadAdded,
 			ClientTorrentID: "",
 		}
 		if _, err := e.db.CreateDownload(ctx, dl); err != nil {
@@ -1434,12 +1434,12 @@ func (e *Executor) ProcessMusicAlbum(ctx context.Context, ae db.EventWithAlbum) 
 		}
 
 		added, err := e.lidarr.AddArtist(ctx, artistMbid, ae.Artist.Name, library.AddArtistOptions{
-			Monitored:        true,
-			QualityProfileID: qualProfileID,
+			Monitored:         true,
+			QualityProfileID:  qualProfileID,
 			MetadataProfileID: metaProfileID,
-			RootFolderPath:   rootFolder,
-			Monitor:          monitor,
-			SearchNow:        false,
+			RootFolderPath:    rootFolder,
+			Monitor:           monitor,
+			SearchNow:         false,
 		})
 		if err != nil {
 			return fmt.Errorf("adding artist to Lidarr: %w", err)

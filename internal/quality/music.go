@@ -114,5 +114,3 @@ func SortMusicTop(releases []ParsedRelease, prefs MusicQualityPrefs, n int) []Pa
 	}
 	return releases[:n]
 }
-
-

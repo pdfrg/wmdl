@@ -125,11 +125,11 @@ type Artist struct {
 }
 
 type Album struct {
-	ID       int64
-	ArtistID int64
-	Title    string
-	Year     int
-	MBID     string // MusicBrainz release group ID
+	ID        int64
+	ArtistID  int64
+	Title     string
+	Year      int
+	MBID      string // MusicBrainz release group ID
 	AlbumType AlbumType
 
 	AOTYCriticScore float64

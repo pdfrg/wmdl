@@ -89,14 +89,14 @@ type LibraryConfig struct {
 }
 
 type LidarrConfig struct {
-	URL               string `mapstructure:"url"`
-	APIKey            string `mapstructure:"api_key"`
-	RootFolder        string `mapstructure:"root_folder"`
-	QualityProfile    string `mapstructure:"quality_profile"`
-	MetadataProfile   string `mapstructure:"metadata_profile"`
-	Monitor           string `mapstructure:"monitor"`
-	MonitorNewAlbums  bool   `mapstructure:"monitor_new_albums"`
-	Timeout           int    `mapstructure:"timeout"`
+	URL              string `mapstructure:"url"`
+	APIKey           string `mapstructure:"api_key"`
+	RootFolder       string `mapstructure:"root_folder"`
+	QualityProfile   string `mapstructure:"quality_profile"`
+	MetadataProfile  string `mapstructure:"metadata_profile"`
+	Monitor          string `mapstructure:"monitor"`
+	MonitorNewAlbums bool   `mapstructure:"monitor_new_albums"`
+	Timeout          int    `mapstructure:"timeout"`
 }
 
 type RadarrConfig struct {
@@ -137,23 +137,23 @@ type MusicQualityConfig struct {
 }
 
 type MediaTypesConfig struct {
-	Movies bool       `mapstructure:"movies"`
-	TV     bool       `mapstructure:"tv"`
+	Movies bool        `mapstructure:"movies"`
+	TV     bool        `mapstructure:"tv"`
 	Music  MusicConfig `mapstructure:"music"`
 }
 
 type MusicConfig struct {
-	Enabled              bool              `mapstructure:"enabled"`
-	InitialTimeshiftWeeks int              `mapstructure:"initial_timeshift_weeks"`
-	Filter               MusicFilterConfig `mapstructure:"filter"`
+	Enabled               bool              `mapstructure:"enabled"`
+	InitialTimeshiftWeeks int               `mapstructure:"initial_timeshift_weeks"`
+	Filter                MusicFilterConfig `mapstructure:"filter"`
 }
 
 type MusicFilterConfig struct {
-	MinCriticScore  int  `mapstructure:"min_critic_score"`
+	MinCriticScore   int  `mapstructure:"min_critic_score"`
 	MinCriticReviews int  `mapstructure:"min_critic_reviews"`
-	MinUserScore    int  `mapstructure:"min_user_score"`
-	MinUserRatings  int  `mapstructure:"min_user_ratings"`
-	IncludeMustHear bool `mapstructure:"include_must_hear"`
+	MinUserScore     int  `mapstructure:"min_user_score"`
+	MinUserRatings   int  `mapstructure:"min_user_ratings"`
+	IncludeMustHear  bool `mapstructure:"include_must_hear"`
 }
 
 const configName = "config"

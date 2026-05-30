@@ -22,7 +22,7 @@ type MBClient struct {
 
 func NewMBClient() *MBClient {
 	return &MBClient{
-		client: &http.Client{Timeout: 15 * time.Second},
+		client:    &http.Client{Timeout: 15 * time.Second},
 		userAgent: "wmdl/0.1.0 (https://github.com/pdfrg/wmdl)",
 	}
 }
@@ -30,10 +30,10 @@ func NewMBClient() *MBClient {
 // mbArtistResult represents search results for an artist.
 type mbArtistResult struct {
 	Artists []struct {
-		ID     string  `json:"id"`
-		Name   string  `json:"name"`
-		Score  int     `json:"score"`
-		Type   string  `json:"type,omitempty"`
+		ID      string `json:"id"`
+		Name    string `json:"name"`
+		Score   int    `json:"score"`
+		Type    string `json:"type,omitempty"`
 		Country string `json:"country,omitempty"`
 	} `json:"artists"`
 	Count int `json:"count"`
@@ -42,12 +42,12 @@ type mbArtistResult struct {
 // mbReleaseGroupResult represents search results for release groups.
 type mbReleaseGroupResult struct {
 	ReleaseGroups []struct {
-		ID              string `json:"id"`
-		Title           string `json:"title"`
-		Score           int    `json:"score"`
-		PrimaryType     string `json:"primary-type,omitempty"`
+		ID               string `json:"id"`
+		Title            string `json:"title"`
+		Score            int    `json:"score"`
+		PrimaryType      string `json:"primary-type,omitempty"`
 		FirstReleaseDate string `json:"first-release-date,omitempty"`
-		ArtistCredit    []struct {
+		ArtistCredit     []struct {
 			Name   string `json:"name"`
 			Artist struct {
 				ID   string `json:"id"`
@@ -60,16 +60,20 @@ type mbReleaseGroupResult struct {
 
 // mbReleaseGroupDetail holds detailed info about a release group.
 type mbReleaseGroupDetail struct {
-	ID              string `json:"id"`
-	Title           string `json:"title"`
-	PrimaryType     string `json:"primary-type,omitempty"`
+	ID               string `json:"id"`
+	Title            string `json:"title"`
+	PrimaryType      string `json:"primary-type,omitempty"`
 	FirstReleaseDate string `json:"first-release-date,omitempty"`
-	Rating          *struct {
-		Value    float64 `json:"value"`
-		VoteCount int    `json:"vote-count"`
+	Rating           *struct {
+		Value     float64 `json:"value"`
+		VoteCount int     `json:"vote-count"`
 	} `json:"rating,omitempty"`
-	Tags   []struct { Name string `json:"name"` } `json:"tags,omitempty"`
-	Genres []struct { Name string `json:"name"` } `json:"genres,omitempty"`
+	Tags []struct {
+		Name string `json:"name"`
+	} `json:"tags,omitempty"`
+	Genres []struct {
+		Name string `json:"name"`
+	} `json:"genres,omitempty"`
 	ArtistCredit []struct {
 		Name   string `json:"name"`
 		Artist struct {
@@ -88,13 +92,13 @@ type MBArtistResult struct {
 
 // MBReleaseGroupResult is the public result from a release group search.
 type MBReleaseGroupResult struct {
-	MBID            string
-	Title           string
-	PrimaryType     string
+	MBID             string
+	Title            string
+	PrimaryType      string
 	FirstReleaseDate string
-	ArtistMBID      string
-	ArtistName      string
-	Rating          float64 // MusicBrainz rating (1-5 scale)
+	ArtistMBID       string
+	ArtistName       string
+	Rating           float64 // MusicBrainz rating (1-5 scale)
 }
 
 // SearchArtist searches MusicBrainz for an artist by name.

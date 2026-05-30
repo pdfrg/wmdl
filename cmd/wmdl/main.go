@@ -21,11 +21,14 @@ var (
 func main() {
 	console := zerolog.ConsoleWriter{Out: os.Stderr}
 	logFile := openLogFile()
+	// Console first so terminal output isn't blocked by a slow/failing file write.
+	// io.MultiWriter stops on first error, so file-before-console means a file
+	// write error silently suppresses terminal output.
 	var writers []io.Writer
+	writers = append(writers, console)
 	if logFile != nil {
 		writers = append(writers, logFile)
 	}
-	writers = append(writers, console)
 	mw := io.MultiWriter(writers...)
 
 	log.Logger = zerolog.New(mw).

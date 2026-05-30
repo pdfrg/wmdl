@@ -9,6 +9,7 @@ import (
 
 	"github.com/PuerkitoBio/goquery"
 
+	"github.com/pdfrg/wmdl/internal/config"
 	"github.com/pdfrg/wmdl/internal/model"
 )
 
@@ -16,11 +17,13 @@ type AOTYProvider struct {
 	targetYear int
 	targetWeek int
 	hasTarget  bool
+	filter     config.MusicFilterConfig
 	client     *http.Client
 }
 
-func NewAOTYProvider() *AOTYProvider {
+func NewAOTYProvider(filter config.MusicFilterConfig) *AOTYProvider {
 	return &AOTYProvider{
+		filter: filter,
 		client: &http.Client{Timeout: 15 * time.Second},
 	}
 }
@@ -70,13 +73,24 @@ func (p *AOTYProvider) Scrape() ([]ScrapedItem, error) {
 				oldestDate = itemDate
 			}
 
-			if (itemDate.Equal(weekStart) || itemDate.After(weekStart)) &&
-				(itemDate.Equal(weekEnd) || itemDate.Before(weekEnd) || itemDate.Equal(weekEnd)) {
-				item.MediaType = model.MediaTypeMusic
-				item.Source = "albumoftheyear"
-				allItems = append(allItems, item)
-				kept++
+			if itemDate.Before(weekStart) {
+				continue
 			}
+			if itemDate.After(weekEnd) {
+				continue
+			}
+
+			// Discard low-quality items right here — no point keeping them
+			if !passesMusicFilter(p.filter, item) {
+				// Still count as "kept" so pagination works correctly based on date
+				kept++
+				continue
+			}
+
+			item.MediaType = model.MediaTypeMusic
+			item.Source = "albumoftheyear"
+			allItems = append(allItems, item)
+			kept++
 		}
 
 		// If all items on this page are older than our window, we're done
@@ -200,11 +214,11 @@ func (p *AOTYProvider) parseBlock(s *goquery.Selection) *ScrapedItem {
 	}
 
 	return &ScrapedItem{
-		Title:          albumTitle,
-		Year:           year,
-		ReleaseDate:    releaseDate,
-		ArtistName:     artistName,
-		AlbumType:      albumType,
+		Title:           albumTitle,
+		Year:            year,
+		ReleaseDate:     releaseDate,
+		ArtistName:      artistName,
+		AlbumType:       albumType,
 		AOTYCriticScore: criticScore,
 		AOTYCriticCount: criticCount,
 		AOTYUserScore:   userScore,
@@ -261,6 +275,25 @@ func parseAOTYDate(s string) string {
 	}
 
 	return ""
+}
+
+// passesMusicFilter checks whether a scraped music item meets quality thresholds.
+// Standard types (LP, EP, soundtrack): require score + review count.
+// Special types (live, remix, box set): score only, no review count.
+func passesMusicFilter(ft config.MusicFilterConfig, item ScrapedItem) bool {
+	isStandard := item.AlbumType == model.AlbumTypeLP ||
+		item.AlbumType == model.AlbumTypeEP ||
+		item.AlbumType == model.AlbumTypeSoundtrack
+
+	if isStandard {
+		return (item.AOTYCriticScore >= float64(ft.MinCriticScore) && item.AOTYCriticCount >= ft.MinCriticReviews) ||
+			(item.AOTYUserScore >= float64(ft.MinUserScore) && item.AOTYUserCount >= ft.MinUserRatings) ||
+			(ft.IncludeMustHear && item.AOTYMustHear)
+	}
+
+	return (ft.MinCriticScore > 0 && item.AOTYCriticScore >= float64(ft.MinCriticScore)) ||
+		(ft.MinUserScore > 0 && item.AOTYUserScore >= float64(ft.MinUserScore)) ||
+		(ft.IncludeMustHear && item.AOTYMustHear)
 }
 
 // wmdlWeekRange computes the Wed-to-Tue date range for an ISO week.
