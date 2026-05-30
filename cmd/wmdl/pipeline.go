@@ -85,13 +85,17 @@ func runReviewForWeek(ctx context.Context, database *db.DB, cfg *config.Config, 
 			break
 		}
 	}
-
-	if !hasPending || target.Reviewed {
-		if !hasPending && !target.Reviewed {
-			fmt.Fprintf(os.Stderr, "No pending releases for %d-W%02d.\n", year, week)
-		} else {
-			fmt.Fprintf(os.Stderr, "All releases for %d-W%02d have already been reviewed.\n", year, week)
+	if !hasPending {
+		for _, ev := range albumEvents {
+			if ev.Event.Status == model.StatusPending {
+				hasPending = true
+				break
+			}
 		}
+	}
+
+	if !hasPending {
+		fmt.Fprintf(os.Stderr, "No pending releases for %d-W%02d.\n", year, week)
 		for {
 			fmt.Fprintf(os.Stderr, "[r] review again  [e] export choices  [q] quit\n")
 			fmt.Fprintf(os.Stderr, "Choose: ")
@@ -388,16 +392,23 @@ func runProcessForWeek(ctx context.Context, database *db.DB, cfg *config.Config,
 		log.Warn().Err(err).Msg("loading approved album events")
 	} else if len(albumEvents) > 0 {
 		log.Info().Msgf("Processing %d music album(s)...", len(albumEvents))
+		var albumResults []process.MusicAlbumResult
 		for _, ae := range albumEvents {
 			select {
 			case <-ctx.Done():
 				return ctx.Err()
 			default:
 			}
-			if err := exec.ProcessMusicAlbum(ctx, ae); err != nil {
+			result, err := exec.ProcessMusicAlbum(ctx, ae)
+			if err != nil {
 				log.Warn().Err(err).Str("album", ae.Album.Title).Str("artist", ae.Artist.Name).Msg("error processing album")
+				continue
+			}
+			if result != nil {
+				albumResults = append(albumResults, *result)
 			}
 		}
+		exec.ProcessMusicAlbumDecisions(ctx, albumResults)
 	}
 
 	return nil

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"io"
 	"os"
@@ -11,6 +12,11 @@ import (
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 	"github.com/spf13/cobra"
+)
+
+const (
+	maxLogSize    = 10 * 1024 * 1024 // trim when file exceeds this
+	keepAfterTrim = 5 * 1024 * 1024  // keep this much from the tail
 )
 
 var (
@@ -77,9 +83,46 @@ func openLogFile() *os.File {
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return nil
 	}
-	f, err := os.OpenFile(filepath.Join(dir, "wmdl.log"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	path := filepath.Join(dir, "wmdl.log")
+	trimLogFile(path)
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
 		return nil
 	}
 	return f
+}
+
+func trimLogFile(path string) {
+	fi, err := os.Stat(path)
+	if err != nil {
+		return
+	}
+	size := fi.Size()
+	if size <= maxLogSize {
+		return
+	}
+
+	f, err := os.Open(path)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+
+	readFrom := size - keepAfterTrim
+	if _, err := f.Seek(readFrom, io.SeekStart); err != nil {
+		return
+	}
+
+	// Skip partial line so we keep only whole lines
+	br := bufio.NewReader(f)
+	if _, err := br.ReadString('\n'); err != nil {
+		return
+	}
+
+	rest, err := io.ReadAll(br)
+	if err != nil {
+		return
+	}
+
+	_ = os.WriteFile(path, rest, 0644)
 }
