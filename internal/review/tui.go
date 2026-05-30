@@ -580,7 +580,7 @@ func (t *TUI) buildReviewContent() string {
 		for i := 0; i < maxLines; i++ {
 			leftPart := ""
 			if i < len(posterLines) {
-				leftPart = posterLines[i]
+				leftPart = posterLines[i] + " "
 			} else {
 				leftPart = strings.Repeat(" ", posterCols+1)
 			}
