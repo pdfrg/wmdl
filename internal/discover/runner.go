@@ -2,6 +2,7 @@ package discover
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"html"
 	"regexp"
@@ -103,22 +104,23 @@ func (r *Runner) Run(ctx context.Context) error {
 	fp := NewFlixPatrolProvider(r.debugURL)
 	providers = append(providers, fp)
 
-	// Music provider
-	aoty := NewAOTYProvider()
+	// Set target week on video providers that support it
 	if r.hasTargetWeek {
-		// Music uses timeshifted week: video target - music_timeshift_weeks
-		musicYear, musicWeek := r.musicTargetWeek(ctx)
-		aoty.SetWeekRange(musicYear, musicWeek)
-	}
-	providers = append(providers, aoty)
-
-	// Set target week on video providers
-	if r.hasTargetWeek {
-		for _, p := range []ReleaseProvider{NewDVDReleaseDates(), NewTMDBDiscoverProvider(r.tmdb)} {
+		for _, p := range providers {
 			if ws, ok := p.(WeekSettable); ok {
 				ws.SetWeekRange(r.targetYear, r.targetWeek)
 			}
 		}
+	}
+
+	// Music provider (gated on config)
+	if r.cfg.MediaTypes.Music.Enabled {
+		aoty := NewAOTYProvider(r.cfg.MediaTypes.Music.Filter)
+		if r.hasTargetWeek {
+			musicYear, musicWeek := r.musicTargetWeek(ctx)
+			aoty.SetWeekRange(musicYear, musicWeek)
+		}
+		providers = append(providers, aoty)
 	}
 
 	var allItems []ScrapedItem
@@ -191,7 +193,10 @@ func (r *Runner) Run(ctx context.Context) error {
 			sem <- struct{}{}
 			defer func() { <-sem }()
 
-			if err := r.processItem(ctx, item, progYear, progWeek); err != nil {
+			itemCtx, itemCancel := context.WithTimeout(ctx, 2*time.Minute)
+			defer itemCancel()
+
+			if err := r.processItem(itemCtx, item, progYear, progWeek); err != nil {
 				r.log.Warn().Err(err).Str("title", item.Title).Msg("error processing item")
 			}
 			mu.Lock()
@@ -208,14 +213,27 @@ func (r *Runner) Run(ctx context.Context) error {
 			musicYear, musicWeek = r.musicTargetWeek(ctx)
 		}
 
+		var muMusic sync.Mutex
+		var wgMusic sync.WaitGroup
 		var musicProcessed int
+		semMusic := make(chan struct{}, 2)
+		wgMusic.Add(len(uniqueMusic))
 		for _, item := range uniqueMusic {
-			if err := r.processMusicItem(ctx, item, musicYear, musicWeek); err != nil {
-				r.log.Warn().Err(err).Str("album", item.Title).Str("artist", item.ArtistName).Msg("error processing music item")
-				continue
-			}
-			musicProcessed++
+			go func(item ScrapedItem) {
+				defer wgMusic.Done()
+				semMusic <- struct{}{}
+				defer func() { <-semMusic }()
+				itemCtx, itemCancel := context.WithTimeout(ctx, 2*time.Minute)
+				defer itemCancel()
+				if err := r.processMusicItem(itemCtx, item, musicYear, musicWeek); err != nil {
+					r.log.Warn().Err(err).Str("album", item.Title).Str("artist", item.ArtistName).Msg("error processing music item")
+				}
+				muMusic.Lock()
+				musicProcessed++
+				muMusic.Unlock()
+			}(item)
 		}
+		wgMusic.Wait()
 		processed += musicProcessed
 
 		// Track music discovery week in settings
@@ -477,14 +495,14 @@ func (r *Runner) processItem(ctx context.Context, item ScrapedItem, progYear, pr
 	var titleID int64
 	var existingEvent *model.ReleaseEvent
 
-	err = r.db.Transaction(ctx, func(ctx context.Context) error {
-		id, err := r.db.UpsertTitle(ctx, title)
+	err = r.db.Transaction(ctx, func(tx *sql.Tx) error {
+		id, err := r.db.UpsertTitleTx(ctx, tx, title)
 		if err != nil {
 			return fmt.Errorf("saving title: %w", err)
 		}
 		titleID = id
 
-		existing, err := r.db.GetLatestReleaseEvent(ctx, titleID)
+		existing, err := r.db.GetLatestReleaseEventTx(ctx, tx, titleID)
 		if err != nil {
 			return fmt.Errorf("checking existing events: %w", err)
 		}
@@ -503,7 +521,7 @@ func (r *Runner) processItem(ctx context.Context, item ScrapedItem, progYear, pr
 
 			// Check for upgrade: was it previously downloaded with a lower source type?
 			if existing.Status == model.StatusDownloaded {
-				dl, err := r.db.GetDownloadByTitleID(ctx, titleID)
+				dl, err := r.db.GetDownloadByTitleIDTx(ctx, tx, titleID)
 				if err == nil && dl != nil && dl.SourceType != "" {
 					if isUpgrade(dl.SourceType, item.ReleaseType) {
 						evtNotes = fmt.Sprintf("upgrade: %s → %s", dl.SourceType, item.ReleaseType)
@@ -527,7 +545,7 @@ func (r *Runner) processItem(ctx context.Context, item ScrapedItem, progYear, pr
 
 		// If previous event was downloaded and this is new, mark the old as "upgraded"
 		if existing != nil && existing.Status == model.StatusDownloaded && evtNotes != "" {
-			if err := r.db.UpdateReleaseEventStatus(ctx, existing.ID, model.StatusDownloaded); err != nil {
+			if err := r.db.UpdateReleaseEventStatusTx(ctx, tx, existing.ID, model.StatusDownloaded); err != nil {
 				r.log.Warn().Err(err).Msg("failed to mark previous download as upgraded")
 			}
 		}
@@ -544,7 +562,7 @@ func (r *Runner) processItem(ctx context.Context, item ScrapedItem, progYear, pr
 			ISOWeek:        progWeek,
 		}
 
-		if _, err := r.db.CreateReleaseEvent(ctx, evt); err != nil {
+		if _, err := r.db.CreateReleaseEventTx(ctx, tx, evt); err != nil {
 			return fmt.Errorf("saving release event: %w", err)
 		}
 
@@ -601,35 +619,22 @@ func (r *Runner) processMusicItem(ctx context.Context, item ScrapedItem, progYea
 	apiCtx, apiCancel := context.WithTimeout(ctx, 20*time.Second)
 	defer apiCancel()
 
-	// Filter: check if this album passes quality thresholds
-	// Standard types (LP, EP, soundtrack): require score + review count
-	// Special types (live, remix, box set): score only, no review count
-	ft := r.cfg.MediaTypes.Music.Filter
-	isStandard := item.AlbumType == model.AlbumTypeLP ||
-		item.AlbumType == model.AlbumTypeEP ||
-		item.AlbumType == model.AlbumTypeSoundtrack
-
-	var passesFilter bool
-	if isStandard {
-		passesFilter = (item.AOTYCriticScore >= float64(ft.MinCriticScore) && item.AOTYCriticCount >= ft.MinCriticReviews) ||
-			(item.AOTYUserScore >= float64(ft.MinUserScore) && item.AOTYUserCount >= ft.MinUserRatings) ||
-			(ft.IncludeMustHear && item.AOTYMustHear)
-	} else {
-		passesFilter = (ft.MinCriticScore > 0 && item.AOTYCriticScore >= float64(ft.MinCriticScore)) ||
-			(ft.MinUserScore > 0 && item.AOTYUserScore >= float64(ft.MinUserScore)) ||
-			(ft.IncludeMustHear && item.AOTYMustHear)
+	// Filter: skip low-quality albums immediately — no MB enrichment needed
+	if !passesMusicFilter(r.cfg.MediaTypes.Music.Filter, item) {
+		r.log.Info().Str("artist", item.ArtistName).Str("album", item.Title).Msg("does not pass filter, skipping")
+		return nil
 	}
-
-	r.log.Info().Str("artist", item.ArtistName).Str("album", item.Title).
-		Bool("passes", passesFilter).Msg("music item filter check")
+	r.log.Info().Str("artist", item.ArtistName).Str("album", item.Title).Msg("musicbrainz: searching release group")
 
 	// Step 1: MusicBrainz enrichment
 	rgResult, err := r.mb.SearchReleaseGroup(apiCtx, item.Title, item.ArtistName)
 	if err != nil {
-		r.log.Warn().Err(err).Msg("MusicBrainz search failed, continuing without MB data")
-	} else if rgResult == nil {
+		r.log.Warn().Err(err).Str("album", item.Title).Msg("MusicBrainz search failed, skipping")
+		return nil
+	}
+	if rgResult == nil {
 		r.log.Info().Str("album", item.Title).Msg("not found in MusicBrainz, skipping")
-		return nil // If not in MB, can't integrate with Lidarr
+		return nil
 	}
 
 	// If MB returned a result, search for artist
@@ -641,6 +646,7 @@ func (r *Runner) processMusicItem(ctx context.Context, item ScrapedItem, progYea
 	}
 
 	if mbArtistID == "" {
+		r.log.Info().Str("artist", item.ArtistName).Msg("musicbrainz: searching artist")
 		artResult, err := r.mb.SearchArtist(apiCtx, item.ArtistName)
 		if err == nil && artResult != nil {
 			mbArtistID = artResult.MBID
@@ -654,6 +660,7 @@ func (r *Runner) processMusicItem(ctx context.Context, item ScrapedItem, progYea
 
 	// Step 2: Fetch detail for MB rating
 	if mbAlbumID != "" {
+		r.log.Info().Str("mbid", mbAlbumID).Msg("musicbrainz: fetching release group detail")
 		detail, err := r.mb.GetReleaseGroupDetail(apiCtx, mbAlbumID)
 		if err == nil && detail != nil && detail.Rating > 0 {
 			_ = detail // rating available in detail.Rating
@@ -677,12 +684,12 @@ func (r *Runner) processMusicItem(ctx context.Context, item ScrapedItem, progYea
 	}
 
 	album := &model.Album{
-		ArtistID:       artistID,
-		Title:          item.Title,
-		Year:           item.Year,
-		MBID:           mbAlbumID,
-		AlbumType:      item.AlbumType,
-		ReleaseDate:    item.ReleaseDate,
+		ArtistID:        artistID,
+		Title:           item.Title,
+		Year:            item.Year,
+		MBID:            mbAlbumID,
+		AlbumType:       item.AlbumType,
+		ReleaseDate:     item.ReleaseDate,
 		AOTYCriticScore: item.AOTYCriticScore,
 		AOTYCriticCount: item.AOTYCriticCount,
 		AOTYUserScore:   item.AOTYUserScore,
@@ -695,18 +702,13 @@ func (r *Runner) processMusicItem(ctx context.Context, item ScrapedItem, progYea
 		return fmt.Errorf("saving album: %w", err)
 	}
 
-	// Step 5: Create release event (only if passes filter)
+	// Step 5: Create release event
 	existing, err := r.db.GetLatestAlbumReleaseEvent(ctx, albumID)
 	if err != nil {
 		return fmt.Errorf("checking existing events: %w", err)
 	}
 	if existing != nil && existing.Status == model.StatusPending {
 		return nil // already pending
-	}
-
-	if !passesFilter {
-		r.log.Info().Str("album", item.Title).Msg("does not pass filter, skipping review event")
-		return nil
 	}
 
 	evt := &model.AlbumReleaseEvent{

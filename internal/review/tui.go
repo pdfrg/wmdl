@@ -2,6 +2,7 @@ package review
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"image"
 	"net/url"
@@ -48,8 +49,8 @@ const (
 )
 
 type itemState struct {
-	event      db.EventWithTitle     // for movies/TV
-	albumEvent *db.EventWithAlbum    // for music (nil for movies/TV)
+	event      db.EventWithTitle  // for movies/TV
+	albumEvent *db.EventWithAlbum // for music (nil for movies/TV)
 	decision   decision
 }
 
@@ -80,21 +81,21 @@ type posterReadyMsg struct {
 }
 
 type TUI struct {
-	items      []itemState
-	cursor     int
-	phase      phase
-	database   *db.DB
-	width      int
-	height     int
-	approved   []db.EventWithTitle
-	err        error
-	posterImg  image.Image
-	posterMode PosterMode
-	flashMsg   string
-	vpConfirm  viewport.Model
-	filter     model.MediaType // "" = all, "movie" or "tv"
-	filtered   []int           // indices into items matching current filter
-	pendingQuit bool
+	items           []itemState
+	cursor          int
+	phase           phase
+	database        *db.DB
+	width           int
+	height          int
+	approved        []db.EventWithTitle
+	err             error
+	posterImg       image.Image
+	posterMode      PosterMode
+	flashMsg        string
+	vpConfirm       viewport.Model
+	filter          model.MediaType // "" = all, "movie" or "tv"
+	filtered        []int           // indices into items matching current filter
+	pendingQuit     bool
 	filterUndecided bool
 }
 
@@ -301,7 +302,7 @@ func (t *TUI) hasDecisions() bool {
 
 func (t *TUI) saveDecisions() error {
 	ctx := context.Background()
-	return t.database.Transaction(ctx, func(ctx context.Context) error {
+	return t.database.Transaction(ctx, func(tx *sql.Tx) error {
 		for _, it := range t.items {
 			if it.decision == decisionNone {
 				continue
@@ -312,11 +313,11 @@ func (t *TUI) saveDecisions() error {
 			}
 
 			if it.albumEvent != nil {
-				if err := t.database.UpdateAlbumReleaseEventStatus(ctx, it.albumEvent.Event.ID, status); err != nil {
+				if err := t.database.UpdateAlbumReleaseEventStatusTx(ctx, tx, it.albumEvent.Event.ID, status); err != nil {
 					return err
 				}
 			} else {
-				if err := t.database.UpdateReleaseEventStatus(ctx, it.event.Event.ID, status); err != nil {
+				if err := t.database.UpdateReleaseEventStatusTx(ctx, tx, it.event.Event.ID, status); err != nil {
 					return err
 				}
 			}

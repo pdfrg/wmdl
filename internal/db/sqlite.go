@@ -15,6 +15,11 @@ type DB struct {
 	db *sql.DB
 }
 
+type querier interface {
+	ExecContext(ctx context.Context, query string, args ...interface{}) (sql.Result, error)
+	QueryRowContext(ctx context.Context, query string, args ...interface{}) *sql.Row
+}
+
 func Open(path string) (*DB, error) {
 	d, err := sql.Open("sqlite", path+"?_journal_mode=WAL&_txlock=immediate")
 	if err != nil {
@@ -32,13 +37,13 @@ func (d *DB) Close() error {
 	return d.db.Close()
 }
 
-func (d *DB) Transaction(ctx context.Context, fn func(context.Context) error) error {
+func (d *DB) Transaction(ctx context.Context, fn func(tx *sql.Tx) error) error {
 	tx, err := d.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("beginning transaction: %w", err)
 	}
 
-	if err := fn(ctx); err != nil {
+	if err := fn(tx); err != nil {
 		if rbErr := tx.Rollback(); rbErr != nil {
 			return fmt.Errorf("rolling back: %v (original: %w)", rbErr, err)
 		}
@@ -206,7 +211,15 @@ func (d *DB) Migrate(ctx context.Context) error {
 }
 
 func (d *DB) UpsertTitle(ctx context.Context, t *model.Title) (int64, error) {
-	res, err := d.db.ExecContext(ctx, `
+	return d.upsertTitle(ctx, d.db, t)
+}
+
+func (d *DB) UpsertTitleTx(ctx context.Context, tx *sql.Tx, t *model.Title) (int64, error) {
+	return d.upsertTitle(ctx, tx, t)
+}
+
+func (d *DB) upsertTitle(ctx context.Context, q querier, t *model.Title) (int64, error) {
+	res, err := q.ExecContext(ctx, `
 		INSERT INTO titles (tmdb_id, tvdb_id, title, tmdb_title, year, media_type, imdb_id, imdb_rating,
 		                    rt_url, rt_critics_score, rt_audience_score, tmdb_rating,
 		                    metacritic_score, us_rating, original_language, origin_country,
@@ -310,7 +323,15 @@ func (d *DB) ListTitles(ctx context.Context) ([]*model.Title, error) {
 }
 
 func (d *DB) CreateReleaseEvent(ctx context.Context, e *model.ReleaseEvent) (int64, error) {
-	res, err := d.db.ExecContext(ctx, `
+	return d.createReleaseEvent(ctx, d.db, e)
+}
+
+func (d *DB) CreateReleaseEventTx(ctx context.Context, tx *sql.Tx, e *model.ReleaseEvent) (int64, error) {
+	return d.createReleaseEvent(ctx, tx, e)
+}
+
+func (d *DB) createReleaseEvent(ctx context.Context, q querier, e *model.ReleaseEvent) (int64, error) {
+	res, err := q.ExecContext(ctx, `
 		INSERT INTO release_events (title_id, source, release_type, release_date, status, previous_status, notes, iso_year, iso_week)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`, e.TitleID, e.Source, string(e.ReleaseType), e.ReleaseDate, string(e.Status), string(e.PreviousStatus), e.Notes, e.ISOYear, e.ISOWeek)
@@ -351,9 +372,17 @@ func (d *DB) ListReleaseEvents(ctx context.Context, status model.ReleaseStatus) 
 }
 
 func (d *DB) GetLatestReleaseEvent(ctx context.Context, titleID int64) (*model.ReleaseEvent, error) {
+	return d.getLatestReleaseEvent(ctx, d.db, titleID)
+}
+
+func (d *DB) GetLatestReleaseEventTx(ctx context.Context, tx *sql.Tx, titleID int64) (*model.ReleaseEvent, error) {
+	return d.getLatestReleaseEvent(ctx, tx, titleID)
+}
+
+func (d *DB) getLatestReleaseEvent(ctx context.Context, q querier, titleID int64) (*model.ReleaseEvent, error) {
 	var e model.ReleaseEvent
 	var releaseType, status, prevStatus, createdAt string
-	err := d.db.QueryRowContext(ctx, `
+	err := q.QueryRowContext(ctx, `
 		SELECT id, title_id, source, release_type, release_date, status, previous_status, notes, created_at, iso_year, iso_week
 		FROM release_events WHERE title_id = ?
 		ORDER BY id DESC LIMIT 1
@@ -424,7 +453,15 @@ func (d *DB) ListApprovedWithTitles(ctx context.Context) ([]EventWithTitle, erro
 }
 
 func (d *DB) UpdateReleaseEventStatus(ctx context.Context, id int64, status model.ReleaseStatus) error {
-	_, err := d.db.ExecContext(ctx, `UPDATE release_events SET status = ? WHERE id = ?`, string(status), id)
+	return d.updateReleaseEventStatus(ctx, d.db, id, status)
+}
+
+func (d *DB) UpdateReleaseEventStatusTx(ctx context.Context, tx *sql.Tx, id int64, status model.ReleaseStatus) error {
+	return d.updateReleaseEventStatus(ctx, tx, id, status)
+}
+
+func (d *DB) updateReleaseEventStatus(ctx context.Context, q querier, id int64, status model.ReleaseStatus) error {
+	_, err := q.ExecContext(ctx, `UPDATE release_events SET status = ? WHERE id = ?`, string(status), id)
 	return err
 }
 
@@ -526,9 +563,17 @@ func (d *DB) GetLatestDiscoveredWeek(ctx context.Context) (*model.WeekState, err
 }
 
 func (d *DB) GetDownloadByTitleID(ctx context.Context, titleID int64) (*model.Download, error) {
+	return d.getDownloadByTitleID(ctx, d.db, titleID)
+}
+
+func (d *DB) GetDownloadByTitleIDTx(ctx context.Context, tx *sql.Tx, titleID int64) (*model.Download, error) {
+	return d.getDownloadByTitleID(ctx, tx, titleID)
+}
+
+func (d *DB) getDownloadByTitleID(ctx context.Context, q querier, titleID int64) (*model.Download, error) {
 	var dl model.Download
 	var status, createdAt string
-	err := d.db.QueryRowContext(ctx, `
+	err := q.QueryRowContext(ctx, `
 		SELECT id, title_id, release_event_id, quality, source_type, codec,
 		       info_hash, category, status, client_torrent_id, radarr_id, sonarr_id, created_at
 		FROM downloads WHERE title_id = ?
@@ -791,7 +836,15 @@ func (d *DB) GetLatestAlbumReleaseEvent(ctx context.Context, albumID int64) (*mo
 }
 
 func (d *DB) UpdateAlbumReleaseEventStatus(ctx context.Context, id int64, status model.ReleaseStatus) error {
-	_, err := d.db.ExecContext(ctx, `UPDATE album_release_events SET status = ? WHERE id = ?`, string(status), id)
+	return d.updateAlbumReleaseEventStatus(ctx, d.db, id, status)
+}
+
+func (d *DB) UpdateAlbumReleaseEventStatusTx(ctx context.Context, tx *sql.Tx, id int64, status model.ReleaseStatus) error {
+	return d.updateAlbumReleaseEventStatus(ctx, tx, id, status)
+}
+
+func (d *DB) updateAlbumReleaseEventStatus(ctx context.Context, q querier, id int64, status model.ReleaseStatus) error {
+	_, err := q.ExecContext(ctx, `UPDATE album_release_events SET status = ? WHERE id = ?`, string(status), id)
 	return err
 }
 
