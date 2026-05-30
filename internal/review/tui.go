@@ -70,9 +70,15 @@ type TUI struct {
 	posterMode PosterMode
 	flashMsg   string
 	vpConfirm  viewport.Model
+	filter     model.MediaType // "" = all, "movie" or "tv"
+	filtered   []int           // indices into items matching current filter
 }
 
 func NewReviewTUIWithEvents(events []db.EventWithTitle, database *db.DB, posterMode string) (*TUI, error) {
+	if len(events) == 0 {
+		return nil, fmt.Errorf("no events to review")
+	}
+
 	items := make([]itemState, len(events))
 	for i, e := range events {
 		items[i] = itemState{event: e, decision: decisionForStatus(e.Event.Status)}
@@ -84,13 +90,16 @@ func NewReviewTUIWithEvents(events []db.EventWithTitle, database *db.DB, posterM
 	vp.SetWidth(80)
 	vp.SetHeight(10)
 
-	return &TUI{
+	t := &TUI{
 		items:      items,
 		database:   database,
 		height:     24,
 		posterMode: ParsePosterMode(posterMode),
 		vpConfirm:  vp,
-	}, nil
+	}
+
+	t.rebuildFiltered()
+	return t, nil
 }
 
 func NewReviewTUI(database *db.DB, posterMode string) (*TUI, error) {
@@ -154,7 +163,8 @@ func (t *TUI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (t *TUI) loadCurrentPosterCmd() tea.Cmd {
-	if t.items[t.cursor].event.Title.PosterPath == "" {
+	it := t.currentItem()
+	if it == nil || it.event.Title.PosterPath == "" {
 		return t.clearPosterCmd()
 	}
 	return t.loadPosterCmd()
@@ -164,7 +174,10 @@ func (t *TUI) loadPosterCmd() tea.Cmd {
 	if t.posterMode == PosterOff {
 		return nil
 	}
-	it := t.items[t.cursor]
+	it := t.currentItem()
+	if it == nil {
+		return nil
+	}
 	tl := it.event.Title
 
 	return func() tea.Msg {
@@ -198,6 +211,25 @@ func (t *TUI) clearPosterCmd() tea.Cmd {
 	return tea.Raw(buildPosterClear())
 }
 
+func (t *TUI) rebuildFiltered() {
+	t.filtered = nil
+	for i, it := range t.items {
+		if t.filter == "" || it.event.Title.MediaType == t.filter {
+			t.filtered = append(t.filtered, i)
+		}
+	}
+	if t.cursor >= len(t.filtered) {
+		t.cursor = 0
+	}
+}
+
+func (t *TUI) currentItem() *itemState {
+	if len(t.filtered) == 0 {
+		return nil
+	}
+	return &t.items[t.filtered[t.cursor]]
+}
+
 func (t *TUI) updateReview(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	t.flashMsg = ""
 
@@ -206,7 +238,7 @@ func (t *TUI) updateReview(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return t, t.quitCmd()
 
 	case "j", "down":
-		if t.cursor < len(t.items)-1 {
+		if t.cursor < len(t.filtered)-1 {
 			t.cursor++
 			t.posterImg = nil
 			return t, t.loadCurrentPosterCmd()
@@ -220,24 +252,60 @@ func (t *TUI) updateReview(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 
 	case "a":
-		if t.items[t.cursor].decision == decisionApproved {
-			t.items[t.cursor].decision = decisionNone
+		it := t.currentItem()
+		if it == nil {
+			return t, nil
+		}
+		if it.decision == decisionApproved {
+			it.decision = decisionNone
 		} else {
-			t.items[t.cursor].decision = decisionApproved
+			it.decision = decisionApproved
 		}
 
 	case "r":
-		if t.items[t.cursor].decision == decisionRejected {
-			t.items[t.cursor].decision = decisionNone
+		it := t.currentItem()
+		if it == nil {
+			return t, nil
+		}
+		if it.decision == decisionRejected {
+			it.decision = decisionNone
 		} else {
-			t.items[t.cursor].decision = decisionRejected
+			it.decision = decisionRejected
 		}
 
 	case "u":
-		t.items[t.cursor].decision = decisionNone
+		it := t.currentItem()
+		if it == nil {
+			return t, nil
+		}
+		it.decision = decisionNone
+
+	case "m":
+		if t.filter == model.MediaTypeMovie {
+			t.filter = ""
+		} else {
+			t.filter = model.MediaTypeMovie
+		}
+		t.rebuildFiltered()
+		t.posterImg = nil
+		return t, t.loadCurrentPosterCmd()
+
+	case "t":
+		if t.filter == model.MediaTypeTV {
+			t.filter = ""
+		} else {
+			t.filter = model.MediaTypeTV
+		}
+		t.rebuildFiltered()
+		t.posterImg = nil
+		return t, t.loadCurrentPosterCmd()
 
 	case "o":
-		tl := t.items[t.cursor].event.Title
+		it := t.currentItem()
+		if it == nil {
+			return t, nil
+		}
+		tl := it.event.Title
 		rtURL := tl.RTURL
 		if rtURL == "" {
 			rtURL = "https://www.rottentomatoes.com/search?search=" + url.QueryEscape(tl.Title)
@@ -246,8 +314,8 @@ func (t *TUI) updateReview(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 
 	case "enter":
 		remaining := 0
-		for _, it := range t.items {
-			if it.decision == decisionNone {
+		for _, f := range t.filtered {
+			if t.items[f].decision == decisionNone {
 				remaining++
 			}
 		}
@@ -278,22 +346,27 @@ func (t *TUI) updateConfirm(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		t.vpConfirm.ScrollUp(1)
 
 	case "y":
-		for _, it := range t.items {
-			if it.decision == decisionNone {
-				continue
+		ctx := context.Background()
+		err := t.database.Transaction(ctx, func(ctx context.Context) error {
+			for _, it := range t.items {
+				if it.decision == decisionNone {
+					continue
+				}
+				status := model.StatusApproved
+				if it.decision == decisionRejected {
+					status = model.StatusRejected
+				}
+				if err := t.database.UpdateReleaseEventStatus(ctx, it.event.Event.ID, status); err != nil {
+					return err
+				}
+				if it.decision == decisionApproved {
+					t.approved = append(t.approved, it.event)
+				}
 			}
-			status := model.StatusApproved
-			if it.decision == decisionRejected {
-				status = model.StatusRejected
-			}
-			ctx := context.Background()
-			if err := t.database.UpdateReleaseEventStatus(ctx, it.event.Event.ID, status); err != nil {
-				t.err = err
-				return t, t.quitCmd()
-			}
-			if it.decision == decisionApproved {
-				t.approved = append(t.approved, it.event)
-			}
+			return nil
+		})
+		if err != nil {
+			t.err = err
 		}
 		return t, t.quitCmd()
 
@@ -324,6 +397,8 @@ func (t *TUI) View() tea.View {
 			keyStyle.Render("a") + helpStyle.Render(" approve  ") +
 			keyStyle.Render("r") + helpStyle.Render(" reject  ") +
 			keyStyle.Render("u") + helpStyle.Render(" undo  ") +
+			keyStyle.Render("m") + helpStyle.Render(" movies  ") +
+			keyStyle.Render("t") + helpStyle.Render(" tv  ") +
 			keyStyle.Render("enter") + helpStyle.Render(" confirm  ") +
 			keyStyle.Render("o") + helpStyle.Render(" open RT  ") +
 			keyStyle.Render("q") + helpStyle.Render(" quit")
@@ -335,14 +410,22 @@ func (t *TUI) View() tea.View {
 
 	var b strings.Builder
 
+	filterLabel := ""
+	switch t.filter {
+	case model.MediaTypeMovie:
+		filterLabel = "  [movies]"
+	case model.MediaTypeTV:
+		filterLabel = "  [tv]"
+	}
+
 	if t.phase == phaseConfirm {
-		b.WriteString(headerStyle.Render(fmt.Sprintf("wmdl review — %d pending       [%d/%d]",
-			len(t.items), t.cursor+1, len(t.items))))
+		b.WriteString(headerStyle.Render(fmt.Sprintf("wmdl review — %d pending%s       [%d/%d]",
+			len(t.items), filterLabel, t.cursor+1, len(t.filtered))))
 		b.WriteString("\n\n")
 		b.WriteString(t.vpConfirm.View())
 	} else {
-		b.WriteString(headerStyle.Render(fmt.Sprintf("wmdl review — %d pending       [%d/%d]",
-			len(t.items), t.cursor+1, len(t.items))))
+		b.WriteString(headerStyle.Render(fmt.Sprintf("wmdl review — %d pending%s       [%d/%d]",
+			len(t.items), filterLabel, t.cursor+1, len(t.filtered))))
 		b.WriteString("\n\n")
 		b.WriteString(content)
 
@@ -396,7 +479,10 @@ func (t *TUI) shouldPadForPoster() bool {
 func (t *TUI) buildReviewContent() string {
 	rw := t.rightWidth()
 
-	it := &t.items[t.cursor]
+	it := t.currentItem()
+	if it == nil {
+		return "no items match the current filter"
+	}
 	tl := it.event.Title
 	ev := it.event.Event
 
@@ -507,13 +593,16 @@ func (t *TUI) buildRightContent(tl *model.Title, ev *model.ReleaseEvent, rw int)
 
 	decoration := " "
 	decorationStyle := emptyStyle
-	switch t.items[t.cursor].decision {
-	case decisionApproved:
-		decoration = " "
-		decorationStyle = approvedStyle
-	case decisionRejected:
-		decoration = " "
-		decorationStyle = rejectedStyle
+	it := t.currentItem()
+	if it != nil {
+		switch it.decision {
+		case decisionApproved:
+			decoration = " "
+			decorationStyle = approvedStyle
+		case decisionRejected:
+			decoration = " "
+			decorationStyle = rejectedStyle
+		}
 	}
 
 	// Line 1: indent + decoration + wrapped title

@@ -2,6 +2,8 @@ package config
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/spf13/viper"
@@ -120,8 +122,12 @@ const appName = "wmdl"
 func Load() (*Config, error) {
 	v := viper.New()
 	v.SetConfigName(configName)
-	v.AddConfigPath(fmt.Sprintf("$XDG_CONFIG_HOME/%s", appName))
-	v.AddConfigPath(fmt.Sprintf("$HOME/.config/%s", appName))
+	if xdg := os.Getenv("XDG_CONFIG_HOME"); xdg != "" {
+		v.AddConfigPath(filepath.Join(xdg, appName))
+	}
+	if home := os.Getenv("HOME"); home != "" {
+		v.AddConfigPath(filepath.Join(home, ".config", appName))
+	}
 	v.AddConfigPath(".")
 
 	setDefaults(v)

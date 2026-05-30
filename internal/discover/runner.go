@@ -418,73 +418,91 @@ func (r *Runner) processItem(ctx context.Context, item ScrapedItem, progYear, pr
 		OriginCountry:    originCountry,
 	}
 
-	titleID, err := r.db.UpsertTitle(ctx, title)
-	if err != nil {
-		return fmt.Errorf("saving title: %w", err)
-	}
+	var titleID int64
+	var existingEvent *model.ReleaseEvent
 
-	existing, err := r.db.GetLatestReleaseEvent(ctx, titleID)
-	if err != nil {
-		return fmt.Errorf("checking existing events: %w", err)
-	}
+	err = r.db.Transaction(ctx, func(ctx context.Context) error {
+		id, err := r.db.UpsertTitle(ctx, title)
+		if err != nil {
+			return fmt.Errorf("saving title: %w", err)
+		}
+		titleID = id
 
-	// Skip if already pending — don't stack duplicate events
-	if existing != nil && existing.Status == model.StatusPending {
-		return nil
-	}
+		existing, err := r.db.GetLatestReleaseEvent(ctx, titleID)
+		if err != nil {
+			return fmt.Errorf("checking existing events: %w", err)
+		}
 
-	var prevStatus model.ReleaseStatus
-	var notes string
+		// Skip if already pending — don't stack duplicate events
+		if existing != nil && existing.Status == model.StatusPending {
+			existingEvent = existing
+			return nil
+		}
 
-	if existing != nil {
-		prevStatus = existing.Status
+		var evtNotes string
+		var evtPrev model.ReleaseStatus
 
-		// Check for upgrade: was it previously downloaded with a lower source type?
-		if existing.Status == model.StatusDownloaded {
-			dl, err := r.db.GetDownloadByTitleID(ctx, titleID)
-			if err == nil && dl != nil && dl.SourceType != "" {
-				if isUpgrade(dl.SourceType, item.ReleaseType) {
-					notes = fmt.Sprintf("upgrade: %s → %s", dl.SourceType, item.ReleaseType)
+		if existing != nil {
+			evtPrev = existing.Status
+
+			// Check for upgrade: was it previously downloaded with a lower source type?
+			if existing.Status == model.StatusDownloaded {
+				dl, err := r.db.GetDownloadByTitleID(ctx, titleID)
+				if err == nil && dl != nil && dl.SourceType != "" {
+					if isUpgrade(dl.SourceType, item.ReleaseType) {
+						evtNotes = fmt.Sprintf("upgrade: %s → %s", dl.SourceType, item.ReleaseType)
+					}
 				}
 			}
 		}
-	}
 
-	status := model.StatusPending
-	if existing != nil && notes == "" {
-		switch existing.Status {
-		case model.StatusRejected:
-			status = model.StatusPending
-		case model.StatusDownloaded:
-			status = model.StatusPending
+		st := model.StatusPending
+		if existing != nil && evtNotes == "" {
+			switch existing.Status {
+			case model.StatusRejected:
+				st = model.StatusPending
+			case model.StatusDownloaded:
+				st = model.StatusPending
+			}
 		}
-	}
-	// If upgrade, always show as pending
-	if notes != "" {
-		status = model.StatusPending
-	}
-
-	event := &model.ReleaseEvent{
-		TitleID:        titleID,
-		Source:         "scraper",
-		ReleaseType:    item.ReleaseType,
-		ReleaseDate:    item.ReleaseDate,
-		Status:         status,
-		PreviousStatus: prevStatus,
-		Notes:          notes,
-		ISOYear:        progYear,
-		ISOWeek:        progWeek,
-	}
-
-	// If previous event was downloaded and this is new, mark the old as "upgraded"
-	if existing != nil && existing.Status == model.StatusDownloaded && notes != "" {
-		if err := r.db.UpdateReleaseEventStatus(ctx, existing.ID, model.StatusDownloaded); err != nil {
-			r.log.Warn().Err(err).Msg("failed to mark previous download as upgraded")
+		if evtNotes != "" {
+			st = model.StatusPending
 		}
+
+		// If previous event was downloaded and this is new, mark the old as "upgraded"
+		if existing != nil && existing.Status == model.StatusDownloaded && evtNotes != "" {
+			if err := r.db.UpdateReleaseEventStatus(ctx, existing.ID, model.StatusDownloaded); err != nil {
+				r.log.Warn().Err(err).Msg("failed to mark previous download as upgraded")
+			}
+		}
+
+		evt := &model.ReleaseEvent{
+			TitleID:        titleID,
+			Source:         "scraper",
+			ReleaseType:    item.ReleaseType,
+			ReleaseDate:    item.ReleaseDate,
+			Status:         st,
+			PreviousStatus: evtPrev,
+			Notes:          evtNotes,
+			ISOYear:        progYear,
+			ISOWeek:        progWeek,
+		}
+
+		if _, err := r.db.CreateReleaseEvent(ctx, evt); err != nil {
+			return fmt.Errorf("saving release event: %w", err)
+		}
+
+		existingEvent = existing
+		return nil
+	})
+
+	if err != nil {
+		return err
 	}
 
-	if _, err := r.db.CreateReleaseEvent(ctx, event); err != nil {
-		return fmt.Errorf("saving release event: %w", err)
+	// Skip if already pending — don't stack duplicate events
+	if existingEvent != nil && existingEvent.Status == model.StatusPending {
+		return nil
 	}
 
 	return nil

@@ -9,12 +9,15 @@ import (
 	"strings"
 	"time"
 	"unicode"
+
+	"golang.org/x/time/rate"
 )
 
 type TMDBClient struct {
 	apiKey      string
 	accessToken string
 	http        *http.Client
+	limiter     *rate.Limiter
 }
 
 func NewTMDBClient(apiKey, accessToken string) *TMDBClient {
@@ -24,6 +27,7 @@ func NewTMDBClient(apiKey, accessToken string) *TMDBClient {
 		http: &http.Client{
 			Timeout: 10 * time.Second,
 		},
+		limiter: rate.NewLimiter(rate.Limit(8), 1),
 	}
 }
 
@@ -124,6 +128,10 @@ func (c *TMDBClient) discoverStream(ctx context.Context, u *url.URL, mediaType s
 	var items []StreamingItem
 
 	for page := 1; page <= 3; page++ {
+		if err := c.limiter.Wait(ctx); err != nil {
+			return nil, err
+		}
+
 		q := u.Query()
 		q.Set("page", fmt.Sprintf("%d", page))
 		u.RawQuery = q.Encode()
@@ -203,6 +211,10 @@ func (c *TMDBClient) GetTVDetails(ctx context.Context, tmdbID int) (*TMDBDetails
 }
 
 func (c *TMDBClient) getDetails(ctx context.Context, url string) (*TMDBDetails, error) {
+	if err := c.limiter.Wait(ctx); err != nil {
+		return nil, err
+	}
+
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, err
@@ -276,6 +288,10 @@ func (c *TMDBClient) SearchTV(ctx context.Context, query string, year int) (*TMD
 }
 
 func (c *TMDBClient) searchJSON(ctx context.Context, u *url.URL) (*TMDBMultiResult, error) {
+	if err := c.limiter.Wait(ctx); err != nil {
+		return nil, err
+	}
+
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
 	if err != nil {
 		return nil, fmt.Errorf("creating request: %w", err)
@@ -514,6 +530,10 @@ func tokenize(s string) []string {
 }
 
 func (c *TMDBClient) getExternalIDs(ctx context.Context, tmdbID int, mediaType string) (*TMDBExternalIDs, error) {
+	if err := c.limiter.Wait(ctx); err != nil {
+		return nil, err
+	}
+
 	u := fmt.Sprintf("%s/%s/%d/external_ids", tmdbBase, mediaType, tmdbID)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
@@ -546,6 +566,10 @@ type TMDBContentRatings struct {
 }
 
 func (c *TMDBClient) GetTVRating(ctx context.Context, tmdbID int) string {
+	if err := c.limiter.Wait(ctx); err != nil {
+		return ""
+	}
+
 	path := fmt.Sprintf("%s/tv/%d/content_ratings", tmdbBase, tmdbID)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, path, nil)
 	if err != nil {
@@ -591,6 +615,10 @@ type TMDBReleaseDate struct {
 }
 
 func (c *TMDBClient) GetUSCertification(ctx context.Context, tmdbID int, mediaType string) string {
+	if err := c.limiter.Wait(ctx); err != nil {
+		return ""
+	}
+
 	path := fmt.Sprintf("%s/%s/%d/release_dates", tmdbBase, mediaType, tmdbID)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, path, nil)
 	if err != nil {

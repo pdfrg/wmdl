@@ -27,7 +27,7 @@ any weeks where `wmdl discover` didn't run (power outage, just forgot, whatever)
 find the right torrent. Reports e.g. `2/4` and reminds you to run `wmdl process --week` or `wmdl
 catchup`.
 - **Broad Content Included** — Sick of all the same stuff? Includes numerous non-US and non-English
-media.
+media, with country of origin flags and spoken language information.
 - **Movie/TV Posters** — Uses Kitty image protocol.  Kitty, Ghostty, or Rio terminals recommended. Other
 terminals work for core functionality, image placeholder shown.
 - **Media Info and Ratings** - Brief overview, Rotten Tomatoes, IMDb, TMDB, Metacritic scores, YouTube
@@ -37,8 +37,10 @@ Title mismatches are immediately discarded.  Remaining results ranked by your re
 and release group preferences.  Top 10 matches presented for your choosing.
 - **Private Tracker Support** — Configure your preferred indexer.  If not available, falls back to
 all Prowlarr indexers.
-- **Auto TV Backlog Filling** — Just found out about a show and it's already season 3? `wmdl` detects
+- **TV Backlog Filling** — Just found out about a show and it's already season 3? `wmdl` detects
 and offers to look for seasons 1 and 2.
+- **Movie Colection Completion** — When you add a movie in a TMDB collection, `wmdl` checks if you have
+all the others.  If not, offers to search.
 
 ## Quick start
 

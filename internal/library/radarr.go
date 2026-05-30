@@ -227,17 +227,23 @@ func (r *RadarrClient) GetRootFolders(ctx context.Context) ([]RadarrRootFolder, 
 }
 
 func (r *RadarrClient) TriggerSearch(ctx context.Context, movieID int) error {
-	cmd := radarrCommand{
-		Name:     "MoviesSearch",
-		MovieIDs: []int{movieID},
-	}
-	body, _ := json.Marshal(cmd)
-
-	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, r.baseURL+"/api/v3/command", bytes.NewReader(body))
-	req.Header.Set("X-Api-Key", r.apiKey)
-	req.Header.Set("Content-Type", "application/json")
-
 	return r.retry(ctx, func() error {
+		cmd := radarrCommand{
+			Name:     "MoviesSearch",
+			MovieIDs: []int{movieID},
+		}
+		body, err := json.Marshal(cmd)
+		if err != nil {
+			return err
+		}
+
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, r.baseURL+"/api/v3/command", bytes.NewReader(body))
+		if err != nil {
+			return err
+		}
+		req.Header.Set("X-Api-Key", r.apiKey)
+		req.Header.Set("Content-Type", "application/json")
+
 		resp, err := r.http.Do(req)
 		if err != nil {
 			return fmt.Errorf("radarr search: %w", err)

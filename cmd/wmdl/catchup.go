@@ -1,10 +1,8 @@
 package main
 
 import (
-	"context"
 	"fmt"
 	"path/filepath"
-	"time"
 
 	"github.com/rs/zerolog/log"
 	"github.com/spf13/cobra"
@@ -30,6 +28,14 @@ For example, if weeks 10, 11, and 12 all need the full pipeline:
 The individual commands (discover, review, process) target only
 one week at a time — use catchup to handle all outstanding weeks.`,
 		RunE: func(c *cobra.Command, args []string) error {
+			cfg, err := config.Load()
+			if err != nil {
+				return fmt.Errorf("loading config: %w", err)
+			}
+			if err := cfg.Validate(); err != nil {
+				return fmt.Errorf("invalid config: %w", err)
+			}
+
 			dbPath, err := dataDir()
 			if err != nil {
 				return err
@@ -47,13 +53,14 @@ one week at a time — use catchup to handle all outstanding weeks.`,
 
 			if len(states) == 0 {
 				log.Info().Msg("No week data found. Running discover for current week.")
-				return runDiscover(c, false)
+				_, err = runDiscoverForWeek(c.Context(), database, cfg, 0, 0, false)
+				return err
 			}
 
 			for _, s := range states {
 				if !s.Discovered {
 					log.Info().Msgf("Week %d/%d: needs discover, running now...", s.Year, s.Week)
-					if err := runDiscover(c, false); err != nil {
+					if _, err := runDiscoverForWeek(c.Context(), database, cfg, s.Year, s.Week, false); err != nil {
 						log.Warn().Err(err).Msg("discover failed")
 					}
 					continue
@@ -61,7 +68,7 @@ one week at a time — use catchup to handle all outstanding weeks.`,
 
 				if !s.Reviewed {
 					log.Info().Msgf("Week %d/%d: needs review, running now...", s.Year, s.Week)
-					if err := runReview(c, database); err != nil {
+					if _, err := runReviewForWeek(c.Context(), database, cfg, s.Year, s.Week); err != nil {
 						log.Warn().Err(err).Msg("review failed")
 					}
 					continue
@@ -69,7 +76,7 @@ one week at a time — use catchup to handle all outstanding weeks.`,
 
 				if !s.Processed {
 					log.Info().Msgf("Week %d/%d: needs process, running now...", s.Year, s.Week)
-					if err := runProcess(c); err != nil {
+					if err := runProcessForWeek(c.Context(), database, cfg, s.Year, s.Week); err != nil {
 						log.Warn().Err(err).Msg("process failed")
 					}
 				}
@@ -96,64 +103,4 @@ one week at a time — use catchup to handle all outstanding weeks.`,
 		},
 	}
 	return cmd
-}
-
-func runDiscover(cmd *cobra.Command, headless bool) error {
-	cfg, err := config.Load()
-	if err != nil {
-		return fmt.Errorf("loading config: %w", err)
-	}
-	if err := cfg.Validate(); err != nil {
-		return fmt.Errorf("invalid config: %w", err)
-	}
-
-	dbPath, err := dataDir()
-	if err != nil {
-		return err
-	}
-	database, err := db.Open(filepath.Join(dbPath, "wmdl.db"))
-	if err != nil {
-		return err
-	}
-	defer database.Close()
-
-	_, err = runDiscoverForWeek(cmd.Context(), database, cfg, 0, 0, headless)
-	return err
-}
-
-func runReview(cmd *cobra.Command, database *db.DB) error {
-	cfg, err := config.Load()
-	if err != nil {
-		return fmt.Errorf("loading config: %w", err)
-	}
-	if err := cfg.Validate(); err != nil {
-		return fmt.Errorf("invalid config: %w", err)
-	}
-	_, err = runReviewForWeek(cmd.Context(), database, cfg, 0, 0)
-	return err
-}
-
-func runProcess(cmd *cobra.Command) error {
-	cfg, err := config.Load()
-	if err != nil {
-		return fmt.Errorf("loading config: %w", err)
-	}
-	if err := cfg.Validate(); err != nil {
-		return fmt.Errorf("invalid config: %w", err)
-	}
-
-	dbPath, err := dataDir()
-	if err != nil {
-		return err
-	}
-	database, err := db.Open(filepath.Join(dbPath, "wmdl.db"))
-	if err != nil {
-		return err
-	}
-	defer database.Close()
-
-	ctx, cancel := context.WithTimeout(cmd.Context(), 5*time.Minute)
-	defer cancel()
-
-	return runProcessForWeek(ctx, database, cfg, 0, 0)
 }

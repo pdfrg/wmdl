@@ -32,6 +32,22 @@ func (d *DB) Close() error {
 	return d.db.Close()
 }
 
+func (d *DB) Transaction(ctx context.Context, fn func(context.Context) error) error {
+	tx, err := d.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("beginning transaction: %w", err)
+	}
+
+	if err := fn(ctx); err != nil {
+		if rbErr := tx.Rollback(); rbErr != nil {
+			return fmt.Errorf("rolling back: %v (original: %w)", rbErr, err)
+		}
+		return err
+	}
+
+	return tx.Commit()
+}
+
 func (d *DB) Migrate(ctx context.Context) error {
 	schema := `
 	CREATE TABLE IF NOT EXISTS titles (
@@ -93,9 +109,11 @@ func (d *DB) Migrate(ctx context.Context) error {
 	);
 
 	CREATE INDEX IF NOT EXISTS idx_titles_tmdb_id ON titles(tmdb_id);
+	CREATE INDEX IF NOT EXISTS idx_titles_tvdb_id ON titles(tvdb_id);
 	CREATE INDEX IF NOT EXISTS idx_release_events_title_id ON release_events(title_id);
 	CREATE INDEX IF NOT EXISTS idx_release_events_status ON release_events(status);
 	CREATE INDEX IF NOT EXISTS idx_downloads_title_id ON downloads(title_id);
+	CREATE INDEX IF NOT EXISTS idx_downloads_release_event_id ON downloads(release_event_id);
 
 	CREATE TABLE IF NOT EXISTS week_state (
 		year        INTEGER NOT NULL,
@@ -128,6 +146,9 @@ func (d *DB) Migrate(ctx context.Context) error {
 	d.db.ExecContext(ctx, `ALTER TABLE titles ADD COLUMN original_language TEXT DEFAULT ''`)
 	d.db.ExecContext(ctx, `ALTER TABLE titles ADD COLUMN origin_country TEXT DEFAULT ''`)
 	d.db.ExecContext(ctx, `ALTER TABLE titles ADD COLUMN tmdb_title TEXT DEFAULT ''`)
+
+	// Index on iso_year/iso_week requires those columns to exist first
+	d.db.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_release_events_week ON release_events(iso_year, iso_week)`)
 
 	return nil
 }

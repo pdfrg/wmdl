@@ -200,14 +200,17 @@ func (s *SonarrClient) Add(ctx context.Context, tvdbID int, title string, year i
 }
 
 func (s *SonarrClient) TriggerSeasonSearch(ctx context.Context, seriesID, seasonNumber int) error {
-	cmd := sonarrCommand{
-		Name:         "SeasonSearch",
-		SeriesID:     seriesID,
-		SeasonNumber: seasonNumber,
-	}
-	body, _ := json.Marshal(cmd)
-
 	return s.retry(ctx, func() error {
+		cmd := sonarrCommand{
+			Name:         "SeasonSearch",
+			SeriesID:     seriesID,
+			SeasonNumber: seasonNumber,
+		}
+		body, err := json.Marshal(cmd)
+		if err != nil {
+			return err
+		}
+
 		req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.baseURL+"/api/v3/command", bytes.NewReader(body))
 		if err != nil {
 			return err

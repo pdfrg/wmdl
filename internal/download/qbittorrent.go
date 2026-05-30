@@ -101,51 +101,48 @@ func (q *QbittorrentClient) add(ctx context.Context, field, value string, opts .
 		o(opt)
 	}
 
-	v := url.Values{}
-	v.Set(field, value)
-	if opt.SavePath != "" {
-		v.Set("savepath", opt.SavePath)
-	}
-	if opt.Category != "" {
-		v.Set("category", opt.Category)
-	}
-	if opt.Paused {
-		v.Set("paused", "true")
-	}
+	for attempt := 0; attempt < 2; attempt++ {
+		v := url.Values{}
+		v.Set(field, value)
+		if opt.SavePath != "" {
+			v.Set("savepath", opt.SavePath)
+		}
+		if opt.Category != "" {
+			v.Set("category", opt.Category)
+		}
+		if opt.Paused {
+			v.Set("paused", "true")
+		}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, q.baseURL+"/api/v2/torrents/add", strings.NewReader(v.Encode()))
-	if err != nil {
-		return "", err
-	}
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	q.setAuth(req)
-
-	resp, err := q.http.Do(req)
-	if err != nil {
-		return "", fmt.Errorf("qbittorrent add: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode == http.StatusForbidden {
-		q.loggedIn = false
-		if err := q.login(ctx); err != nil {
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, q.baseURL+"/api/v2/torrents/add", strings.NewReader(v.Encode()))
+		if err != nil {
 			return "", err
 		}
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		q.setAuth(req)
-		resp.Body.Close()
 
-		resp, err = q.http.Do(req)
+		resp, err := q.http.Do(req)
 		if err != nil {
 			return "", fmt.Errorf("qbittorrent add: %w", err)
 		}
 		defer resp.Body.Close()
-	}
 
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("qbittorrent add returned %d", resp.StatusCode)
-	}
+		if resp.StatusCode == http.StatusForbidden && attempt == 0 {
+			q.loggedIn = false
+			if err := q.login(ctx); err != nil {
+				return "", err
+			}
+			resp.Body.Close()
+			continue
+		}
 
-	_, _ = io.Copy(io.Discard, resp.Body)
+		if resp.StatusCode != http.StatusOK {
+			return "", fmt.Errorf("qbittorrent add returned %d", resp.StatusCode)
+		}
+
+		_, _ = io.Copy(io.Discard, resp.Body)
+		break
+	}
 
 	return "", nil
 }
