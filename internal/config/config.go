@@ -17,6 +17,7 @@ type Config struct {
 	Downloader       DownloaderConfig `mapstructure:"downloader"`
 	Library          LibraryConfig    `mapstructure:"library"`
 	Quality          QualityConfig    `mapstructure:"quality"`
+	MediaTypes       MediaTypesConfig `mapstructure:"media_types"`
 	ShowTopN         int              `mapstructure:"show_top_n"`
 	MinSeeders       int              `mapstructure:"min_seeders"`
 	PreferredGroups  []string         `mapstructure:"preferred_release_groups"`
@@ -78,11 +79,24 @@ type DelugeConfig struct {
 type CategoryConfig struct {
 	Movies string `mapstructure:"movies"`
 	TV     string `mapstructure:"tv"`
+	Music  string `mapstructure:"music"`
 }
 
 type LibraryConfig struct {
 	Radarr RadarrConfig `mapstructure:"radarr"`
 	Sonarr SonarrConfig `mapstructure:"sonarr"`
+	Lidarr LidarrConfig `mapstructure:"lidarr"`
+}
+
+type LidarrConfig struct {
+	URL               string `mapstructure:"url"`
+	APIKey            string `mapstructure:"api_key"`
+	RootFolder        string `mapstructure:"root_folder"`
+	QualityProfile    string `mapstructure:"quality_profile"`
+	MetadataProfile   string `mapstructure:"metadata_profile"`
+	Monitor           string `mapstructure:"monitor"`
+	MonitorNewAlbums  bool   `mapstructure:"monitor_new_albums"`
+	Timeout           int    `mapstructure:"timeout"`
 }
 
 type RadarrConfig struct {
@@ -107,6 +121,7 @@ type SonarrConfig struct {
 type QualityConfig struct {
 	Movies MediaQualityConfig `mapstructure:"movies"`
 	TV     MediaQualityConfig `mapstructure:"tv"`
+	Music  MusicQualityConfig `mapstructure:"music"`
 }
 
 type MediaQualityConfig struct {
@@ -114,6 +129,31 @@ type MediaQualityConfig struct {
 	PreferHDR      bool     `mapstructure:"prefer_hdr"`
 	SourcePriority []string `mapstructure:"source_priority"`
 	CodecPriority  []string `mapstructure:"codec_priority"`
+}
+
+type MusicQualityConfig struct {
+	FormatPriority  []string `mapstructure:"format_priority"`
+	BitratePriority []string `mapstructure:"bitrate_priority"`
+}
+
+type MediaTypesConfig struct {
+	Movies bool       `mapstructure:"movies"`
+	TV     bool       `mapstructure:"tv"`
+	Music  MusicConfig `mapstructure:"music"`
+}
+
+type MusicConfig struct {
+	Enabled              bool              `mapstructure:"enabled"`
+	InitialTimeshiftWeeks int              `mapstructure:"initial_timeshift_weeks"`
+	Filter               MusicFilterConfig `mapstructure:"filter"`
+}
+
+type MusicFilterConfig struct {
+	MinCriticScore  int  `mapstructure:"min_critic_score"`
+	MinCriticReviews int  `mapstructure:"min_critic_reviews"`
+	MinUserScore    int  `mapstructure:"min_user_score"`
+	MinUserRatings  int  `mapstructure:"min_user_ratings"`
+	IncludeMustHear bool `mapstructure:"include_must_hear"`
 }
 
 const configName = "config"
@@ -199,6 +239,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("downloader.type", "qbittorrent")
 	v.SetDefault("downloader.categories.movies", "Movies")
 	v.SetDefault("downloader.categories.tv", "TV")
+	v.SetDefault("downloader.categories.music", "Music")
 	v.SetDefault("show_top_n", 10)
 	v.SetDefault("min_seeders", 3)
 	v.SetDefault("preferred_release_groups", []string{})
@@ -220,4 +261,19 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("library.sonarr.monitor_new_episodes", true)
 	v.SetDefault("library.sonarr.season_folders", true)
 	v.SetDefault("library.sonarr.timeout", 120)
+	v.SetDefault("library.lidarr.timeout", 120)
+	v.SetDefault("library.lidarr.monitor_new_albums", true)
+	v.SetDefault("library.lidarr.monitor", "all")
+
+	v.SetDefault("media_types.movies", true)
+	v.SetDefault("media_types.tv", true)
+	v.SetDefault("quality.music.format_priority", []string{"flac", "mp3", "aac"})
+	v.SetDefault("quality.music.bitrate_priority", []string{"lossless", "320", "v0", "v2"})
+	v.SetDefault("media_types.music.enabled", true)
+	v.SetDefault("media_types.music.initial_timeshift_weeks", 1)
+	v.SetDefault("media_types.music.filter.min_critic_score", 75)
+	v.SetDefault("media_types.music.filter.min_critic_reviews", 5)
+	v.SetDefault("media_types.music.filter.min_user_score", 75)
+	v.SetDefault("media_types.music.filter.min_user_ratings", 200)
+	v.SetDefault("media_types.music.filter.include_must_hear", true)
 }

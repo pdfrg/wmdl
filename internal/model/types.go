@@ -5,6 +5,7 @@ type MediaType string
 const (
 	MediaTypeMovie MediaType = "movie"
 	MediaTypeTV    MediaType = "tv"
+	MediaTypeMusic MediaType = "music"
 )
 
 type ReleaseStatus string
@@ -98,4 +99,63 @@ type WeekState struct {
 	UpdatedAt       string
 	ApprovedCount   int // total approved + downloaded events
 	DownloadedCount int // downloaded events only
+}
+
+type AlbumType string
+
+const (
+	AlbumTypeLP          AlbumType = "lp"
+	AlbumTypeEP          AlbumType = "ep"
+	AlbumTypeSoundtrack  AlbumType = "soundtrack"
+	AlbumTypeLive        AlbumType = "live"
+	AlbumTypeRemix       AlbumType = "remix"
+	AlbumTypeBoxSet      AlbumType = "box set"
+	AlbumTypeMixtape     AlbumType = "mixtape"
+	AlbumTypeCompilation AlbumType = "compilation"
+	AlbumTypeReissue     AlbumType = "reissue"
+	AlbumTypeSingle      AlbumType = "single"
+)
+
+type Artist struct {
+	ID        int64
+	MBID      string
+	Name      string
+	LidarrID  int64
+	CreatedAt string
+}
+
+type Album struct {
+	ID       int64
+	ArtistID int64
+	Title    string
+	Year     int
+	MBID     string // MusicBrainz release group ID
+	AlbumType AlbumType
+
+	AOTYCriticScore float64
+	AOTYCriticCount int
+	AOTYUserScore   float64
+	AOTYUserCount   int
+	AOTYMustHear    bool
+
+	MBRating float64
+
+	ReleaseDate string
+	Genres      string
+	Overview    string
+	PosterPath  string
+	CreatedAt   string
+}
+
+type AlbumReleaseEvent struct {
+	ID             int64
+	AlbumID        int64
+	Source         string // "albumoftheyear"
+	ReleaseDate    string
+	Status         ReleaseStatus
+	PreviousStatus ReleaseStatus
+	Notes          string
+	CreatedAt      string
+	ISOYear        int
+	ISOWeek        int
 }

@@ -96,7 +96,7 @@ func runReviewForWeek(ctx context.Context, database *db.DB, cfg *config.Config, 
 			}
 			switch choice {
 			case "r":
-				tui, err := review.NewReviewTUIWithEvents(events, database, cfg.PosterMode)
+				tui, err := review.NewReviewTUIWithEvents(events, nil, database, cfg.PosterMode)
 				if err != nil {
 					return 0, err
 				}
@@ -130,7 +130,7 @@ func runReviewForWeek(ctx context.Context, database *db.DB, cfg *config.Config, 
 		}
 	}
 
-	tui, err := review.NewReviewTUIWithEvents(pendingEvents, database, cfg.PosterMode)
+	tui, err := review.NewReviewTUIWithEvents(pendingEvents, nil, database, cfg.PosterMode)
 	if err != nil {
 		return 0, err
 	}
@@ -367,6 +367,24 @@ func runProcessForWeek(ctx context.Context, database *db.DB, cfg *config.Config,
 		log.Warn().Msgf("No results found for %d item(s):", len(exec.Unfound))
 		for _, u := range exec.Unfound {
 			log.Info().Str("title", u).Msg("unfound")
+		}
+	}
+
+	// ─── Music album processing ──────────────────────────────────────────
+	albumEvents, err := database.ListApprovedAlbumEventsWithAlbums(ctx)
+	if err != nil {
+		log.Warn().Err(err).Msg("loading approved album events")
+	} else if len(albumEvents) > 0 {
+		log.Info().Msgf("Processing %d music album(s)...", len(albumEvents))
+		for _, ae := range albumEvents {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			default:
+			}
+			if err := exec.ProcessMusicAlbum(ctx, ae); err != nil {
+				log.Warn().Err(err).Str("album", ae.Album.Title).Str("artist", ae.Artist.Name).Msg("error processing album")
+			}
 		}
 	}
 

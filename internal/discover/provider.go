@@ -39,4 +39,13 @@ type ScrapedItem struct {
 	RTAudienceScore float64
 	YoutubeViews    int64
 	Source          string
+
+	// Music-specific fields (empty for movie/TV)
+	ArtistName      string
+	AlbumType       model.AlbumType
+	AOTYCriticScore float64
+	AOTYCriticCount int
+	AOTYUserScore   float64
+	AOTYUserCount   int
+	AOTYMustHear    bool
 }

@@ -51,6 +51,7 @@ type Executor struct {
 	dl     download.Client
 	radarr *library.RadarrClient
 	sonarr *library.SonarrClient
+	lidarr *library.LidarrClient
 
 	Unfound       []string
 	phase3Movies  []Phase3Movie
@@ -65,6 +66,10 @@ func NewExecutor(logger zerolog.Logger, cfg *config.Config, database *db.DB) *Ex
 	dl := createDownloadClient(logger, cfg)
 	radarr := library.NewRadarrClient(cfg.Library.Radarr.URL, cfg.Library.Radarr.APIKey, cfg.Library.Radarr.Timeout)
 	sonarr := library.NewSonarrClient(cfg.Library.Sonarr.URL, cfg.Library.Sonarr.APIKey, cfg.Library.Sonarr.Timeout)
+	var lidarr *library.LidarrClient
+	if cfg.Library.Lidarr.URL != "" {
+		lidarr = library.NewLidarrClient(cfg.Library.Lidarr.URL, cfg.Library.Lidarr.APIKey, cfg.Library.Lidarr.Timeout)
+	}
 	return &Executor{
 		log:    logger,
 		cfg:    cfg,
@@ -73,6 +78,7 @@ func NewExecutor(logger zerolog.Logger, cfg *config.Config, database *db.DB) *Ex
 		dl:     dl,
 		radarr: radarr,
 		sonarr: sonarr,
+		lidarr: lidarr,
 	}
 }
 
@@ -137,6 +143,11 @@ func (e *Executor) HealthCheck(ctx context.Context) HealthCheckResult {
 	if e.sonarr != nil {
 		if err := e.sonarr.Ping(ctx); err != nil {
 			result.Warnings = append(result.Warnings, fmt.Sprintf("Sonarr: %v", err))
+		}
+	}
+	if e.lidarr != nil {
+		if err := e.lidarr.Ping(ctx); err != nil {
+			result.Warnings = append(result.Warnings, fmt.Sprintf("Lidarr: %v", err))
 		}
 	}
 
@@ -1264,6 +1275,199 @@ func promptYesNo(ctx context.Context, prompt string) bool {
 	case <-ctx.Done():
 		return false
 	}
+}
+
+// ─── Music album processing ─────────────────────────────────────────────
+
+type MusicSearchResult struct {
+	Event  db.EventWithAlbum
+	Top    []quality.ParsedRelease
+	Error  error
+}
+
+func (e *Executor) SearchMusicRelease(ctx context.Context, ae db.EventWithAlbum) (*MusicSearchResult, error) {
+	query := fmt.Sprintf("%s %s", ae.Artist.Name, ae.Album.Title)
+	e.log.Info().Str("artist", ae.Artist.Name).Str("album", ae.Album.Title).Str("query", query).Msg("searching music")
+
+	releases, err := e.prowl.SearchMusic(ctx, query)
+	if err != nil {
+		return nil, fmt.Errorf("searching music: %w", err)
+	}
+	if len(releases) == 0 {
+		// Try with just the album title
+		releases, err = e.prowl.SearchMusic(ctx, ae.Album.Title)
+		if err != nil {
+			return nil, fmt.Errorf("searching music (fallback): %w", err)
+		}
+	}
+
+	if len(releases) == 0 {
+		e.Unfound = append(e.Unfound, fmt.Sprintf("%s - %s", ae.Artist.Name, ae.Album.Title))
+		return &MusicSearchResult{Event: ae}, nil
+	}
+
+	// Parse with music quality
+	for i := range releases {
+		musicParsed := quality.ParseMusicRelease(releases[i].RawTitle)
+		releases[i].Source = musicParsed.Source
+		releases[i].Codec = musicParsed.Codec
+	}
+
+	prefs := quality.MusicQualityPrefs{
+		FormatPriority:  e.cfg.Quality.Music.FormatPriority,
+		BitratePriority: e.cfg.Quality.Music.BitratePriority,
+		MinSeeders:      e.cfg.MinSeeders,
+		PreferredGroups: e.cfg.PreferredGroups,
+	}
+	top := quality.SortMusicTop(releases, prefs, e.cfg.ShowTopN)
+
+	return &MusicSearchResult{Event: ae, Top: top}, nil
+}
+
+func (e *Executor) ProcessMusicAlbum(ctx context.Context, ae db.EventWithAlbum) error {
+	sr, err := e.SearchMusicRelease(ctx, ae)
+	if err != nil {
+		return err
+	}
+	if len(sr.Top) == 0 {
+		e.log.Info().Str("artist", ae.Artist.Name).Str("album", ae.Album.Title).Msg("no music results found")
+		return nil
+	}
+
+	// Show picker
+	selLabel := ae.Artist.Name + " - " + ae.Album.Title
+	sel := NewSelector(selLabel, sr.Top)
+	chosen, err := sel.Run()
+	if err != nil {
+		return err
+	}
+	if len(chosen) == 0 {
+		return nil
+	}
+
+	// Download
+	category := e.cfg.Downloader.Categories.Music
+	if category == "" {
+		category = "Music"
+	}
+	var releaseEventID int64
+	if ae.Event != nil {
+		releaseEventID = ae.Event.ID
+	}
+
+	for _, release := range chosen {
+		e.log.Info().Str("release", release.RawTitle).Str("artist", ae.Artist.Name).Str("album", ae.Album.Title).Int("score", release.Score).Msg("selected music release")
+		uri := release.DownloadURL
+		if uri == "" {
+			uri = release.MagnetURL
+		}
+		if uri != "" {
+			tid, err := e.dl.AddTorrent(ctx, uri, download.WithCategory(category))
+			if err != nil {
+				e.log.Warn().Err(err).Msg("music add failed")
+			} else {
+				e.log.Info().Str("client", e.cfg.Downloader.Type).Str("category", category).Str("torrent_id", tid).Msg("added music to download client")
+				_ = tid
+			}
+		}
+
+		// Create download record in DB
+		dl := &model.Download{
+			TitleID:        0,
+			ReleaseEventID: releaseEventID,
+			Quality:        release.Source,
+			SourceType:     release.Source,
+			Codec:          release.Codec,
+			InfoHash:       release.InfoHash,
+			Category:       category,
+			Status:         model.DownloadAdded,
+			ClientTorrentID: "",
+		}
+		if _, err := e.db.CreateDownload(ctx, dl); err != nil {
+			e.log.Warn().Err(err).Msg("saving music download record")
+		}
+
+		_ = e.db.UpdateAlbumReleaseEventStatus(ctx, releaseEventID, model.StatusDownloaded)
+	}
+
+	// Lidarr integration
+	if e.lidarr == nil {
+		e.log.Warn().Msg("Lidarr not configured, skipping library add")
+		return nil
+	}
+
+	mbid := ae.Album.MBID
+	artistMbid := ae.Artist.MBID
+	if mbid == "" || artistMbid == "" {
+		e.log.Warn().Str("album", ae.Album.Title).Msg("no MusicBrainz ID, skipping Lidarr")
+		return nil
+	}
+
+	// Step 1: Check/add artist in Lidarr
+	existingArtist, err := e.lidarr.GetArtist(ctx, artistMbid)
+	if err != nil {
+		return fmt.Errorf("lidarr artist check: %w", err)
+	}
+
+	if existingArtist == nil {
+		// Need to add artist
+		e.log.Info().Str("artist", ae.Artist.Name).Msg("adding artist to Lidarr")
+
+		qualProfileID, err := e.lidarr.ResolveQualityProfileID(ctx, e.cfg.Library.Lidarr.QualityProfile)
+		if err != nil {
+			return fmt.Errorf("resolving quality profile: %w", err)
+		}
+
+		metaProfileID, err := e.lidarr.ResolveMetadataProfileID(ctx, e.cfg.Library.Lidarr.MetadataProfile)
+		if err != nil {
+			return fmt.Errorf("resolving metadata profile: %w", err)
+		}
+
+		rootFolder := e.cfg.Library.Lidarr.RootFolder
+		if rootFolder == "" {
+			return fmt.Errorf("lidarr root_folder not configured")
+		}
+
+		monitor := e.cfg.Library.Lidarr.Monitor
+		if monitor == "" {
+			monitor = "all"
+		}
+
+		added, err := e.lidarr.AddArtist(ctx, artistMbid, ae.Artist.Name, library.AddArtistOptions{
+			Monitored:        true,
+			QualityProfileID: qualProfileID,
+			MetadataProfileID: metaProfileID,
+			RootFolderPath:   rootFolder,
+			Monitor:          monitor,
+			SearchNow:        false,
+		})
+		if err != nil {
+			return fmt.Errorf("adding artist to Lidarr: %w", err)
+		}
+
+		_ = e.db.SetSetting(ctx, fmt.Sprintf("lidarr_artist_%s", artistMbid), fmt.Sprintf("%d", added.ID))
+		existingArtist = added
+		e.log.Info().Int("lidarr_id", added.ID).Str("artist", ae.Artist.Name).Msg("added artist to Lidarr")
+	}
+
+	// Step 2: Check if album is monitored
+	existingAlbum, err := e.lidarr.LookupAlbum(ctx, mbid)
+	if err != nil {
+		return fmt.Errorf("lidarr album lookup: %w", err)
+	}
+
+	if existingAlbum == nil || !existingAlbum.Monitored {
+		if existingAlbum == nil {
+			e.log.Info().Str("album", ae.Album.Title).Msg("album not in Lidarr, may be excluded by metadata profile")
+		} else {
+			e.log.Info().Str("album", ae.Album.Title).Msg("album in Lidarr but not monitored")
+		}
+		e.log.Info().Msgf("Album %s may be excluded by your metadata profile (%s)",
+			ae.Album.Title, e.cfg.Library.Lidarr.MetadataProfile)
+		e.log.Info().Msg("  To add it anyway, use Lidarr's UI to manually monitor this album")
+	}
+
+	return nil
 }
 
 func formatOverview(text string, maxWidth int) []string {

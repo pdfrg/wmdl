@@ -48,8 +48,30 @@ const (
 )
 
 type itemState struct {
-	event    db.EventWithTitle
-	decision decision
+	event      db.EventWithTitle     // for movies/TV
+	albumEvent *db.EventWithAlbum    // for music (nil for movies/TV)
+	decision   decision
+}
+
+func (it *itemState) mediaType() model.MediaType {
+	if it.albumEvent != nil {
+		return model.MediaTypeMusic
+	}
+	return it.event.Title.MediaType
+}
+
+func (it *itemState) displayTitle() string {
+	if it.albumEvent != nil {
+		return fmt.Sprintf("%s - %s", it.albumEvent.Artist.Name, it.albumEvent.Album.Title)
+	}
+	return it.event.Title.Title
+}
+
+func (it *itemState) displayYear() int {
+	if it.albumEvent != nil {
+		return it.albumEvent.Album.Year
+	}
+	return it.event.Title.Year
 }
 
 type posterReadyMsg struct {
@@ -76,14 +98,19 @@ type TUI struct {
 	filterUndecided bool
 }
 
-func NewReviewTUIWithEvents(events []db.EventWithTitle, database *db.DB, posterMode string) (*TUI, error) {
-	if len(events) == 0 {
+func NewReviewTUIWithEvents(events []db.EventWithTitle, albumEvents []db.EventWithAlbum, database *db.DB, posterMode string) (*TUI, error) {
+	totalItems := len(events) + len(albumEvents)
+	if totalItems == 0 {
 		return nil, fmt.Errorf("no events to review")
 	}
 
-	items := make([]itemState, len(events))
+	items := make([]itemState, totalItems)
 	for i, e := range events {
 		items[i] = itemState{event: e, decision: decisionForStatus(e.Event.Status)}
+	}
+	for i, a := range albumEvents {
+		ae := a
+		items[len(events)+i] = itemState{albumEvent: &ae, decision: decisionForStatus(ae.Event.Status)}
 	}
 
 	detectTerminal()
@@ -110,10 +137,17 @@ func NewReviewTUI(database *db.DB, posterMode string) (*TUI, error) {
 	if err != nil {
 		return nil, fmt.Errorf("loading events: %w", err)
 	}
-	if len(events) == 0 {
+
+	albumEvents, err := database.ListPendingAlbumEventsWithAlbums(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("loading album events: %w", err)
+	}
+
+	if len(events) == 0 && len(albumEvents) == 0 {
 		return nil, fmt.Errorf("no pending releases to review")
 	}
-	return NewReviewTUIWithEvents(events, database, posterMode)
+
+	return NewReviewTUIWithEvents(events, albumEvents, database, posterMode)
 }
 
 func (t *TUI) Run() error {
@@ -167,7 +201,14 @@ func (t *TUI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (t *TUI) loadCurrentPosterCmd() tea.Cmd {
 	it := t.currentItem()
-	if it == nil || it.event.Title.PosterPath == "" {
+	if it == nil {
+		return t.clearPosterCmd()
+	}
+	if it.albumEvent != nil {
+		if it.albumEvent.Album.PosterPath == "" {
+			return t.clearPosterCmd()
+		}
+	} else if it.event.Title.PosterPath == "" {
 		return t.clearPosterCmd()
 	}
 	return t.loadPosterCmd()
@@ -181,14 +222,26 @@ func (t *TUI) loadPosterCmd() tea.Cmd {
 	if it == nil {
 		return nil
 	}
-	tl := it.event.Title
 
+	if it.albumEvent != nil {
+		// Music poster loading not yet implemented (AOTY cover art via URL)
+		return t.clearPosterCmd()
+	}
+
+	tl := it.event.Title
 	return func() tea.Msg {
 		img, err := getPosterImage(tl)
 		if err != nil {
 			return posterReadyMsg{err: err}
 		}
 		return posterReadyMsg{img: img}
+	}
+}
+
+func (t *TUI) setCurrentPoster() {
+	it := t.currentItem()
+	if it == nil {
+		return
 	}
 }
 
@@ -217,7 +270,7 @@ func (t *TUI) clearPosterCmd() tea.Cmd {
 func (t *TUI) rebuildFiltered() {
 	t.filtered = nil
 	for i, it := range t.items {
-		if t.filter != "" && it.event.Title.MediaType != t.filter {
+		if t.filter != "" && it.mediaType() != t.filter {
 			continue
 		}
 		if t.filterUndecided && it.decision != decisionNone {
@@ -257,11 +310,35 @@ func (t *TUI) saveDecisions() error {
 			if it.decision == decisionRejected {
 				status = model.StatusRejected
 			}
-			if err := t.database.UpdateReleaseEventStatus(ctx, it.event.Event.ID, status); err != nil {
-				return err
+
+			if it.albumEvent != nil {
+				if err := t.database.UpdateAlbumReleaseEventStatus(ctx, it.albumEvent.Event.ID, status); err != nil {
+					return err
+				}
+			} else {
+				if err := t.database.UpdateReleaseEventStatus(ctx, it.event.Event.ID, status); err != nil {
+					return err
+				}
 			}
+
 			if it.decision == decisionApproved {
-				t.approved = append(t.approved, it.event)
+				if it.albumEvent != nil {
+					t.approved = append(t.approved, db.EventWithTitle{
+						Event: &model.ReleaseEvent{
+							ID:      it.albumEvent.Event.ID,
+							Status:  model.StatusApproved,
+							ISOYear: it.albumEvent.Event.ISOYear,
+							ISOWeek: it.albumEvent.Event.ISOWeek,
+						},
+						Title: &model.Title{
+							Title:     it.albumEvent.Artist.Name + " - " + it.albumEvent.Album.Title,
+							Year:      it.albumEvent.Album.Year,
+							MediaType: model.MediaTypeMusic,
+						},
+					})
+				} else {
+					t.approved = append(t.approved, it.event)
+				}
 			}
 		}
 		return nil
@@ -387,6 +464,17 @@ func (t *TUI) updateReview(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		t.posterImg = nil
 		return t, t.loadCurrentPosterCmd()
 
+	case "b":
+		t.filterUndecided = false
+		if t.filter == model.MediaTypeMusic {
+			t.filter = ""
+		} else {
+			t.filter = model.MediaTypeMusic
+		}
+		t.rebuildFiltered()
+		t.posterImg = nil
+		return t, t.loadCurrentPosterCmd()
+
 	case "n":
 		t.filterUndecided = !t.filterUndecided
 		t.rebuildFiltered()
@@ -487,6 +575,7 @@ func (t *TUI) View() tea.View {
 			keyStyle.Render("n") + helpStyle.Render(" undecided  ") +
 			keyStyle.Render("m") + helpStyle.Render(" movies  ") +
 			keyStyle.Render("t") + helpStyle.Render(" tv  ") +
+			keyStyle.Render("b") + helpStyle.Render(" albums  ") +
 			keyStyle.Render("enter") + helpStyle.Render(" confirm  ") +
 			keyStyle.Render("o") + helpStyle.Render(" open RT  ") +
 			keyStyle.Render("q") + helpStyle.Render(" quit")
@@ -504,6 +593,8 @@ func (t *TUI) View() tea.View {
 		filterLabel = "  [movies]"
 	case model.MediaTypeTV:
 		filterLabel = "  [tv]"
+	case model.MediaTypeMusic:
+		filterLabel = "  [albums]"
 	}
 	if t.filterUndecided {
 		filterLabel = "  [undecided]"
@@ -574,6 +665,11 @@ func (t *TUI) buildReviewContent() string {
 	if it == nil {
 		return "no items match the current filter"
 	}
+
+	if it.albumEvent != nil {
+		return t.buildMusicContent(it.albumEvent, rw)
+	}
+
 	tl := it.event.Title
 	ev := it.event.Event
 
@@ -612,6 +708,94 @@ func (t *TUI) buildReviewContent() string {
 		}
 	} else {
 		b.WriteString(t.buildRightContent(tl, ev, rw))
+	}
+
+	return b.String()
+}
+
+func (t *TUI) buildMusicContent(ae *db.EventWithAlbum, rw int) string {
+	var b strings.Builder
+
+	al := ae.Album
+	ar := ae.Artist
+	ev := ae.Event
+
+	decoration := " "
+	decorationStyle := emptyStyle
+	it := t.currentItem()
+	if it != nil {
+		switch it.decision {
+		case decisionApproved:
+			decoration = " "
+			decorationStyle = approvedStyle
+		case decisionRejected:
+			decoration = " "
+			decorationStyle = rejectedStyle
+		}
+	}
+
+	avail := rw - 1
+	if avail < 10 {
+		avail = 10
+	}
+
+	title := ar.Name + " - " + al.Title
+	if al.Year > 0 {
+		title = fmt.Sprintf("%s (%d)", title, al.Year)
+	}
+
+	// Line 1: decoration + title
+	b.WriteString(" ")
+	b.WriteString(decorationStyle.Render(decoration))
+	b.WriteString(titleStyle.Width(avail - 2).Render(title))
+
+	// Line 2: [album] type + date
+	b.WriteString("\n\n")
+	albumTag := fmt.Sprintf("[album] %s", string(al.AlbumType))
+	if ev.Source != "" {
+		albumTag += " · " + ev.Source
+	}
+	if al.ReleaseDate != "" {
+		albumTag += " · " + al.ReleaseDate
+	}
+	b.WriteString(tagStyle.Render(albumTag))
+
+	// MusicBrainz info
+	if al.MBID != "" {
+		b.WriteString("\n")
+		b.WriteString(rtStyle.Render("MusicBrainz: matched"))
+	}
+
+	// Must Hear
+	if al.AOTYMustHear {
+		b.WriteString("\n")
+		b.WriteString(approvedStyle.Render("★ Must Hear (Editor's Pick)"))
+	}
+
+	// Scores
+	hasScore := al.AOTYCriticScore > 0 || al.AOTYUserScore > 0
+	if hasScore {
+		b.WriteString("\n")
+		var scoreParts []string
+		if al.AOTYCriticScore > 0 {
+			scoreParts = append(scoreParts, fmt.Sprintf("critic: %.0f (%d reviews)", al.AOTYCriticScore, al.AOTYCriticCount))
+		}
+		if al.AOTYUserScore > 0 {
+			scoreParts = append(scoreParts, fmt.Sprintf("user: %.0f (%d ratings)", al.AOTYUserScore, al.AOTYUserCount))
+		}
+		b.WriteString(strings.Join(scoreParts, " · "))
+	}
+
+	// Genres
+	if al.Genres != "" {
+		b.WriteString("\n")
+		b.WriteString(al.Genres)
+	}
+
+	// Overview
+	if al.Overview != "" {
+		b.WriteString("\n\n")
+		b.WriteString(al.Overview)
 	}
 
 	return b.String()

@@ -43,6 +43,7 @@ downloader:
   categories:
     movies: "Movies"
     tv: "TV"
+    music: "Music"
 
 library:
   radarr:
@@ -58,6 +59,33 @@ library:
     quality_profile: "1080p"
     monitor_new_episodes: true
     season_folders: true
+  lidarr:
+    url: "http://lidarr.local:8686"
+    api_key: ""
+    root_folder: "/media/music"
+    quality_profile: "Lossless"
+    metadata_profile: "Standard"
+    monitor: "all"
+    monitor_new_albums: true
+
+media_types:
+  movies: true
+  tv: true
+  music:
+    enabled: true
+    # Initial offset for the FIRST music discovery run only.
+    # After the first run, music advances 1 wmdl week per run sequentially,
+    # just like movies/TV. Changing this value later has NO effect unless
+    # you delete the database to restart discovery.
+    initial_timeshift_weeks: 1
+    filter:
+      # Standard releases (LP, EP, soundtrack): require BOTH score AND review count
+      min_critic_score: 75
+      min_critic_reviews: 5
+      min_user_score: 75
+      min_user_ratings: 200
+      # Special releases (live, remix, box set): score only, no review count needed
+      include_must_hear: true
 
 quality:
   movies:
@@ -70,6 +98,9 @@ quality:
     prefer_hdr: false
     source_priority: ["bluray", "web-dl", "webrip"]
     codec_priority: ["h265", "h264", "av1"]  # h265 also matches x265/hevc, h264 also matches x264
+  music:
+    format_priority: ["flac", "mp3", "aac"]
+    bitrate_priority: ["lossless", "320", "v0", "v2"]
 
 show_top_n: 10
 min_seeders: 3

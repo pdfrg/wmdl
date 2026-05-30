@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"html"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -26,6 +27,7 @@ type Runner struct {
 	tmdb          *TMDBClient
 	rt            *RTFinder
 	imdb          *IMDbAPIClient
+	mb            *MBClient
 	notify        notifier.Notifier
 	debugURL      string
 	allocCtx      context.Context
@@ -57,6 +59,7 @@ func NewRunner(logger zerolog.Logger, cfg *config.Config, database *db.DB, headl
 		tmdb:     NewTMDBClient(cfg.TMDB.APIKey, cfg.TMDB.AccessToken),
 		rt:       NewRTFinder(),
 		imdb:     NewIMDbAPIClient(),
+		mb:       NewMBClient(),
 		notify:   notify,
 		debugURL: fmt.Sprintf("http://127.0.0.1:%d", cfg.Browser.DebugPort),
 		headless: headless,
@@ -100,9 +103,18 @@ func (r *Runner) Run(ctx context.Context) error {
 	fp := NewFlixPatrolProvider(r.debugURL)
 	providers = append(providers, fp)
 
-	// Set target week on providers that support it
+	// Music provider
+	aoty := NewAOTYProvider()
 	if r.hasTargetWeek {
-		for _, p := range providers {
+		// Music uses timeshifted week: video target - music_timeshift_weeks
+		musicYear, musicWeek := r.musicTargetWeek(ctx)
+		aoty.SetWeekRange(musicYear, musicWeek)
+	}
+	providers = append(providers, aoty)
+
+	// Set target week on video providers
+	if r.hasTargetWeek {
+		for _, p := range []ReleaseProvider{NewDVDReleaseDates(), NewTMDBDiscoverProvider(r.tmdb)} {
 			if ws, ok := p.(WeekSettable); ok {
 				ws.SetWeekRange(r.targetYear, r.targetWeek)
 			}
@@ -127,21 +139,43 @@ func (r *Runner) Run(ctx context.Context) error {
 		return nil
 	}
 
-	// Deduplicate by title+year
-	seen := make(map[string]bool)
-	var unique []ScrapedItem
+	// Split music and video items
+	var videoItems, musicItems []ScrapedItem
 	for _, item := range allItems {
+		if item.MediaType == model.MediaTypeMusic {
+			musicItems = append(musicItems, item)
+		} else {
+			videoItems = append(videoItems, item)
+		}
+	}
+
+	// Deduplicate video items by title+year
+	seen := make(map[string]bool)
+	var uniqueVideos []ScrapedItem
+	for _, item := range videoItems {
 		key := fmt.Sprintf("%s|%d|%s", item.Title, item.Year, item.ReleaseType)
 		if seen[key] {
 			continue
 		}
 		seen[key] = true
-		unique = append(unique, item)
+		uniqueVideos = append(uniqueVideos, item)
+	}
+
+	// Deduplicate music items by artist+album
+	seenMusic := make(map[string]bool)
+	var uniqueMusic []ScrapedItem
+	for _, item := range musicItems {
+		key := fmt.Sprintf("%s|%s", item.ArtistName, item.Title)
+		if seenMusic[key] {
+			continue
+		}
+		seenMusic[key] = true
+		uniqueMusic = append(uniqueMusic, item)
 	}
 
 	progYear, progWeek := r.targetYear, r.targetWeek
 	if !r.hasTargetWeek {
-		progYear, progWeek = programWeekFromItems(unique)
+		progYear, progWeek = programWeekFromItems(uniqueVideos)
 	}
 
 	var processed int
@@ -149,8 +183,9 @@ func (r *Runner) Run(ctx context.Context) error {
 	var wg sync.WaitGroup
 	sem := make(chan struct{}, 3)
 
-	for _, item := range unique {
-		wg.Add(1)
+	// Process video items
+	wg.Add(len(uniqueVideos))
+	for _, item := range uniqueVideos {
 		go func(item ScrapedItem) {
 			defer wg.Done()
 			sem <- struct{}{}
@@ -158,16 +193,37 @@ func (r *Runner) Run(ctx context.Context) error {
 
 			if err := r.processItem(ctx, item, progYear, progWeek); err != nil {
 				r.log.Warn().Err(err).Str("title", item.Title).Msg("error processing item")
-				return
 			}
 			mu.Lock()
 			processed++
 			mu.Unlock()
 		}(item)
 	}
-
 	wg.Wait()
-	r.log.Info().Msgf("Processed %d/%d items", processed, len(unique))
+
+	// Process music items (with MusicBrainz enrichment)
+	if len(uniqueMusic) > 0 {
+		musicYear, musicWeek := r.targetYear, r.targetWeek
+		if r.hasTargetWeek {
+			musicYear, musicWeek = r.musicTargetWeek(ctx)
+		}
+
+		var musicProcessed int
+		for _, item := range uniqueMusic {
+			if err := r.processMusicItem(ctx, item, musicYear, musicWeek); err != nil {
+				r.log.Warn().Err(err).Str("album", item.Title).Str("artist", item.ArtistName).Msg("error processing music item")
+				continue
+			}
+			musicProcessed++
+		}
+		processed += musicProcessed
+
+		// Track music discovery week in settings
+		_ = r.db.SetSetting(ctx, "music_last_iso_year", fmt.Sprintf("%d", musicYear))
+		_ = r.db.SetSetting(ctx, "music_last_iso_week", fmt.Sprintf("%d", musicWeek))
+	}
+
+	r.log.Info().Msgf("Processed %d/%d items", processed, len(uniqueVideos)+len(uniqueMusic))
 
 	// Track week state — use target week when set, never derive from
 	// streaming items (which can be 2 months in the past).
@@ -181,7 +237,7 @@ func (r *Runner) Run(ctx context.Context) error {
 		if err := r.db.UpsertWeekState(ctx, ws); err != nil {
 			r.log.Warn().Err(err).Msg("tracking week state")
 		}
-	} else if ws := weekStateFromItems(unique); ws != nil {
+	} else if ws := weekStateFromItems(uniqueVideos); ws != nil {
 		ws.Discovered = true
 		if err := r.db.UpsertWeekState(ctx, ws); err != nil {
 			r.log.Warn().Err(err).Msg("tracking week state")
@@ -192,7 +248,7 @@ func (r *Runner) Run(ctx context.Context) error {
 	if r.notify != nil && processed > 0 {
 		msg := fmt.Sprintf("**%d new release%s** ready for review:\n", processed, map[bool]string{true: "s", false: ""}[processed != 1])
 		count := 0
-		for _, item := range unique {
+		for _, item := range uniqueVideos {
 			if count >= 5 {
 				msg += fmt.Sprintf("\n+ %d more", processed-count)
 				break
@@ -503,6 +559,166 @@ func (r *Runner) processItem(ctx context.Context, item ScrapedItem, progYear, pr
 	// Skip if already pending — don't stack duplicate events
 	if existingEvent != nil && existingEvent.Status == model.StatusPending {
 		return nil
+	}
+
+	return nil
+}
+
+// musicTargetWeek determines which release week to scrape for music.
+// First run: current video week - timeshift offset.
+// Subsequent runs: last discovered music week + 1.
+func (r *Runner) musicTargetWeek(ctx context.Context) (int, int) {
+	timeshiftWeeks := r.cfg.MediaTypes.Music.InitialTimeshiftWeeks
+	if timeshiftWeeks <= 0 {
+		timeshiftWeeks = 1
+	}
+
+	lastYearStr, _ := r.db.GetSetting(ctx, "music_last_iso_year")
+	lastWeekStr, _ := r.db.GetSetting(ctx, "music_last_iso_week")
+
+	if lastYearStr == "" || lastWeekStr == "" {
+		// First run: derive from video target week
+		return r.targetYear, r.targetWeek - timeshiftWeeks
+	}
+
+	lastYear, _ := strconv.Atoi(lastYearStr)
+	lastWeek, _ := strconv.Atoi(lastWeekStr)
+
+	// Advance by 1 wmdl week
+	nextWeek := lastWeek + 1
+	nextYear := lastYear
+	if nextWeek > 52 {
+		nextWeek = 1
+		nextYear++
+	}
+
+	return nextYear, nextWeek
+}
+
+// processMusicItem enriches a scraped music item with MusicBrainz data and
+// stores it in the artists + albums + album_release_events tables.
+func (r *Runner) processMusicItem(ctx context.Context, item ScrapedItem, progYear, progWeek int) error {
+	apiCtx, apiCancel := context.WithTimeout(ctx, 20*time.Second)
+	defer apiCancel()
+
+	// Filter: check if this album passes quality thresholds
+	// Standard types (LP, EP, soundtrack): require score + review count
+	// Special types (live, remix, box set): score only, no review count
+	ft := r.cfg.MediaTypes.Music.Filter
+	isStandard := item.AlbumType == model.AlbumTypeLP ||
+		item.AlbumType == model.AlbumTypeEP ||
+		item.AlbumType == model.AlbumTypeSoundtrack
+
+	var passesFilter bool
+	if isStandard {
+		passesFilter = (item.AOTYCriticScore >= float64(ft.MinCriticScore) && item.AOTYCriticCount >= ft.MinCriticReviews) ||
+			(item.AOTYUserScore >= float64(ft.MinUserScore) && item.AOTYUserCount >= ft.MinUserRatings) ||
+			(ft.IncludeMustHear && item.AOTYMustHear)
+	} else {
+		passesFilter = (ft.MinCriticScore > 0 && item.AOTYCriticScore >= float64(ft.MinCriticScore)) ||
+			(ft.MinUserScore > 0 && item.AOTYUserScore >= float64(ft.MinUserScore)) ||
+			(ft.IncludeMustHear && item.AOTYMustHear)
+	}
+
+	r.log.Info().Str("artist", item.ArtistName).Str("album", item.Title).
+		Bool("passes", passesFilter).Msg("music item filter check")
+
+	// Step 1: MusicBrainz enrichment
+	rgResult, err := r.mb.SearchReleaseGroup(apiCtx, item.Title, item.ArtistName)
+	if err != nil {
+		r.log.Warn().Err(err).Msg("MusicBrainz search failed, continuing without MB data")
+	} else if rgResult == nil {
+		r.log.Info().Str("album", item.Title).Msg("not found in MusicBrainz, skipping")
+		return nil // If not in MB, can't integrate with Lidarr
+	}
+
+	// If MB returned a result, search for artist
+	mbArtistID := rgResult.ArtistMBID
+	mbAlbumID := rgResult.MBID
+	mbArtistName := rgResult.ArtistName
+	if mbArtistName == "" {
+		mbArtistName = item.ArtistName
+	}
+
+	if mbArtistID == "" {
+		artResult, err := r.mb.SearchArtist(apiCtx, item.ArtistName)
+		if err == nil && artResult != nil {
+			mbArtistID = artResult.MBID
+		}
+	}
+
+	if mbArtistID == "" {
+		r.log.Info().Str("artist", item.ArtistName).Msg("artist not found in MusicBrainz, skipping")
+		return nil
+	}
+
+	// Step 2: Fetch detail for MB rating
+	if mbAlbumID != "" {
+		detail, err := r.mb.GetReleaseGroupDetail(apiCtx, mbAlbumID)
+		if err == nil && detail != nil && detail.Rating > 0 {
+			_ = detail // rating available in detail.Rating
+		}
+	}
+
+	// Step 3: Upsert artist
+	artist := &model.Artist{
+		MBID: mbArtistID,
+		Name: mbArtistName,
+	}
+	artistID, err := r.db.UpsertArtist(ctx, artist)
+	if err != nil {
+		return fmt.Errorf("saving artist: %w", err)
+	}
+
+	// Step 4: Upsert album
+	mbRating := 0.0
+	if rgResult != nil {
+		mbRating = rgResult.Rating
+	}
+
+	album := &model.Album{
+		ArtistID:       artistID,
+		Title:          item.Title,
+		Year:           item.Year,
+		MBID:           mbAlbumID,
+		AlbumType:      item.AlbumType,
+		ReleaseDate:    item.ReleaseDate,
+		AOTYCriticScore: item.AOTYCriticScore,
+		AOTYCriticCount: item.AOTYCriticCount,
+		AOTYUserScore:   item.AOTYUserScore,
+		AOTYUserCount:   item.AOTYUserCount,
+		AOTYMustHear:    item.AOTYMustHear,
+		MBRating:        mbRating,
+	}
+	albumID, err := r.db.UpsertAlbum(ctx, album)
+	if err != nil {
+		return fmt.Errorf("saving album: %w", err)
+	}
+
+	// Step 5: Create release event (only if passes filter)
+	existing, err := r.db.GetLatestAlbumReleaseEvent(ctx, albumID)
+	if err != nil {
+		return fmt.Errorf("checking existing events: %w", err)
+	}
+	if existing != nil && existing.Status == model.StatusPending {
+		return nil // already pending
+	}
+
+	if !passesFilter {
+		r.log.Info().Str("album", item.Title).Msg("does not pass filter, skipping review event")
+		return nil
+	}
+
+	evt := &model.AlbumReleaseEvent{
+		AlbumID:     albumID,
+		Source:      "albumoftheyear",
+		ReleaseDate: item.ReleaseDate,
+		Status:      model.StatusPending,
+		ISOYear:     progYear,
+		ISOWeek:     progWeek,
+	}
+	if _, err := r.db.CreateAlbumReleaseEvent(ctx, evt); err != nil {
+		return fmt.Errorf("saving album release event: %w", err)
 	}
 
 	return nil

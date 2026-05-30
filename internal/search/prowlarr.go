@@ -61,6 +61,7 @@ type prowlarrRelease struct {
 const (
 	CatMovie = 2000 // Movies (parent)
 	CatTV    = 5000 // TV (parent)
+	CatMusic = 3000 // Music (parent)
 )
 
 type SearchParams struct {
@@ -192,6 +193,15 @@ func (p *ProwlarrClient) SearchTV(ctx context.Context, query string) ([]quality.
 		Type:       "tvsearch",
 		Limit:      50,
 		Categories: []int{CatTV},
+	})
+}
+
+func (p *ProwlarrClient) SearchMusic(ctx context.Context, query string) ([]quality.ParsedRelease, error) {
+	return p.Search(ctx, SearchParams{
+		Query:      query,
+		Type:       "search",
+		Limit:      50,
+		Categories: []int{CatMusic, 3010, 3020, 3040, 3050},
 	})
 }
 

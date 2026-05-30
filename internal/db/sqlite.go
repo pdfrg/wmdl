@@ -125,6 +125,54 @@ func (d *DB) Migrate(ctx context.Context) error {
 		updated_at  TEXT NOT NULL DEFAULT (datetime('now')),
 		UNIQUE(year, week)
 	);
+
+	CREATE TABLE IF NOT EXISTS artists (
+		id         INTEGER PRIMARY KEY AUTOINCREMENT,
+		mbid       TEXT NOT NULL UNIQUE,
+		name       TEXT NOT NULL,
+		lidarr_id  INTEGER DEFAULT 0,
+		created_at TEXT NOT NULL DEFAULT (datetime('now'))
+	);
+
+	CREATE TABLE IF NOT EXISTS albums (
+		id              INTEGER PRIMARY KEY AUTOINCREMENT,
+		artist_id       INTEGER NOT NULL REFERENCES artists(id),
+		title           TEXT NOT NULL,
+		year            INTEGER NOT NULL DEFAULT 0,
+		mbid            TEXT NOT NULL DEFAULT '',
+		album_type      TEXT NOT NULL DEFAULT '',
+		release_date    TEXT NOT NULL DEFAULT '',
+		genres          TEXT NOT NULL DEFAULT '',
+		overview        TEXT NOT NULL DEFAULT '',
+		poster_path     TEXT NOT NULL DEFAULT '',
+		aoty_critic_score REAL DEFAULT 0,
+		aoty_critic_count INTEGER DEFAULT 0,
+		aoty_user_score    REAL DEFAULT 0,
+		aoty_user_count    INTEGER DEFAULT 0,
+		aoty_must_hear     INTEGER DEFAULT 0,
+		mb_rating          REAL DEFAULT 0,
+		created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+		UNIQUE(artist_id, title, year)
+	);
+
+	CREATE TABLE IF NOT EXISTS album_release_events (
+		id              INTEGER PRIMARY KEY AUTOINCREMENT,
+		album_id        INTEGER NOT NULL REFERENCES albums(id),
+		source          TEXT NOT NULL,
+		release_date    TEXT NOT NULL DEFAULT '',
+		status          TEXT NOT NULL DEFAULT 'pending'
+		                CHECK(status IN ('pending','approved','rejected','downloaded')),
+		previous_status TEXT DEFAULT '',
+		notes           TEXT DEFAULT '',
+		created_at      TEXT DEFAULT (datetime('now')),
+		iso_year        INTEGER DEFAULT 0,
+		iso_week        INTEGER DEFAULT 0
+	);
+
+	CREATE TABLE IF NOT EXISTS settings (
+		key   TEXT PRIMARY KEY,
+		value TEXT NOT NULL
+	);
 	`
 	if _, err := d.db.ExecContext(ctx, schema); err != nil {
 		return fmt.Errorf("migrating schema: %w", err)
@@ -147,8 +195,12 @@ func (d *DB) Migrate(ctx context.Context) error {
 	d.db.ExecContext(ctx, `ALTER TABLE titles ADD COLUMN origin_country TEXT DEFAULT ''`)
 	d.db.ExecContext(ctx, `ALTER TABLE titles ADD COLUMN tmdb_title TEXT DEFAULT ''`)
 
-	// Index on iso_year/iso_week requires those columns to exist first
 	d.db.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_release_events_week ON release_events(iso_year, iso_week)`)
+	d.db.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_albums_artist_id ON albums(artist_id)`)
+	d.db.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_albums_mbid ON albums(mbid)`)
+	d.db.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_album_release_events_album_id ON album_release_events(album_id)`)
+	d.db.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_album_release_events_status ON album_release_events(status)`)
+	d.db.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_album_release_events_week ON album_release_events(iso_year, iso_week)`)
 
 	return nil
 }
@@ -593,6 +645,313 @@ func (d *DB) GetWeekProcessCounts(ctx context.Context, year, week int) (download
 		return 0, 0, fmt.Errorf("counting approved events: %w", err)
 	}
 	return downloaded, approved, nil
+}
+
+// ─── Music API ────────────────────────────────────────────────────────────
+
+type EventWithAlbum struct {
+	Event  *model.AlbumReleaseEvent
+	Album  *model.Album
+	Artist *model.Artist
+}
+
+func (d *DB) UpsertArtist(ctx context.Context, a *model.Artist) (int64, error) {
+	createdAt := a.CreatedAt
+	if createdAt == "" {
+		createdAt = ""
+	}
+	res, err := d.db.ExecContext(ctx, `
+		INSERT INTO artists (mbid, name, lidarr_id, created_at)
+		VALUES (?, ?, ?, datetime('now'))
+		ON CONFLICT(mbid) DO UPDATE SET
+			name     = excluded.name,
+			lidarr_id = excluded.lidarr_id
+	`, a.MBID, a.Name, a.LidarrID)
+	if err != nil {
+		return 0, fmt.Errorf("upserting artist: %w", err)
+	}
+	id, err := res.LastInsertId()
+	if err != nil {
+		return 0, fmt.Errorf("getting last insert id: %w", err)
+	}
+	return id, nil
+}
+
+func (d *DB) GetArtistByMBID(ctx context.Context, mbid string) (*model.Artist, error) {
+	var a model.Artist
+	err := d.db.QueryRowContext(ctx, `
+		SELECT id, mbid, name, lidarr_id, created_at
+		FROM artists WHERE mbid = ?
+	`, mbid).Scan(&a.ID, &a.MBID, &a.Name, &a.LidarrID, &a.CreatedAt)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("querying artist by mbid: %w", err)
+	}
+	return &a, nil
+}
+
+func (d *DB) UpsertAlbum(ctx context.Context, a *model.Album) (int64, error) {
+	res, err := d.db.ExecContext(ctx, `
+		INSERT INTO albums (artist_id, title, year, mbid, album_type,
+		                    release_date, genres, overview, poster_path,
+		                    aoty_critic_score, aoty_critic_count,
+		                    aoty_user_score, aoty_user_count,
+		                    aoty_must_hear, mb_rating, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+		ON CONFLICT(artist_id, title, year) DO UPDATE SET
+			mbid              = excluded.mbid,
+			album_type        = excluded.album_type,
+			release_date      = excluded.release_date,
+			genres            = excluded.genres,
+			overview          = excluded.overview,
+			poster_path       = excluded.poster_path,
+			aoty_critic_score = excluded.aoty_critic_score,
+			aoty_critic_count = excluded.aoty_critic_count,
+			aoty_user_score   = excluded.aoty_user_score,
+			aoty_user_count   = excluded.aoty_user_count,
+			aoty_must_hear    = excluded.aoty_must_hear,
+			mb_rating         = excluded.mb_rating
+	`, a.ArtistID, a.Title, a.Year, a.MBID, string(a.AlbumType),
+		a.ReleaseDate, a.Genres, a.Overview, a.PosterPath,
+		a.AOTYCriticScore, a.AOTYCriticCount,
+		a.AOTYUserScore, a.AOTYUserCount,
+		boolToInt(a.AOTYMustHear), a.MBRating)
+	if err != nil {
+		return 0, fmt.Errorf("upserting album: %w", err)
+	}
+	id, err := res.LastInsertId()
+	if err != nil {
+		return 0, fmt.Errorf("getting last insert id: %w", err)
+	}
+	return id, nil
+}
+
+func (d *DB) GetAlbumByMBID(ctx context.Context, mbid string) (*model.Album, error) {
+	var a model.Album
+	var albumType, createdAt string
+	var mustHear int
+	err := d.db.QueryRowContext(ctx, `
+		SELECT id, artist_id, title, year, mbid, album_type,
+		       release_date, genres, overview, poster_path,
+		       aoty_critic_score, aoty_critic_count,
+		       aoty_user_score, aoty_user_count,
+		       aoty_must_hear, mb_rating, created_at
+		FROM albums WHERE mbid = ?
+	`, mbid).Scan(
+		&a.ID, &a.ArtistID, &a.Title, &a.Year, &a.MBID, &albumType,
+		&a.ReleaseDate, &a.Genres, &a.Overview, &a.PosterPath,
+		&a.AOTYCriticScore, &a.AOTYCriticCount,
+		&a.AOTYUserScore, &a.AOTYUserCount,
+		&mustHear, &a.MBRating, &createdAt)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("querying album by mbid: %w", err)
+	}
+	a.AlbumType = model.AlbumType(albumType)
+	a.AOTYMustHear = mustHear > 0
+	a.CreatedAt = createdAt
+	return &a, nil
+}
+
+func (d *DB) CreateAlbumReleaseEvent(ctx context.Context, e *model.AlbumReleaseEvent) (int64, error) {
+	res, err := d.db.ExecContext(ctx, `
+		INSERT INTO album_release_events (album_id, source, release_date, status, previous_status, notes, iso_year, iso_week)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+	`, e.AlbumID, e.Source, e.ReleaseDate, string(e.Status), string(e.PreviousStatus), e.Notes, e.ISOYear, e.ISOWeek)
+	if err != nil {
+		return 0, fmt.Errorf("creating album release event: %w", err)
+	}
+	return res.LastInsertId()
+}
+
+func (d *DB) GetLatestAlbumReleaseEvent(ctx context.Context, albumID int64) (*model.AlbumReleaseEvent, error) {
+	var e model.AlbumReleaseEvent
+	var status, prevStatus, createdAt string
+	err := d.db.QueryRowContext(ctx, `
+		SELECT id, album_id, source, release_date, status, previous_status, notes, created_at, iso_year, iso_week
+		FROM album_release_events WHERE album_id = ?
+		ORDER BY id DESC LIMIT 1
+	`, albumID).Scan(
+		&e.ID, &e.AlbumID, &e.Source, &e.ReleaseDate,
+		&status, &prevStatus, &e.Notes, &createdAt, &e.ISOYear, &e.ISOWeek)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("querying latest album release event: %w", err)
+	}
+	e.Status = model.ReleaseStatus(status)
+	e.PreviousStatus = model.ReleaseStatus(prevStatus)
+	e.CreatedAt = createdAt
+	return &e, nil
+}
+
+func (d *DB) UpdateAlbumReleaseEventStatus(ctx context.Context, id int64, status model.ReleaseStatus) error {
+	_, err := d.db.ExecContext(ctx, `UPDATE album_release_events SET status = ? WHERE id = ?`, string(status), id)
+	return err
+}
+
+func (d *DB) ListPendingAlbumEventsWithAlbums(ctx context.Context) ([]EventWithAlbum, error) {
+	rows, err := d.db.QueryContext(ctx, `
+		SELECT e.id, e.album_id, e.source, e.release_date,
+		       e.status, e.previous_status, e.notes, e.created_at, e.iso_year, e.iso_week,
+		       a.id, a.artist_id, a.title, a.year, a.mbid, a.album_type,
+		       a.release_date, a.genres, a.overview, a.poster_path,
+		       a.aoty_critic_score, a.aoty_critic_count, a.aoty_user_score, a.aoty_user_count,
+		       a.aoty_must_hear, a.mb_rating, a.created_at,
+		       ar.id, ar.mbid, ar.name, ar.lidarr_id, ar.created_at
+		FROM album_release_events e
+		JOIN albums a ON a.id = e.album_id
+		JOIN artists ar ON ar.id = a.artist_id
+		WHERE e.status = 'pending'
+		ORDER BY e.created_at DESC
+	`)
+	if err != nil {
+		return nil, fmt.Errorf("listing pending album events: %w", err)
+	}
+	defer rows.Close()
+	return scanEventWithAlbumRows(rows)
+}
+
+func (d *DB) ListApprovedAlbumEventsWithAlbums(ctx context.Context) ([]EventWithAlbum, error) {
+	rows, err := d.db.QueryContext(ctx, `
+		SELECT e.id, e.album_id, e.source, e.release_date,
+		       e.status, e.previous_status, e.notes, e.created_at, e.iso_year, e.iso_week,
+		       a.id, a.artist_id, a.title, a.year, a.mbid, a.album_type,
+		       a.release_date, a.genres, a.overview, a.poster_path,
+		       a.aoty_critic_score, a.aoty_critic_count, a.aoty_user_score, a.aoty_user_count,
+		       a.aoty_must_hear, a.mb_rating, a.created_at,
+		       ar.id, ar.mbid, ar.name, ar.lidarr_id, ar.created_at
+		FROM album_release_events e
+		JOIN albums a ON a.id = e.album_id
+		JOIN artists ar ON ar.id = a.artist_id
+		WHERE e.status = 'approved'
+		ORDER BY e.created_at DESC
+	`)
+	if err != nil {
+		return nil, fmt.Errorf("listing approved album events: %w", err)
+	}
+	defer rows.Close()
+	return scanEventWithAlbumRows(rows)
+}
+
+func (d *DB) ListAlbumEventsByWeek(ctx context.Context, year, week int) ([]EventWithAlbum, error) {
+	rows, err := d.db.QueryContext(ctx, `
+		SELECT e.id, e.album_id, e.source, e.release_date,
+		       e.status, e.previous_status, e.notes, e.created_at, e.iso_year, e.iso_week,
+		       a.id, a.artist_id, a.title, a.year, a.mbid, a.album_type,
+		       a.release_date, a.genres, a.overview, a.poster_path,
+		       a.aoty_critic_score, a.aoty_critic_count, a.aoty_user_score, a.aoty_user_count,
+		       a.aoty_must_hear, a.mb_rating, a.created_at,
+		       ar.id, ar.mbid, ar.name, ar.lidarr_id, ar.created_at
+		FROM album_release_events e
+		JOIN albums a ON a.id = e.album_id
+		JOIN artists ar ON ar.id = a.artist_id
+		WHERE e.iso_year = ? AND e.iso_week = ?
+		ORDER BY e.created_at DESC
+	`, year, week)
+	if err != nil {
+		return nil, fmt.Errorf("listing album events by week: %w", err)
+	}
+	defer rows.Close()
+	return scanEventWithAlbumRows(rows)
+}
+
+func (d *DB) ListAlbumEventsByWeekAndStatus(ctx context.Context, year, week int, statuses ...model.ReleaseStatus) ([]EventWithAlbum, error) {
+	if len(statuses) == 0 {
+		return d.ListAlbumEventsByWeek(ctx, year, week)
+	}
+	placeholders := make([]string, len(statuses))
+	args := make([]any, 0, len(statuses)+2)
+	args = append(args, year, week)
+	for i, s := range statuses {
+		placeholders[i] = "?"
+		args = append(args, string(s))
+	}
+	query := fmt.Sprintf(`
+		SELECT e.id, e.album_id, e.source, e.release_date,
+		       e.status, e.previous_status, e.notes, e.created_at, e.iso_year, e.iso_week,
+		       a.id, a.artist_id, a.title, a.year, a.mbid, a.album_type,
+		       a.release_date, a.genres, a.overview, a.poster_path,
+		       a.aoty_critic_score, a.aoty_critic_count, a.aoty_user_score, a.aoty_user_count,
+		       a.aoty_must_hear, a.mb_rating, a.created_at,
+		       ar.id, ar.mbid, ar.name, ar.lidarr_id, ar.created_at
+		FROM album_release_events e
+		JOIN albums a ON a.id = e.album_id
+		JOIN artists ar ON ar.id = a.artist_id
+		WHERE e.iso_year = ? AND e.iso_week = ?
+		AND e.status IN (%s)
+		ORDER BY e.created_at DESC
+	`, strings.Join(placeholders, ","))
+	rows, err := d.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("listing album events by week and status: %w", err)
+	}
+	defer rows.Close()
+	return scanEventWithAlbumRows(rows)
+}
+
+func (d *DB) SetSetting(ctx context.Context, key, value string) error {
+	_, err := d.db.ExecContext(ctx, `
+		INSERT INTO settings (key, value) VALUES (?, ?)
+		ON CONFLICT(key) DO UPDATE SET value = excluded.value
+	`, key, value)
+	return err
+}
+
+func (d *DB) GetSetting(ctx context.Context, key string) (string, error) {
+	var value string
+	err := d.db.QueryRowContext(ctx, `SELECT value FROM settings WHERE key = ?`, key).Scan(&value)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return "", nil
+		}
+		return "", fmt.Errorf("querying setting %s: %w", key, err)
+	}
+	return value, nil
+}
+
+func scanEventWithAlbumRows(rows *sql.Rows) ([]EventWithAlbum, error) {
+	var results []EventWithAlbum
+	for rows.Next() {
+		var ev model.AlbumReleaseEvent
+		var al model.Album
+		var ar model.Artist
+		var evStatus, evPrevStatus, evCreated string
+		var alAlbumType, alCreated string
+		var alMustHear int
+		var arCreated string
+
+		err := rows.Scan(
+			&ev.ID, &ev.AlbumID, &ev.Source, &ev.ReleaseDate,
+			&evStatus, &evPrevStatus, &ev.Notes, &evCreated, &ev.ISOYear, &ev.ISOWeek,
+			&al.ID, &al.ArtistID, &al.Title, &al.Year, &al.MBID, &alAlbumType,
+			&al.ReleaseDate, &al.Genres, &al.Overview, &al.PosterPath,
+			&al.AOTYCriticScore, &al.AOTYCriticCount, &al.AOTYUserScore, &al.AOTYUserCount,
+			&alMustHear, &al.MBRating, &alCreated,
+			&ar.ID, &ar.MBID, &ar.Name, &ar.LidarrID, &arCreated,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("scanning event with album: %w", err)
+		}
+
+		ev.Status = model.ReleaseStatus(evStatus)
+		ev.PreviousStatus = model.ReleaseStatus(evPrevStatus)
+		ev.CreatedAt = evCreated
+
+		al.AlbumType = model.AlbumType(alAlbumType)
+		al.AOTYMustHear = alMustHear > 0
+		al.CreatedAt = alCreated
+
+		ar.CreatedAt = arCreated
+
+		results = append(results, EventWithAlbum{Event: &ev, Album: &al, Artist: &ar})
+	}
+	return results, rows.Err()
 }
 
 func scanEventWithTitleRows(rows *sql.Rows) ([]EventWithTitle, error) {
