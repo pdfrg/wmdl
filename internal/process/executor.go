@@ -1294,7 +1294,7 @@ func musicSearchQueries(artist, album string, year int) []string {
 	cleanArtist := quality.CleanArtist(artist)
 	cleanAlbum := quality.CleanAlbum(album)
 
-	return []string{
+	raw := []string{
 		fmt.Sprintf("%s %s %d", artist, album, year),
 		fmt.Sprintf("%s %s", artist, album),
 		fmt.Sprintf("%s %d", artist, year),
@@ -1303,6 +1303,18 @@ func musicSearchQueries(artist, album string, year int) []string {
 		fmt.Sprintf("%s %d", cleanAlbum, year),
 		cleanAlbum,
 	}
+
+	seen := make(map[string]bool)
+	var queries []string
+	for _, q := range raw {
+		q = strings.TrimSpace(q)
+		if q == "" || seen[q] {
+			continue
+		}
+		seen[q] = true
+		queries = append(queries, q)
+	}
+	return queries
 }
 
 func (e *Executor) searchMusicRelease(ctx context.Context, artist, album string, year int) ([]quality.ParsedRelease, error) {
