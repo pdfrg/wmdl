@@ -31,7 +31,7 @@ const (
 
 func decisionForStatus(s model.ReleaseStatus) decision {
 	switch s {
-	case model.StatusApproved:
+	case model.StatusApproved, model.StatusDownloaded:
 		return decisionApproved
 	case model.StatusRejected:
 		return decisionRejected
