@@ -23,56 +23,44 @@ type JikanAnimeProvider struct {
 	client     *http.Client
 }
 
-type jikianimeResponse struct {
+type jikanAnimeResponse struct {
 	Pagination jikanPagination `json:"pagination"`
 	Data       []jikanAnime    `json:"data"`
 }
 
 type jikanPagination struct {
-	LastVisiblePage int  `json:"last_visible_page"`
-	HasNextPage     bool `json:"has_next_page"`
-	CurrentPage     int  `json:"current_page"`
-	Items           struct {
-		Count   int `json:"count"`
-		Total   int `json:"total"`
-		PerPage int `json:"per_page"`
+	HasNextPage bool `json:"has_next_page"`
+	Items       struct {
+		Count int `json:"count"`
+		Total int `json:"total"`
 	} `json:"items"`
 }
 
 type jikanAnime struct {
 	MalID    int    `json:"mal_id"`
-	URL      string `json:"url"`
 	Title    string `json:"title"`
 	TitleEn  string `json:"title_english"`
 	Type     string `json:"type"`
-	Source   string `json:"source"`
 	Episodes int    `json:"episodes"`
 	Status   string `json:"status"`
 	Aired    struct {
 		From string `json:"from"`
 		To   string `json:"to"`
 	} `json:"aired"`
-	Score      float64 `json:"score"`
-	ScoredBy   int     `json:"scored_by"`
-	Rank       int     `json:"rank"`
-	Popularity int     `json:"popularity"`
-	Members    int     `json:"members"`
-	Favorites  int     `json:"favorites"`
-	Synopsis   string  `json:"synopsis"`
-	Rating     string  `json:"rating"`
-	Season     string  `json:"season"`
-	Year       int     `json:"year"`
-	Images     struct {
+	Score    float64 `json:"score"`
+	Members  int     `json:"members"`
+	Synopsis string  `json:"synopsis"`
+	Rating   string  `json:"rating"`
+	Year     int     `json:"year"`
+	Images   struct {
 		JPG struct {
 			LargeImageURL string `json:"large_image_url"`
 		} `json:"jpg"`
 	} `json:"images"`
 	Genres []struct {
-		ID   int    `json:"mal_id"`
 		Name string `json:"name"`
 	} `json:"genres"`
 	Studios []struct {
-		ID   int    `json:"mal_id"`
 		Name string `json:"name"`
 	} `json:"studios"`
 }
@@ -101,115 +89,146 @@ func (p *JikanAnimeProvider) Scrape() ([]ScrapedItem, error) {
 	}
 
 	weekStart, weekEnd := wmdlWeekRange(year, week)
-	if !p.hasTarget {
-		weekEnd = time.Now()
-	}
 
-	seasonYear, seasonName := currentSeasonEnded()
-	if seasonName == "" {
-		return nil, nil
-	}
+	var items []ScrapedItem
 
-	animeList, err := p.fetchSeason(seasonYear, seasonName)
+	phaseA, err := p.scrapePhaseA(weekStart, weekEnd)
 	if err != nil {
-		return nil, fmt.Errorf("fetching jikan season: %w", err)
+		return nil, fmt.Errorf("phase A: %w", err)
 	}
-
-	var phaseA []jikanAnime
-	var phaseB []jikanAnime
-
-	for _, a := range animeList {
-		if a.Type != "TV" {
-			continue
-		}
-		if a.Score <= 0 || a.Score < p.cfg.MinScore {
-			continue
-		}
-
-		if a.Status == "Finished Airing" && a.Aired.To != "" {
-			endTime, err := time.Parse(time.RFC3339, a.Aired.To)
-			if err != nil {
-				endTime, err = time.Parse("2006-01-02T00:00:00+00:00", a.Aired.To)
-				if err != nil {
-					continue
-				}
-			}
-			if inDateRange(endTime, weekStart, weekEnd) || inDateRange(endTime, weekStart.AddDate(0, 0, -3), weekEnd) {
-				if a.Members >= p.cfg.MinMembers {
-					phaseA = append(phaseA, a)
-				}
-			}
-		}
-	}
+	items = append(items, phaseA...)
 
 	if len(phaseA) < p.cfg.MinPhaseBResults && p.cfg.PhaseBEnabled {
-		for _, a := range animeList {
+		phaseB, err := p.scrapePhaseB()
+		if err != nil {
+			return nil, fmt.Errorf("phase B: %w", err)
+		}
+		items = append(items, phaseB...)
+	}
+
+	return items, nil
+}
+
+func (p *JikanAnimeProvider) scrapePhaseA(weekStart, weekEnd time.Time) ([]ScrapedItem, error) {
+	var phaseA []ScrapedItem
+	page := 1
+
+	for {
+		results, err := p.fetchPage(fmt.Sprintf(
+			"https://api.jikan.moe/v4/anime?status=complete&type=TV&sfw=true&order_by=end_date&sort=desc&page=%d&limit=25", page))
+		if err != nil {
+			return nil, err
+		}
+		if len(results) == 0 {
+			break
+		}
+
+		for _, a := range results {
+			if a.Type != "TV" || a.Aired.To == "" {
+				continue
+			}
+
+			endTime, err := parseJikanTime(a.Aired.To)
+			if err != nil {
+				continue
+			}
+
+			// Results are sorted by end_date descending. Once we're past
+			// the wmdl week window, stop entirely.
+			if endTime.Before(weekStart) {
+				return phaseA, nil
+			}
+
+			if endTime.After(weekEnd) || endTime.Equal(weekEnd) {
+				continue
+			}
+
+			if a.Score <= 0 || a.Score < p.cfg.MinScore {
+				continue
+			}
+			if a.Members < p.cfg.MinMembers {
+				continue
+			}
+
+			phaseA = append(phaseA, p.toScrapedItem(a, "jikan"))
+		}
+
+		page++
+		time.Sleep(400 * time.Millisecond)
+	}
+
+	return phaseA, nil
+}
+
+func (p *JikanAnimeProvider) scrapePhaseB() ([]ScrapedItem, error) {
+	var phaseB []ScrapedItem
+	page := 1
+
+	for {
+		results, err := p.fetchPage(fmt.Sprintf(
+			"https://api.jikan.moe/v4/anime?status=airing&type=TV&sfw=true&order_by=score&sort=desc&page=%d&limit=25", page))
+		if err != nil {
+			return nil, err
+		}
+		if len(results) == 0 {
+			break
+		}
+
+		for _, a := range results {
 			if a.Type != "TV" {
 				continue
 			}
 			if a.Score <= 0 {
 				continue
 			}
-
-			if a.Status == "Currently Airing" {
-				if a.Score >= p.cfg.PhaseBMinScore && a.Members >= p.cfg.PhaseBMinMembers {
-					phaseB = append(phaseB, a)
-				}
+			// Sorted by score descending — once below threshold, skip rest of page
+			// but continue to next page (same-score items may span pages).
+			if a.Score < p.cfg.PhaseBMinScore {
+				break
 			}
-		}
-	}
+			if a.Members < p.cfg.PhaseBMinMembers {
+				continue
+			}
 
-	var items []ScrapedItem
-	for _, a := range phaseA {
-		items = append(items, p.toScrapedItem(a, "jikan"))
-	}
-	for _, a := range phaseB {
-		items = append(items, p.toScrapedItemB(a))
-	}
-
-	return items, nil
-}
-
-func (p *JikanAnimeProvider) fetchSeason(year int, season string) ([]jikanAnime, error) {
-	var all []jikanAnime
-	page := 1
-
-	for {
-		u := fmt.Sprintf("https://api.jikan.moe/v4/seasons/%d/%s?sfw=true&page=%d&limit=25", year, season, page)
-		resp, err := p.client.Get(u)
-		if err != nil {
-			return nil, fmt.Errorf("fetching page %d: %w", page, err)
-		}
-		body, err := io.ReadAll(resp.Body)
-		resp.Body.Close()
-		if err != nil {
-			return nil, fmt.Errorf("reading page %d: %w", page, err)
-		}
-		if resp.StatusCode != http.StatusOK {
-			return nil, fmt.Errorf("jikan returned %d for page %d: %s", resp.StatusCode, page, string(body[:min(len(body), 200)]))
+			phaseB = append(phaseB, p.toScrapedItemB(a))
 		}
 
-		var result jikianimeResponse
-		if err := json.Unmarshal(body, &result); err != nil {
-			return nil, fmt.Errorf("decoding page %d: %w", page, err)
-		}
-
-		all = append(all, result.Data...)
-
-		if !result.Pagination.HasNextPage {
+		if len(results) < 25 {
 			break
 		}
 		page++
 		time.Sleep(400 * time.Millisecond)
 	}
 
-	return all, nil
+	return phaseB, nil
+}
+
+func (p *JikanAnimeProvider) fetchPage(url string) ([]jikanAnime, error) {
+	resp, err := p.client.Get(url)
+	if err != nil {
+		return nil, fmt.Errorf("fetching %s: %w", url, err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("reading response: %w", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("jikan returned %d: %s", resp.StatusCode, string(body[:min(len(body), 200)]))
+	}
+
+	var result jikanAnimeResponse
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, fmt.Errorf("decoding response: %w", err)
+	}
+
+	return result.Data, nil
 }
 
 func (p *JikanAnimeProvider) toScrapedItem(a jikanAnime, source string) ScrapedItem {
 	item := ScrapedItem{
 		Title:       a.Title,
-		Year:        a.Year,
 		MediaType:   model.MediaTypeAnime,
 		ReleaseType: model.ReleaseStreaming,
 		Source:      source,
@@ -219,8 +238,12 @@ func (p *JikanAnimeProvider) toScrapedItem(a jikanAnime, source string) ScrapedI
 		ImdbRating:  a.Score,
 	}
 
-	if a.Year <= 0 {
-		item.Year = extractYearFromAired(a.Aired.From)
+	if a.Year > 0 {
+		item.Year = a.Year
+	} else {
+		if t, err := parseJikanTime(a.Aired.From); err == nil {
+			item.Year = t.Year()
+		}
 	}
 
 	return item
@@ -231,7 +254,7 @@ func (p *JikanAnimeProvider) toScrapedItemB(a jikanAnime) ScrapedItem {
 
 	var endDate string
 	if a.Aired.To != "" {
-		if t, err := time.Parse(time.RFC3339, a.Aired.To); err == nil {
+		if t, err := parseJikanTime(a.Aired.To); err == nil {
 			endDate = t.Format("2006-01-02")
 		}
 	}
@@ -245,37 +268,10 @@ func (p *JikanAnimeProvider) toScrapedItemB(a jikanAnime) ScrapedItem {
 	return item
 }
 
-func currentSeasonEnded() (int, string) {
-	now := time.Now()
-	year := now.Year()
-	month := now.Month()
-
-	switch {
-	case month >= 1 && month <= 3:
-		return year - 1, "fall"
-	case month >= 4 && month <= 6:
-		return year, "winter"
-	case month >= 7 && month <= 9:
-		return year, "spring"
-	default:
-		return year, "summer"
+func parseJikanTime(s string) (time.Time, error) {
+	t, err := time.Parse(time.RFC3339, s)
+	if err == nil {
+		return t, nil
 	}
-}
-
-func extractYearFromAired(airedFrom string) int {
-	if airedFrom == "" {
-		return 0
-	}
-	t, err := time.Parse(time.RFC3339, airedFrom)
-	if err != nil {
-		t, err = time.Parse("2006-01-02T00:00:00+00:00", airedFrom)
-		if err != nil {
-			return 0
-		}
-	}
-	return t.Year()
-}
-
-func inDateRange(t, start, end time.Time) bool {
-	return (t.Equal(start) || t.After(start)) && (t.Equal(end) || t.Before(end))
+	return time.Parse("2006-01-02T00:00:00+00:00", s)
 }
