@@ -14,10 +14,11 @@ import (
 )
 
 type ProwlarrClient struct {
-	baseURL      string
-	apiKey       string
-	http         *http.Client
-	indexerNames map[int]string
+	baseURL           string
+	apiKey            string
+	http              *http.Client
+	indexerNames      map[int]string
+	indexerByCategory map[string]int
 }
 
 type indexerInfo struct {
@@ -25,16 +26,15 @@ type indexerInfo struct {
 	Name string `json:"name"`
 }
 
-func NewProwlarrClient(baseURL, apiKey string, timeoutSec int) *ProwlarrClient {
+func NewProwlarrClient(baseURL, apiKey string, timeoutSec int, indexerByCategory map[string]int) *ProwlarrClient {
 	if timeoutSec <= 0 {
 		timeoutSec = 120
 	}
 	return &ProwlarrClient{
-		baseURL: baseURL,
-		apiKey:  apiKey,
-		http: &http.Client{
-			Timeout: time.Duration(timeoutSec) * time.Second,
-		},
+		baseURL:           baseURL,
+		apiKey:            apiKey,
+		http:              &http.Client{Timeout: time.Duration(timeoutSec) * time.Second},
+		indexerByCategory: indexerByCategory,
 	}
 }
 
@@ -63,6 +63,23 @@ const (
 	CatTV    = 5000 // TV (parent)
 	CatMusic = 3000 // Music (parent)
 )
+
+func categoryKey(cat int) string {
+	switch cat {
+	case CatMovie, CatTV:
+		return "videos"
+	case CatMusic:
+		return "music"
+	}
+	return ""
+}
+
+func (p *ProwlarrClient) PreferredIndexerID(category int) int {
+	if p.indexerByCategory == nil {
+		return 0
+	}
+	return p.indexerByCategory[categoryKey(category)]
+}
 
 type SearchParams struct {
 	Query      string
@@ -200,16 +217,6 @@ func (p *ProwlarrClient) SearchMusic(ctx context.Context, query string) ([]quali
 	return p.Search(ctx, SearchParams{
 		Query:      query,
 		Type:       "music",
-		Limit:      50,
-		Categories: []int{CatMusic},
-	})
-}
-
-func (p *ProwlarrClient) SearchMusicWithIndexer(ctx context.Context, query string, indexerID int) ([]quality.ParsedRelease, error) {
-	return p.Search(ctx, SearchParams{
-		Query:      query,
-		Type:       "music",
-		IndexerID:  indexerID,
 		Limit:      50,
 		Categories: []int{CatMusic},
 	})

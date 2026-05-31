@@ -70,11 +70,17 @@ func NewExecutor(logger zerolog.Logger, cfg *config.Config, database *db.DB) *Ex
 	if cfg.Library.Lidarr.URL != "" {
 		lidarr = library.NewLidarrClient(cfg.Library.Lidarr.URL, cfg.Library.Lidarr.APIKey, cfg.Library.Lidarr.Timeout)
 	}
+	catMap := map[string]int{
+		"videos": cfg.Prowlarr.IndexerIDs.Videos,
+		"music":  cfg.Prowlarr.IndexerIDs.Music,
+		"anime":  cfg.Prowlarr.IndexerIDs.Anime,
+		"books":  cfg.Prowlarr.IndexerIDs.Books,
+	}
 	return &Executor{
 		log:    logger,
 		cfg:    cfg,
 		db:     database,
-		prowl:  search.NewProwlarrClient(cfg.Prowlarr.URL, cfg.Prowlarr.APIKey, cfg.Prowlarr.Timeout),
+		prowl:  search.NewProwlarrClient(cfg.Prowlarr.URL, cfg.Prowlarr.APIKey, cfg.Prowlarr.Timeout, catMap),
 		dl:     dl,
 		radarr: radarr,
 		sonarr: sonarr,
@@ -771,21 +777,21 @@ func (e *Executor) searchRelease(ctx context.Context, title *model.Title, stripp
 		queries = movieSearchQueries(stripped, title.Year, resKeyword)
 	}
 
-	indexerID := e.cfg.Prowlarr.IndexerID
+	preferredID := e.prowl.PreferredIndexerID(searchCats[0])
 	numTiers := len(queries)
 	var exactPool, fuzzyPool []quality.ParsedRelease
 
 	// Phase 1: all tiers on preferred indexer only
-	if indexerID > 0 {
-		name := e.prowl.GetIndexerName(ctx, indexerID)
-		e.log.Info().Str("name", name).Int("id", indexerID).Msg("preferred indexer")
+	if preferredID > 0 {
+		name := e.prowl.GetIndexerName(ctx, preferredID)
+		e.log.Info().Str("name", name).Int("id", preferredID).Msg("preferred indexer")
 
 		for i, q := range queries {
 			e.log.Info().Msgf("[%d/%d] preferred: %s", i+1, numTiers, q)
 			results, err := e.prowl.Search(ctx, search.SearchParams{
 				Query:      q,
 				Type:       searchType,
-				IndexerID:  indexerID,
+				IndexerID:  preferredID,
 				Limit:      50,
 				Categories: searchCats,
 			})
@@ -1319,17 +1325,23 @@ func musicSearchQueries(artist, album string, year int) []string {
 
 func (e *Executor) searchMusicRelease(ctx context.Context, artist, album string, year int) ([]quality.ParsedRelease, error) {
 	queries := musicSearchQueries(artist, album, year)
-	indexerID := e.cfg.Prowlarr.IndexerID
+	preferredID := e.prowl.PreferredIndexerID(search.CatMusic)
 	numTiers := len(queries)
 	var exactPool, fuzzyPool []quality.ParsedRelease
 
-	if indexerID > 0 {
-		name := e.prowl.GetIndexerName(ctx, indexerID)
-		e.log.Info().Str("name", name).Int("id", indexerID).Msg("preferred indexer (music)")
+	if preferredID > 0 {
+		name := e.prowl.GetIndexerName(ctx, preferredID)
+		e.log.Info().Str("name", name).Int("id", preferredID).Msg("preferred indexer (music)")
 
 		for i, q := range queries {
 			e.log.Info().Msgf("[%d/%d] preferred: %s", i+1, numTiers, q)
-			results, err := e.prowl.SearchMusicWithIndexer(ctx, q, indexerID)
+			results, err := e.prowl.Search(ctx, search.SearchParams{
+				Query:      q,
+				Type:       "music",
+				IndexerID:  preferredID,
+				Limit:      50,
+				Categories: []int{search.CatMusic},
+			})
 			if err != nil {
 				return nil, err
 			}

@@ -18,9 +18,14 @@ prowlarr:
   # Timeout in seconds for Prowlarr searches (default: 120)
   # Increase if you have many indexers that take long to respond
   timeout: 120
-  # Preferred indexer ID. Set to 0 to search all indexers.
-  # Prowlarr API: /api/v1/search with indexerIds param
-  indexer_id: 0
+  # Preferred indexer IDs per media category (Prowlarr indexer ID).
+  # Set to 0 (or omit) to search all indexers for that category.
+  # Uses Prowlarr API /api/v1/search with indexerIds param.
+  indexer_id:
+    videos: 0   # movies + TV
+    music: 0    # music
+    anime: 0    # anime
+    books: 0    # ebooks + audiobooks
 
 tmdb:
   # Get a free API key at https://www.themoviedb.org/settings/api
