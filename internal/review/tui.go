@@ -486,6 +486,17 @@ func (t *TUI) updateReview(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		t.posterImg = nil
 		return t, t.loadCurrentPosterCmd()
 
+	case "e":
+		t.filterUndecided = false
+		if t.filter == model.MediaTypeAnime {
+			t.filter = ""
+		} else {
+			t.filter = model.MediaTypeAnime
+		}
+		t.rebuildFiltered()
+		t.posterImg = nil
+		return t, t.loadCurrentPosterCmd()
+
 	case "n":
 		t.filterUndecided = !t.filterUndecided
 		t.rebuildFiltered()
@@ -596,6 +607,7 @@ func (t *TUI) View() tea.View {
 			keyStyle.Render("n") + helpStyle.Render(" undecided  ") +
 			keyStyle.Render("m") + helpStyle.Render(" movies  ") +
 			keyStyle.Render("t") + helpStyle.Render(" tv  ") +
+			keyStyle.Render("e") + helpStyle.Render(" anime  ") +
 			keyStyle.Render("b") + helpStyle.Render(" albums  ") +
 			keyStyle.Render("enter") + helpStyle.Render(" confirm  ") +
 			keyStyle.Render("o") + helpStyle.Render(" open    ") +
@@ -616,6 +628,8 @@ func (t *TUI) View() tea.View {
 		filterLabel = "  [tv]"
 	case model.MediaTypeMusic:
 		filterLabel = "  [albums]"
+	case model.MediaTypeAnime:
+		filterLabel = "  [anime]"
 	}
 	if t.filterUndecided {
 		filterLabel = "  [undecided]"
@@ -987,8 +1001,11 @@ func (t *TUI) buildRightContent(tl *model.Title, ev *model.ReleaseEvent, rw int)
 	}
 
 	mediaType := "movie"
-	if tl.MediaType == model.MediaTypeTV {
+	switch tl.MediaType {
+	case model.MediaTypeTV:
 		mediaType = "tv"
+	case model.MediaTypeAnime:
+		mediaType = "anime"
 	}
 
 	releaseType := "physical"
@@ -1069,17 +1086,44 @@ func (t *TUI) buildRightContent(tl *model.Title, ev *model.ReleaseEvent, rw int)
 		b.WriteString(strings.Join(parts, " · "))
 	}
 
+	// Phase B (currently-airing) notice
+	if strings.HasPrefix(ev.Source, "jikan-airing") {
+		b.WriteString("\n\n")
+		b.WriteString(warnStyle.Render("⏳ Currently Airing"))
+		if strings.Contains(ev.Notes, "end=") {
+			endDate := extractEndDate(ev.Notes)
+			if endDate != "" {
+				b.WriteString(rtStyle.Render(fmt.Sprintf(" — Final episode %s", endDate)))
+			}
+		}
+		b.WriteString("\n")
+		b.WriteString(rtStyle.Render("⚠  No season packs available"))
+		b.WriteString("\n")
+		b.WriteString(rtStyle.Render("Approve to add to Sonarr for episode management,"))
+		b.WriteString("\n")
+		b.WriteString(rtStyle.Render("or look for this item again after the season ends."))
+		b.WriteString("\n")
+	}
+
 	// Scores line
-	ratings := fmt.Sprintf("TMDB: %s · IMDb: %s · MC: %s · YT: %s · 🍅 %s · 🍿 %s",
-		fmtRating(tl.TmdbRating),
-		fmtRating(tl.ImdbRating),
-		fmtRating(tl.MetacriticScore),
-		fmtViews(tl.YoutubeViews),
-		fmtPct(tl.RTCriticsScore),
-		fmtPct(tl.RTAudienceScore),
-	)
-	b.WriteString("\n\n")
-	b.WriteString(ratingsLine.Render(ratings))
+	if tl.MediaType == model.MediaTypeAnime {
+		if tl.TmdbRating > 0 {
+			ratings := fmt.Sprintf("MAL: %s", fmtRating(tl.TmdbRating))
+			b.WriteString("\n")
+			b.WriteString(ratingsLine.Render(ratings))
+		}
+	} else {
+		ratings := fmt.Sprintf("TMDB: %s · IMDb: %s · MC: %s · YT: %s · 🍅 %s · 🍿 %s",
+			fmtRating(tl.TmdbRating),
+			fmtRating(tl.ImdbRating),
+			fmtRating(tl.MetacriticScore),
+			fmtViews(tl.YoutubeViews),
+			fmtPct(tl.RTCriticsScore),
+			fmtPct(tl.RTAudienceScore),
+		)
+		b.WriteString("\n\n")
+		b.WriteString(ratingsLine.Render(ratings))
+	}
 
 	// Overview
 	if tl.Overview != "" {
@@ -1087,12 +1131,14 @@ func (t *TUI) buildRightContent(tl *model.Title, ev *model.ReleaseEvent, rw int)
 		b.WriteString(overviewStyle.Width(rw).Render(tl.Overview))
 	}
 
-	// RT URL status
-	b.WriteString("\n\n")
-	if tl.RTURL != "" {
-		b.WriteString(rtStyle.Render("RT: " + tl.RTURL))
-	} else {
-		b.WriteString(rtStyle.Render("RT page unavailable"))
+	// RT URL status (skip for anime)
+	if tl.MediaType != model.MediaTypeAnime {
+		b.WriteString("\n\n")
+		if tl.RTURL != "" {
+			b.WriteString(rtStyle.Render("RT: " + tl.RTURL))
+		} else {
+			b.WriteString(rtStyle.Render("RT page unavailable"))
+		}
 	}
 
 	return b.String()
@@ -1188,6 +1234,19 @@ func fmtRuntime(m int) string {
 		return fmt.Sprintf("%dh %dm", h, mins)
 	}
 	return fmt.Sprintf("%dm", mins)
+}
+
+func extractEndDate(notes string) string {
+	if !strings.Contains(notes, "end=") {
+		return ""
+	}
+	// Notes format: "airing|end=2026-06-22|eps=13"
+	for _, part := range strings.Split(notes, "|") {
+		if strings.HasPrefix(part, "end=") {
+			return strings.TrimPrefix(part, "end=")
+		}
+	}
+	return ""
 }
 
 func fmtViews(n int64) string {

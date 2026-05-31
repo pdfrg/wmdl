@@ -262,6 +262,18 @@ func runProcessForWeek(ctx context.Context, database *db.DB, cfg *config.Config,
 
 	exec := process.NewExecutor(log.Logger, cfg, database)
 
+	// Split anime Phase B (airing) items — skip search, add directly to Sonarr
+	var animeAiring []db.EventWithTitle
+	var searchable []db.EventWithTitle
+	for _, ev := range events {
+		if ev.Title.MediaType == model.MediaTypeAnime && ev.Event.Source == "jikan-airing" {
+			animeAiring = append(animeAiring, ev)
+		} else {
+			searchable = append(searchable, ev)
+		}
+	}
+	events = searchable
+
 	if len(events) > 0 {
 		log.Info().Msgf("Processing %d movie/TV release(s) for %d-W%02d", len(events), year, week)
 
@@ -381,6 +393,23 @@ func runProcessForWeek(ctx context.Context, database *db.DB, cfg *config.Config,
 		log.Info().Msgf("Processed %d/%d movie/TV releases", len(picked), len(events))
 	}
 
+	// ─── Anime Phase B processing (airing items, no torrent search) ──────
+	for _, ae := range animeAiring {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+		log.Info().Str("title", ae.Title.Title).Msg("adding airing anime to Sonarr")
+		if err := exec.AddAiringAnimeToSonarr(ctx, ae); err != nil {
+			log.Warn().Err(err).Str("title", ae.Title.Title).Msg("error adding airing anime to Sonarr")
+			continue
+		}
+		if err := database.UpdateReleaseEventStatus(ctx, ae.Event.ID, model.StatusDownloaded); err != nil {
+			log.Warn().Err(err).Msg("updating anime event status")
+		}
+	}
+
 	// ─── Music album processing ──────────────────────────────────────────
 	if len(albumEventsForProcess) > 0 {
 		log.Info().Msgf("Processing %d music album(s)...", len(albumEventsForProcess))
@@ -403,7 +432,7 @@ func runProcessForWeek(ctx context.Context, database *db.DB, cfg *config.Config,
 		exec.ProcessMusicAlbumDecisions(ctx, albumResults)
 	}
 
-	if len(events) > 0 || len(albumEventsForProcess) > 0 {
+	if len(events) > 0 || len(animeAiring) > 0 || len(albumEventsForProcess) > 0 {
 		target.Processed = true
 		if err := database.UpsertWeekState(ctx, target); err != nil {
 			log.Warn().Err(err).Msg("tracking week state")

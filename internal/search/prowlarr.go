@@ -62,11 +62,12 @@ const (
 	CatMovie = 2000 // Movies (parent)
 	CatTV    = 5000 // TV (parent)
 	CatMusic = 3000 // Music (parent)
+	CatAnime = 5070 // TV/Anime (Newznab standard)
 )
 
 func categoryKey(cat int) string {
 	switch cat {
-	case CatMovie, CatTV:
+	case CatMovie, CatTV, CatAnime:
 		return "videos"
 	case CatMusic:
 		return "music"
@@ -79,6 +80,15 @@ func (p *ProwlarrClient) PreferredIndexerID(category int) int {
 		return 0
 	}
 	return p.indexerByCategory[categoryKey(category)]
+}
+
+func (p *ProwlarrClient) SearchAnime(ctx context.Context, query string) ([]quality.ParsedRelease, error) {
+	return p.Search(ctx, SearchParams{
+		Query:      query,
+		Type:       "tvsearch",
+		Limit:      50,
+		Categories: []int{CatAnime},
+	})
 }
 
 type SearchParams struct {

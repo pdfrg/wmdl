@@ -245,8 +245,11 @@ func (e *Executor) addToClient(ctx context.Context, evt db.EventWithTitle, chose
 		return
 	}
 	category := e.cfg.Downloader.Categories.Movies
-	if title.MediaType == model.MediaTypeTV {
+	switch title.MediaType {
+	case model.MediaTypeTV:
 		category = e.cfg.Downloader.Categories.TV
+	case model.MediaTypeAnime:
+		category = e.cfg.Downloader.Categories.Anime
 	}
 
 	var releaseEventID int64
@@ -761,17 +764,23 @@ func (e *Executor) searchRelease(ctx context.Context, title *model.Title, stripp
 	resCfg := e.cfg.Quality.Movies
 	searchType := "movie"
 	searchCats := []int{search.CatMovie}
-	if title.MediaType == model.MediaTypeTV {
+
+	switch title.MediaType {
+	case model.MediaTypeTV:
 		resCfg = e.cfg.Quality.TV
 		searchType = "tvsearch"
 		searchCats = []int{search.CatTV}
+	case model.MediaTypeAnime:
+		resCfg = e.cfg.Quality.Anime
+		searchType = "tvsearch"
+		searchCats = []int{search.CatAnime, search.CatTV}
 	}
 
 	resKeyword := resolutionSearchKeyword(resCfg.Resolution)
 	fallbackRes := fallbackResolution(resKeyword)
 
 	var queries []string
-	if title.MediaType == model.MediaTypeTV {
+	if title.MediaType == model.MediaTypeTV || title.MediaType == model.MediaTypeAnime {
 		queries = tvSearchQueries(stripped, season, resKeyword, fallbackRes)
 	} else {
 		queries = movieSearchQueries(stripped, title.Year, resKeyword)
@@ -781,19 +790,54 @@ func (e *Executor) searchRelease(ctx context.Context, title *model.Title, stripp
 	numTiers := len(queries)
 	var exactPool, fuzzyPool []quality.ParsedRelease
 
+	// For anime: define category sets for tiered search
+	animeCatSets := [][]int{searchCats}
+	allCatSets := [][]int{searchCats}
+	if title.MediaType == model.MediaTypeAnime {
+		animeCatSets = [][]int{{search.CatAnime}, {search.CatTV}}
+		allCatSets = [][]int{{search.CatTV}}
+	}
+
 	// Phase 1: all tiers on preferred indexer only
 	if preferredID > 0 {
 		name := e.prowl.GetIndexerName(ctx, preferredID)
 		e.log.Info().Str("name", name).Int("id", preferredID).Msg("preferred indexer")
 
+		for _, cats := range animeCatSets {
+			for i, q := range queries {
+				e.log.Info().Msgf("[%d/%d] preferred (cats=%v): %s", i+1, numTiers, cats, q)
+				results, err := e.prowl.Search(ctx, search.SearchParams{
+					Query:      q,
+					Type:       searchType,
+					IndexerID:  preferredID,
+					Limit:      50,
+					Categories: cats,
+				})
+				if err != nil {
+					return nil, err
+				}
+				exact, fuzzy := quality.PartitionReleases(results, stripped, title.Year, season, string(title.MediaType))
+				exactPool = mergeReleases(exactPool, exact)
+				fuzzyPool = mergeReleases(fuzzyPool, fuzzy)
+				e.log.Debug().Msgf("→ %d exact, %d fuzzy (exact total: %d)", len(exact), len(fuzzy), len(exactPool))
+				if len(exactPool) >= 10 {
+					return exactPool, nil
+				}
+			}
+		}
+
+		e.log.Info().Msgf("→ %d exact from preferred, searching all indexers", len(exactPool))
+	}
+
+	// Phase 2: all tiers on all indexers
+	for _, cats := range allCatSets {
 		for i, q := range queries {
-			e.log.Info().Msgf("[%d/%d] preferred: %s", i+1, numTiers, q)
+			e.log.Info().Msgf("[%d/%d] searching all (cats=%v): %s", i+1, numTiers, cats, q)
 			results, err := e.prowl.Search(ctx, search.SearchParams{
 				Query:      q,
 				Type:       searchType,
-				IndexerID:  preferredID,
 				Limit:      50,
-				Categories: searchCats,
+				Categories: cats,
 			})
 			if err != nil {
 				return nil, err
@@ -805,29 +849,6 @@ func (e *Executor) searchRelease(ctx context.Context, title *model.Title, stripp
 			if len(exactPool) >= 10 {
 				return exactPool, nil
 			}
-		}
-
-		e.log.Info().Msgf("→ %d exact from preferred, searching all indexers", len(exactPool))
-	}
-
-	// Phase 2: all tiers on all indexers
-	for i, q := range queries {
-		e.log.Info().Msgf("[%d/%d] searching all: %s", i+1, numTiers, q)
-		results, err := e.prowl.Search(ctx, search.SearchParams{
-			Query:      q,
-			Type:       searchType,
-			Limit:      50,
-			Categories: searchCats,
-		})
-		if err != nil {
-			return nil, err
-		}
-		exact, fuzzy := quality.PartitionReleases(results, stripped, title.Year, season, string(title.MediaType))
-		exactPool = mergeReleases(exactPool, exact)
-		fuzzyPool = mergeReleases(fuzzyPool, fuzzy)
-		e.log.Debug().Msgf("→ %d exact, %d fuzzy (exact total: %d)", len(exact), len(fuzzy), len(exactPool))
-		if len(exactPool) >= 10 {
-			return exactPool, nil
 		}
 	}
 
@@ -1015,6 +1036,57 @@ func (e *Executor) addToRadarr(ctx context.Context, evt db.EventWithTitle, confi
 		}
 	}
 
+	return nil
+}
+
+func (e *Executor) AddAiringAnimeToSonarr(ctx context.Context, evt db.EventWithTitle) error {
+	if e.sonarr == nil {
+		e.log.Warn().Msg("Sonarr not configured, skipping anime addition")
+		return nil
+	}
+
+	title := evt.Title.Title
+
+	lookup, err := e.sonarr.LookupByTitle(ctx, title)
+	if err != nil {
+		return fmt.Errorf("looking up anime in Sonarr: %w", err)
+	}
+	if lookup == nil {
+		e.log.Warn().Str("title", title).Msg("anime not found on Sonarr via title lookup")
+		return nil
+	}
+
+	existing, err := e.sonarr.Exists(ctx, lookup.TVDBID)
+	if err == nil && existing != nil {
+		e.log.Info().Str("title", title).Int("id", existing.ID).Msg("already in Sonarr")
+		return nil
+	}
+
+	profileID := e.resolveSonarrProfileID(ctx, e.cfg.Library.Sonarr.QualityProfile)
+	langProfiles, err := e.sonarr.GetLanguageProfiles(ctx)
+	if err != nil {
+		return err
+	}
+	langProfileID := 1
+	if len(langProfiles) > 0 {
+		langProfileID = langProfiles[0].ID
+	}
+
+	opts := library.AddSeriesOptions{
+		Monitored:         true,
+		SeasonFolder:      e.cfg.Library.Sonarr.SeasonFolders,
+		QualityProfileID:  profileID,
+		LanguageProfileID: langProfileID,
+		RootFolderPath:    e.cfg.Library.Sonarr.RootFolder,
+		SearchForMissing:  true,
+	}
+
+	series, err := e.sonarr.Add(ctx, lookup.TVDBID, lookup.Title, lookup.Year, opts)
+	if err != nil {
+		return fmt.Errorf("adding anime to Sonarr: %w", err)
+	}
+
+	e.log.Info().Str("title", series.Title).Int("id", series.ID).Msg("added airing anime to Sonarr")
 	return nil
 }
 

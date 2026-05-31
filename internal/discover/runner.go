@@ -113,6 +113,16 @@ func (r *Runner) Run(ctx context.Context) error {
 		}
 	}
 
+	// Anime provider (gated on config)
+	if r.cfg.MediaTypes.Anime.Enabled {
+		jikan := NewJikanAnimeProvider(r.cfg.MediaTypes.Anime)
+		if r.hasTargetWeek {
+			animeYear, animeWeek := r.animeTargetWeek(ctx)
+			jikan.SetWeekRange(animeYear, animeWeek)
+		}
+		providers = append(providers, jikan)
+	}
+
 	// Music provider (gated on config)
 	if r.cfg.MediaTypes.Music.Enabled {
 		aoty := NewAOTYProvider(r.cfg.MediaTypes.Music.Filter)
@@ -141,12 +151,15 @@ func (r *Runner) Run(ctx context.Context) error {
 		return nil
 	}
 
-	// Split music and video items
-	var videoItems, musicItems []ScrapedItem
+	// Split video, anime, and music items
+	var videoItems, animeItems, musicItems []ScrapedItem
 	for _, item := range allItems {
-		if item.MediaType == model.MediaTypeMusic {
+		switch item.MediaType {
+		case model.MediaTypeMusic:
 			musicItems = append(musicItems, item)
-		} else {
+		case model.MediaTypeAnime:
+			animeItems = append(animeItems, item)
+		default:
 			videoItems = append(videoItems, item)
 		}
 	}
@@ -206,6 +219,30 @@ func (r *Runner) Run(ctx context.Context) error {
 	}
 	wg.Wait()
 
+	// Process anime items (with Jikan data, no TMDB/IMDb/RT enrichment)
+	if len(animeItems) > 0 {
+		var muAnime sync.Mutex
+		var wgAnime sync.WaitGroup
+		semAnime := make(chan struct{}, 3)
+		wgAnime.Add(len(animeItems))
+		for _, item := range animeItems {
+			go func(item ScrapedItem) {
+				defer wgAnime.Done()
+				semAnime <- struct{}{}
+				defer func() { <-semAnime }()
+				itemCtx, itemCancel := context.WithTimeout(ctx, 30*time.Second)
+				defer itemCancel()
+				if err := r.processAnimeItem(itemCtx, item, progYear, progWeek); err != nil {
+					r.log.Warn().Err(err).Str("title", item.Title).Msg("error processing anime item")
+				}
+				muAnime.Lock()
+				processed++
+				muAnime.Unlock()
+			}(item)
+		}
+		wgAnime.Wait()
+	}
+
 	// Process music items (with MusicBrainz enrichment)
 	if len(uniqueMusic) > 0 {
 		var muMusic sync.Mutex
@@ -238,6 +275,13 @@ func (r *Runner) Run(ctx context.Context) error {
 			_ = r.db.SetSetting(ctx, "music_last_iso_year", fmt.Sprintf("%d", sy))
 			_ = r.db.SetSetting(ctx, "music_last_iso_week", fmt.Sprintf("%d", sw))
 		}
+	}
+
+	// Track anime week
+	if len(animeItems) > 0 && r.hasTargetWeek {
+		ay, aw := r.animeTargetWeek(ctx)
+		_ = r.db.SetSetting(ctx, "anime_last_iso_year", fmt.Sprintf("%d", ay))
+		_ = r.db.SetSetting(ctx, "anime_last_iso_week", fmt.Sprintf("%d", aw))
 	}
 
 	r.log.Info().Msgf("Processed %d/%d items", processed, len(uniqueVideos)+len(uniqueMusic))
@@ -581,6 +625,30 @@ func (r *Runner) processItem(ctx context.Context, item ScrapedItem, progYear, pr
 	return nil
 }
 
+// animeTargetWeek determines which week to scrape for anime.
+// First run: current ISO week.
+// Subsequent runs: last discovered anime week + 1.
+func (r *Runner) animeTargetWeek(ctx context.Context) (int, int) {
+	lastYearStr, _ := r.db.GetSetting(ctx, "anime_last_iso_year")
+	lastWeekStr, _ := r.db.GetSetting(ctx, "anime_last_iso_week")
+
+	if lastYearStr == "" || lastWeekStr == "" {
+		return r.targetYear, r.targetWeek
+	}
+
+	lastYear, _ := strconv.Atoi(lastYearStr)
+	lastWeek, _ := strconv.Atoi(lastWeekStr)
+
+	nextWeek := lastWeek + 1
+	nextYear := lastYear
+	if nextWeek > 52 {
+		nextWeek = 1
+		nextYear++
+	}
+
+	return nextYear, nextWeek
+}
+
 // musicTargetWeek determines which release week to scrape for music.
 // First run: current video week - timeshift offset.
 // Subsequent runs: last discovered music week + 1.
@@ -614,6 +682,67 @@ func (r *Runner) musicTargetWeek(ctx context.Context) (int, int) {
 
 // processMusicItem stores a scraped music item and enriches with MusicBrainz
 // data when available. MB lookup is best-effort — items are always stored.
+func (r *Runner) processAnimeItem(ctx context.Context, item ScrapedItem, progYear, progWeek int) error {
+	r.log.Info().Str("title", item.Title).Int("year", item.Year).Msg("processing anime item")
+
+	title := &model.Title{
+		MalID:       item.MalID,
+		Title:       item.Title,
+		Year:        item.Year,
+		MediaType:   model.MediaTypeAnime,
+		Overview:    item.Overview,
+		PosterPath:  item.ImageURL,
+		TmdbRating:  item.ImdbRating, // stores MAL score for display
+	}
+
+	var titleID int64
+	var existingEvent *model.ReleaseEvent
+
+	err := r.db.Transaction(ctx, func(tx *sql.Tx) error {
+		id, err := r.db.UpsertTitleTx(ctx, tx, title)
+		if err != nil {
+			return fmt.Errorf("saving anime title: %w", err)
+		}
+		titleID = id
+
+		existing, err := r.db.GetLatestReleaseEventTx(ctx, tx, titleID)
+		if err != nil {
+			return fmt.Errorf("checking existing events: %w", err)
+		}
+
+		if existing != nil && existing.Status == model.StatusPending {
+			existingEvent = existing
+			return nil
+		}
+
+		evt := &model.ReleaseEvent{
+			TitleID:     titleID,
+			Source:      item.Source,
+			ReleaseType: model.ReleaseStreaming,
+			Status:      model.StatusPending,
+			Notes:       item.Notes,
+			ISOYear:     progYear,
+			ISOWeek:     progWeek,
+		}
+
+		if _, err := r.db.CreateReleaseEventTx(ctx, tx, evt); err != nil {
+			return fmt.Errorf("saving anime release event: %w", err)
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		return err
+	}
+
+	if existingEvent != nil && existingEvent.Status == model.StatusPending {
+		return nil
+	}
+
+	return nil
+}
+
 func (r *Runner) processMusicItem(ctx context.Context, item ScrapedItem, progYear, progWeek int) error {
 	apiCtx, apiCancel := context.WithTimeout(ctx, 30*time.Second)
 	defer apiCancel()

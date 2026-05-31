@@ -6,6 +6,7 @@ const (
 	MediaTypeMovie MediaType = "movie"
 	MediaTypeTV    MediaType = "tv"
 	MediaTypeMusic MediaType = "music"
+	MediaTypeAnime MediaType = "anime"
 )
 
 type ReleaseStatus string
@@ -37,6 +38,7 @@ type Title struct {
 	ID               int64
 	TmdbID           int
 	TvdbID           int
+	MalID            int // MyAnimeList ID (anime)
 	Title            string
 	TmdbTitle        string // TMDB-matched title (may differ from scraped Title)
 	Year             int

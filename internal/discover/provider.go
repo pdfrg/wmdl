@@ -39,6 +39,9 @@ type ScrapedItem struct {
 	RTAudienceScore float64
 	YoutubeViews    int64
 	Source          string
+	Notes           string
+	Overview        string
+	MalID           int
 
 	// Music-specific fields (empty for movie/TV)
 	ArtistName      string

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 )
@@ -138,6 +139,21 @@ func (s *SonarrClient) Lookup(ctx context.Context, tvdbID int) (*SonarrSeries, e
 	})
 	if err != nil {
 		return nil, fmt.Errorf("sonarr lookup: %w", err)
+	}
+	if len(series) == 0 {
+		return nil, nil
+	}
+	return &series[0], nil
+}
+
+func (s *SonarrClient) LookupByTitle(ctx context.Context, title string) (*SonarrSeries, error) {
+	u := fmt.Sprintf("/api/v3/series/lookup?term=%s", url.QueryEscape(title))
+	var series []SonarrSeries
+	err := s.retry(ctx, func() error {
+		return s.get(ctx, u, &series)
+	})
+	if err != nil {
+		return nil, fmt.Errorf("sonarr lookup by title: %w", err)
 	}
 	if len(series) == 0 {
 		return nil, nil

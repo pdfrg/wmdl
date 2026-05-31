@@ -87,6 +87,7 @@ type CategoryConfig struct {
 	Movies string `mapstructure:"movies"`
 	TV     string `mapstructure:"tv"`
 	Music  string `mapstructure:"music"`
+	Anime  string `mapstructure:"anime"`
 }
 
 type LibraryConfig struct {
@@ -129,6 +130,7 @@ type QualityConfig struct {
 	Movies MediaQualityConfig `mapstructure:"movies"`
 	TV     MediaQualityConfig `mapstructure:"tv"`
 	Music  MusicQualityConfig `mapstructure:"music"`
+	Anime  MediaQualityConfig `mapstructure:"anime"`
 }
 
 type MediaQualityConfig struct {
@@ -147,6 +149,7 @@ type MediaTypesConfig struct {
 	Movies bool        `mapstructure:"movies"`
 	TV     bool        `mapstructure:"tv"`
 	Music  MusicConfig `mapstructure:"music"`
+	Anime  AnimeConfig `mapstructure:"anime"`
 }
 
 type MusicConfig struct {
@@ -161,6 +164,16 @@ type MusicFilterConfig struct {
 	MinUserScore     int  `mapstructure:"min_user_score"`
 	MinUserRatings   int  `mapstructure:"min_user_ratings"`
 	IncludeMustHear  bool `mapstructure:"include_must_hear"`
+}
+
+type AnimeConfig struct {
+	Enabled          bool    `mapstructure:"enabled"`
+	MinScore         float64 `mapstructure:"min_score"`
+	MinMembers       int     `mapstructure:"min_members"`
+	PhaseBEnabled    bool    `mapstructure:"phase_b_enabled"`
+	PhaseBMinScore   float64 `mapstructure:"phase_b_min_score"`
+	PhaseBMinMembers int     `mapstructure:"phase_b_min_members"`
+	MinPhaseBResults int     `mapstructure:"min_phase_b_results"`
 }
 
 const configName = "config"
@@ -286,4 +299,19 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("media_types.music.filter.min_user_score", 75)
 	v.SetDefault("media_types.music.filter.min_user_ratings", 200)
 	v.SetDefault("media_types.music.filter.include_must_hear", true)
+
+	v.SetDefault("media_types.anime.enabled", true)
+	v.SetDefault("media_types.anime.min_score", 7.0)
+	v.SetDefault("media_types.anime.min_members", 50000)
+	v.SetDefault("media_types.anime.phase_b_enabled", true)
+	v.SetDefault("media_types.anime.phase_b_min_score", 7.5)
+	v.SetDefault("media_types.anime.phase_b_min_members", 100000)
+	v.SetDefault("media_types.anime.min_phase_b_results", 3)
+
+	v.SetDefault("quality.anime.resolution", "1080p")
+	v.SetDefault("quality.anime.prefer_hdr", false)
+	v.SetDefault("quality.anime.source_priority", []string{"bluray", "web-dl", "webrip"})
+	v.SetDefault("quality.anime.codec_priority", []string{"h265", "h264", "av1"})
+
+	v.SetDefault("downloader.categories.anime", "Anime")
 }

@@ -60,10 +60,11 @@ func (d *DB) Migrate(ctx context.Context) error {
 		id              INTEGER PRIMARY KEY AUTOINCREMENT,
 		tmdb_id         INTEGER NOT NULL,
 		tvdb_id         INTEGER NOT NULL DEFAULT 0,
+		mal_id          INTEGER NOT NULL DEFAULT 0,
 		title           TEXT NOT NULL,
 		year            INTEGER NOT NULL DEFAULT 0,
 		media_type      TEXT NOT NULL DEFAULT 'movie'
-		                CHECK(media_type IN ('movie','tv')),
+		                CHECK(media_type IN ('movie','tv','anime')),
 		imdb_id         TEXT DEFAULT '',
 		imdb_rating      REAL DEFAULT 0,
 		rt_url           TEXT DEFAULT '',
@@ -208,6 +209,60 @@ func (d *DB) Migrate(ctx context.Context) error {
 	d.db.ExecContext(ctx, `ALTER TABLE artists ADD COLUMN area TEXT NOT NULL DEFAULT ''`)
 	d.db.ExecContext(ctx, `ALTER TABLE artists ADD COLUMN disambiguation TEXT NOT NULL DEFAULT ''`)
 	d.db.ExecContext(ctx, `ALTER TABLE titles ADD COLUMN tvdb_id INTEGER NOT NULL DEFAULT 0`)
+	d.db.ExecContext(ctx, `ALTER TABLE titles ADD COLUMN mal_id INTEGER NOT NULL DEFAULT 0`)
+
+	// Recreate titles table to update media_type CHECK constraint for anime support
+	// SQLite doesn't support ALTER TABLE to change constraints, so we recreate.
+	d.db.ExecContext(ctx, `
+		CREATE TABLE IF NOT EXISTS titles_new (
+			id              INTEGER PRIMARY KEY AUTOINCREMENT,
+			tmdb_id         INTEGER NOT NULL,
+			tvdb_id         INTEGER NOT NULL DEFAULT 0,
+			mal_id          INTEGER NOT NULL DEFAULT 0,
+			title           TEXT NOT NULL,
+			year            INTEGER NOT NULL DEFAULT 0,
+			media_type      TEXT NOT NULL DEFAULT 'movie'
+			                CHECK(media_type IN ('movie','tv','anime')),
+			imdb_id         TEXT DEFAULT '',
+			imdb_rating      REAL DEFAULT 0,
+			rt_url           TEXT DEFAULT '',
+			rt_critics_score REAL DEFAULT 0,
+			rt_audience_score REAL DEFAULT 0,
+			tmdb_rating      REAL DEFAULT 0,
+			metacritic_score REAL DEFAULT 0,
+			us_rating         TEXT DEFAULT '',
+			original_language TEXT DEFAULT '',
+			origin_country    TEXT DEFAULT '',
+			overview          TEXT DEFAULT '',
+			genres            TEXT DEFAULT '',
+			runtime           INTEGER DEFAULT 0,
+			yt_trailer_views  INTEGER DEFAULT 0,
+			poster_path       TEXT DEFAULT '',
+			created_at        TEXT NOT NULL DEFAULT (datetime('now')),
+			UNIQUE(tmdb_id)
+		)
+	`)
+	// If the old titles table exists and the new one was just created, copy data
+	if _, err := d.db.ExecContext(ctx, `
+		INSERT OR IGNORE INTO titles_new (
+			id, tmdb_id, tvdb_id, mal_id, title, year, media_type,
+			imdb_id, imdb_rating, rt_url, rt_critics_score, rt_audience_score,
+			tmdb_rating, metacritic_score, us_rating, original_language, origin_country,
+			yt_trailer_views, overview, genres, runtime, poster_path, created_at
+		) SELECT
+			id, tmdb_id, tvdb_id, 0, title, year, media_type,
+			imdb_id, imdb_rating, rt_url, rt_critics_score, rt_audience_score,
+			tmdb_rating, metacritic_score, us_rating, original_language, origin_country,
+			yt_trailer_views, overview, genres, runtime, poster_path, created_at
+		FROM titles
+	`); err == nil {
+		// Only swap if the old table still exists (has content from original schema)
+		d.db.ExecContext(ctx, `DROP TABLE IF EXISTS titles`)
+		d.db.ExecContext(ctx, `ALTER TABLE titles_new RENAME TO titles`)
+	} else {
+		// Clean up the new table if the old one didn't exist or migration failed
+		d.db.ExecContext(ctx, `DROP TABLE IF EXISTS titles_new`)
+	}
 	d.db.ExecContext(ctx, `ALTER TABLE release_events ADD COLUMN iso_year INTEGER DEFAULT 0`)
 	d.db.ExecContext(ctx, `ALTER TABLE release_events ADD COLUMN iso_week INTEGER DEFAULT 0`)
 	d.db.ExecContext(ctx, `ALTER TABLE release_events ADD COLUMN notes TEXT DEFAULT ''`)
@@ -243,18 +298,51 @@ func (d *DB) UpsertTitleTx(ctx context.Context, tx *sql.Tx, t *model.Title) (int
 }
 
 func (d *DB) upsertTitle(ctx context.Context, q querier, t *model.Title) (int64, error) {
+	// For anime, use mal_id as the unique key; for movies/TV, use tmdb_id
+	if t.MediaType == model.MediaTypeAnime && t.MalID > 0 {
+		existing, err := d.getTitleByMalID(ctx, q, t.MalID)
+		if err != nil {
+			return 0, err
+		}
+		if existing != nil {
+			// Update existing anime title
+			_, err := q.ExecContext(ctx, `
+				UPDATE titles SET
+					tvdb_id = ?, title = ?, year = ?, media_type = ?,
+					imdb_id = ?, imdb_rating = ?, rt_url = ?, rt_critics_score = ?,
+					rt_audience_score = ?, tmdb_rating = ?, metacritic_score = ?,
+					us_rating = ?, original_language = ?, origin_country = ?,
+					yt_trailer_views = ?, overview = ?, genres = ?, runtime = ?,
+					poster_path = ?, tmdb_title = ?
+				WHERE mal_id = ?
+			`,
+				t.TvdbID, t.Title, t.Year, string(t.MediaType),
+				t.ImdbID, t.ImdbRating, t.RTURL, t.RTCriticsScore,
+				t.RTAudienceScore, t.TmdbRating, t.MetacriticScore,
+				t.USRating, t.OriginalLanguage, t.OriginCountry,
+				t.YoutubeViews, t.Overview, t.Genres, t.Runtime,
+				t.PosterPath, t.TmdbTitle, t.MalID,
+			)
+			if err != nil {
+				return 0, fmt.Errorf("updating anime title: %w", err)
+			}
+			return existing.ID, nil
+		}
+	}
+
 	res, err := q.ExecContext(ctx, `
-		INSERT INTO titles (tmdb_id, tvdb_id, title, tmdb_title, year, media_type, imdb_id, imdb_rating,
+		INSERT INTO titles (tmdb_id, tvdb_id, mal_id, title, tmdb_title, year, media_type, imdb_id, imdb_rating,
 		                    rt_url, rt_critics_score, rt_audience_score, tmdb_rating,
 		                    metacritic_score, us_rating, original_language, origin_country,
 		                    yt_trailer_views, overview, genres, runtime, poster_path, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(tmdb_id) DO UPDATE SET
 			title             = excluded.title,
 			tmdb_title        = excluded.tmdb_title,
 			year              = excluded.year,
 			media_type        = excluded.media_type,
 			tvdb_id           = excluded.tvdb_id,
+			mal_id            = excluded.mal_id,
 			imdb_id           = excluded.imdb_id,
 			imdb_rating       = excluded.imdb_rating,
 			rt_url            = excluded.rt_url,
@@ -271,7 +359,7 @@ func (d *DB) upsertTitle(ctx context.Context, q querier, t *model.Title) (int64,
 			runtime           = excluded.runtime,
 			poster_path       = excluded.poster_path
 	`,
-		t.TmdbID, t.TvdbID, t.Title, t.TmdbTitle, t.Year, string(t.MediaType), t.ImdbID, t.ImdbRating,
+		t.TmdbID, t.TvdbID, t.MalID, t.Title, t.TmdbTitle, t.Year, string(t.MediaType), t.ImdbID, t.ImdbRating,
 		t.RTURL, t.RTCriticsScore, t.RTAudienceScore, t.TmdbRating,
 		t.MetacriticScore, t.USRating, t.OriginalLanguage, t.OriginCountry,
 		t.YoutubeViews, t.Overview, t.Genres, t.Runtime, t.PosterPath, t.CreatedAt,
@@ -287,17 +375,28 @@ func (d *DB) upsertTitle(ctx context.Context, q querier, t *model.Title) (int64,
 }
 
 func (d *DB) GetTitleByTmdbID(ctx context.Context, tmdbID int) (*model.Title, error) {
+	return d.getTitleByField(ctx, "tmdb_id", tmdbID)
+}
+
+func (d *DB) GetTitleByMalID(ctx context.Context, malID int) (*model.Title, error) {
+	return d.getTitleByField(ctx, "mal_id", malID)
+}
+
+func (d *DB) getTitleByMalID(ctx context.Context, q querier, malID int) (*model.Title, error) {
+	if malID <= 0 {
+		return nil, nil
+	}
 	var t model.Title
 	var mediaType string
 	var createdAt string
-	err := d.db.QueryRowContext(ctx, `
-		SELECT id, tmdb_id, tvdb_id, title, tmdb_title, year, media_type, imdb_id,
+	err := q.QueryRowContext(ctx, `
+		SELECT id, tmdb_id, tvdb_id, mal_id, title, tmdb_title, year, media_type, imdb_id,
 		       imdb_rating, rt_url, rt_critics_score, rt_audience_score,
 		       tmdb_rating, metacritic_score, yt_trailer_views, us_rating, original_language, origin_country,
 		       overview, genres, runtime, poster_path, created_at
-		FROM titles WHERE tmdb_id = ?
-	`, tmdbID).Scan(
-		&t.ID, &t.TmdbID, &t.TvdbID, &t.Title, &t.TmdbTitle, &t.Year, &mediaType,
+		FROM titles WHERE mal_id = ?
+	`, malID).Scan(
+		&t.ID, &t.TmdbID, &t.TvdbID, &t.MalID, &t.Title, &t.TmdbTitle, &t.Year, &mediaType,
 		&t.ImdbID, &t.ImdbRating, &t.RTURL, &t.RTCriticsScore, &t.RTAudienceScore,
 		&t.TmdbRating, &t.MetacriticScore, &t.YoutubeViews, &t.USRating, &t.OriginalLanguage, &t.OriginCountry,
 		&t.Overview, &t.Genres, &t.Runtime, &t.PosterPath, &createdAt,
@@ -306,7 +405,34 @@ func (d *DB) GetTitleByTmdbID(ctx context.Context, tmdbID int) (*model.Title, er
 		if err == sql.ErrNoRows {
 			return nil, nil
 		}
-		return nil, fmt.Errorf("querying title by id: %w", err)
+		return nil, fmt.Errorf("querying title by mal_id: %w", err)
+	}
+	t.MediaType = model.MediaType(mediaType)
+	t.CreatedAt = createdAt
+	return &t, nil
+}
+
+func (d *DB) getTitleByField(ctx context.Context, field string, value int) (*model.Title, error) {
+	var t model.Title
+	var mediaType string
+	var createdAt string
+	err := d.db.QueryRowContext(ctx, fmt.Sprintf(`
+		SELECT id, tmdb_id, tvdb_id, mal_id, title, tmdb_title, year, media_type, imdb_id,
+		       imdb_rating, rt_url, rt_critics_score, rt_audience_score,
+		       tmdb_rating, metacritic_score, yt_trailer_views, us_rating, original_language, origin_country,
+		       overview, genres, runtime, poster_path, created_at
+		FROM titles WHERE %s = ?
+	`, field), value).Scan(
+		&t.ID, &t.TmdbID, &t.TvdbID, &t.MalID, &t.Title, &t.TmdbTitle, &t.Year, &mediaType,
+		&t.ImdbID, &t.ImdbRating, &t.RTURL, &t.RTCriticsScore, &t.RTAudienceScore,
+		&t.TmdbRating, &t.MetacriticScore, &t.YoutubeViews, &t.USRating, &t.OriginalLanguage, &t.OriginCountry,
+		&t.Overview, &t.Genres, &t.Runtime, &t.PosterPath, &createdAt,
+	)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("querying title by %s: %w", field, err)
 	}
 	t.MediaType = model.MediaType(mediaType)
 	t.CreatedAt = createdAt
@@ -315,7 +441,7 @@ func (d *DB) GetTitleByTmdbID(ctx context.Context, tmdbID int) (*model.Title, er
 
 func (d *DB) ListTitles(ctx context.Context) ([]*model.Title, error) {
 	rows, err := d.db.QueryContext(ctx, `
-		SELECT id, tmdb_id, tvdb_id, title, tmdb_title, year, media_type, imdb_id,
+		SELECT id, tmdb_id, tvdb_id, mal_id, title, tmdb_title, year, media_type, imdb_id,
 		       imdb_rating, rt_url, rt_critics_score, rt_audience_score,
 		       tmdb_rating, metacritic_score, us_rating, original_language, origin_country,
 		       yt_trailer_views, overview, genres, runtime, poster_path, created_at
@@ -332,7 +458,7 @@ func (d *DB) ListTitles(ctx context.Context) ([]*model.Title, error) {
 		var mediaType string
 		var createdAt string
 		if err := rows.Scan(
-			&t.ID, &t.TmdbID, &t.TvdbID, &t.Title, &t.TmdbTitle, &t.Year, &mediaType,
+			&t.ID, &t.TmdbID, &t.TvdbID, &t.MalID, &t.Title, &t.TmdbTitle, &t.Year, &mediaType,
 			&t.ImdbID, &t.ImdbRating, &t.RTURL, &t.RTCriticsScore, &t.RTAudienceScore,
 			&t.TmdbRating, &t.MetacriticScore, &t.USRating, &t.OriginalLanguage, &t.OriginCountry,
 			&t.YoutubeViews, &t.Overview, &t.Genres, &t.Runtime, &t.PosterPath, &createdAt,
@@ -436,7 +562,7 @@ func (d *DB) ListPendingWithTitles(ctx context.Context) ([]EventWithTitle, error
 	rows, err := d.db.QueryContext(ctx, `
 		SELECT e.id, e.title_id, e.source, e.release_type, e.release_date,
 		       e.status, e.previous_status, e.notes, e.created_at, e.iso_year, e.iso_week,
-		t.id, t.tmdb_id, t.tvdb_id, t.title, t.tmdb_title, t.year, t.media_type, t.imdb_id,
+		t.id, t.tmdb_id, t.tvdb_id, t.mal_id, t.title, t.tmdb_title, t.year, t.media_type, t.imdb_id,
 		       t.imdb_rating, t.rt_url, t.rt_critics_score, t.rt_audience_score,
 		       t.tmdb_rating, t.metacritic_score, t.us_rating,
 		       t.original_language, t.origin_country,
@@ -458,7 +584,7 @@ func (d *DB) ListApprovedWithTitles(ctx context.Context) ([]EventWithTitle, erro
 	rows, err := d.db.QueryContext(ctx, `
 		SELECT e.id, e.title_id, e.source, e.release_type, e.release_date,
 		       e.status, e.previous_status, e.notes, e.created_at, e.iso_year, e.iso_week,
-		t.id, t.tmdb_id, t.tvdb_id, t.title, t.tmdb_title, t.year, t.media_type, t.imdb_id,
+		t.id, t.tmdb_id, t.tvdb_id, t.mal_id, t.title, t.tmdb_title, t.year, t.media_type, t.imdb_id,
 		       t.imdb_rating, t.rt_url, t.rt_critics_score, t.rt_audience_score,
 		       t.tmdb_rating, t.metacritic_score, t.us_rating,
 		       t.original_language, t.origin_country,
@@ -643,7 +769,7 @@ func (d *DB) ListEventsByWeekWithTitles(ctx context.Context, year, week int) ([]
 	rows, err := d.db.QueryContext(ctx, `
 		SELECT e.id, e.title_id, e.source, e.release_type, e.release_date,
 		       e.status, e.previous_status, e.notes, e.created_at, e.iso_year, e.iso_week,
-		t.id, t.tmdb_id, t.tvdb_id, t.title, t.tmdb_title, t.year, t.media_type, t.imdb_id,
+		t.id, t.tmdb_id, t.tvdb_id, t.mal_id, t.title, t.tmdb_title, t.year, t.media_type, t.imdb_id,
 		       t.imdb_rating, t.rt_url, t.rt_critics_score, t.rt_audience_score,
 		       t.tmdb_rating, t.metacritic_score, t.us_rating,
 		       t.original_language, t.origin_country,
@@ -677,7 +803,7 @@ func (d *DB) ListEventsByWeekAndStatus(ctx context.Context, year, week int, stat
 	query := fmt.Sprintf(`
 		SELECT e.id, e.title_id, e.source, e.release_type, e.release_date,
 		       e.status, e.previous_status, e.notes, e.created_at, e.iso_year, e.iso_week,
-		t.id, t.tmdb_id, t.tvdb_id, t.title, t.tmdb_title, t.year, t.media_type, t.imdb_id,
+		t.id, t.tmdb_id, t.tvdb_id, t.mal_id, t.title, t.tmdb_title, t.year, t.media_type, t.imdb_id,
 		       t.imdb_rating, t.rt_url, t.rt_critics_score, t.rt_audience_score,
 		       t.tmdb_rating, t.metacritic_score, t.us_rating,
 		       t.original_language, t.origin_country,
@@ -1101,7 +1227,7 @@ func scanEventWithTitleRows(rows *sql.Rows) ([]EventWithTitle, error) {
 		err := rows.Scan(
 			&ev.ID, &ev.TitleID, &ev.Source, &evRelType, &ev.ReleaseDate,
 			&evStatus, &evPrevStatus, &ev.Notes, &evCreated, &ev.ISOYear, &ev.ISOWeek,
-			&tl.ID, &tl.TmdbID, &tl.TvdbID, &tl.Title, &tl.TmdbTitle, &tl.Year, &tlMediaType,
+			&tl.ID, &tl.TmdbID, &tl.TvdbID, &tl.MalID, &tl.Title, &tl.TmdbTitle, &tl.Year, &tlMediaType,
 			&tl.ImdbID, &tl.ImdbRating, &tl.RTURL, &tl.RTCriticsScore, &tl.RTAudienceScore,
 			&tl.TmdbRating, &tl.MetacriticScore, &tl.USRating,
 			&tl.OriginalLanguage, &tl.OriginCountry,
