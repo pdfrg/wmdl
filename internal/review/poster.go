@@ -54,7 +54,10 @@ func ParsePosterMode(s string) PosterMode {
 }
 
 func getPosterImage(tl *model.Title) (image.Image, error) {
-	if tl.PosterPath == "" || tl.TmdbID == 0 {
+	if tl.PosterPath == "" {
+		return nil, fmt.Errorf("no poster data")
+	}
+	if tl.TmdbID == 0 && tl.MalID == 0 {
 		return nil, fmt.Errorf("no poster data")
 	}
 
@@ -62,13 +65,23 @@ func getPosterImage(tl *model.Title) (image.Image, error) {
 	if err != nil {
 		return nil, err
 	}
-	cachePath := filepath.Join(cacheDir, fmt.Sprintf("%d.png", tl.TmdbID))
+
+	var cachePath string
+	var url string
+
+	if tl.MalID > 0 {
+		// Anime: PosterPath is a full URL (Jikan image), fetch directly
+		cachePath = filepath.Join(cacheDir, fmt.Sprintf("anime_%d.png", tl.MalID))
+		url = tl.PosterPath
+	} else {
+		cachePath = filepath.Join(cacheDir, fmt.Sprintf("%d.png", tl.TmdbID))
+		url = tmdbImageBase + tl.PosterPath
+	}
 
 	if img, err := loadCachedPoster(cachePath); err == nil {
 		return img, nil
 	}
 
-	url := tmdbImageBase + tl.PosterPath
 	img, err := fetchPoster(url)
 	if err != nil {
 		return nil, err

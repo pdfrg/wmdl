@@ -59,6 +59,18 @@ type Title struct {
 	Runtime          int
 	PosterPath       string
 	CreatedAt        string
+
+	// Anime-specific fields (populated from Jikan)
+	AnimeType     string // TV, Movie, OVA, ONA, Special, Music
+	AnimeEpisodes int
+	AnimeStatus   string // Finished Airing, Currently Airing, Not yet aired
+	AnimeMembers  int
+	AnimeRank     int
+	AnimeSource   string // Original, Manga, Light novel, etc.
+	AnimeStudio   string // primary studio name
+	Themes        string // comma-separated theme tags
+	Demographics  string // comma-separated demographic tags
+	Streaming     string // comma-separated streaming service names
 }
 
 type ReleaseEvent struct {

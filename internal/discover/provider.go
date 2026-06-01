@@ -41,9 +41,11 @@ type ScrapedItem struct {
 	Source          string
 	Notes           string
 	Overview        string
+	USRating        string
+	Genres          string
 	MalID           int
 
-	// Music-specific fields (empty for movie/TV)
+	// Music-specific fields (empty for movie/TV/anime)
 	ArtistName      string
 	AlbumType       model.AlbumType
 	AOTYCriticScore float64
@@ -53,4 +55,16 @@ type ScrapedItem struct {
 	AOTYMustHear    bool
 	ImageURL        string
 	AOTYURL         string
+
+	// Anime-specific fields (empty for non-anime)
+	AnimeType     string
+	AnimeEpisodes int
+	AnimeStatus   string
+	AnimeMembers  int
+	AnimeRank     int
+	AnimeSource   string
+	AnimeStudio   string
+	Themes        string
+	Demographics  string
+	Streaming     string
 }

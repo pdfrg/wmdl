@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/pdfrg/wmdl/internal/config"
@@ -36,6 +37,10 @@ type jikanPagination struct {
 	} `json:"items"`
 }
 
+type jikanNamedItem struct {
+	Name string `json:"name"`
+}
+
 type jikanAnime struct {
 	MalID    int    `json:"mal_id"`
 	Title    string `json:"title"`
@@ -43,26 +48,30 @@ type jikanAnime struct {
 	Type     string `json:"type"`
 	Episodes int    `json:"episodes"`
 	Status   string `json:"status"`
+	Source   string `json:"source"`
 	Aired    struct {
 		From string `json:"from"`
 		To   string `json:"to"`
 	} `json:"aired"`
 	Score    float64 `json:"score"`
+	ScoredBy int     `json:"scored_by"`
+	Rank     int     `json:"rank"`
 	Members  int     `json:"members"`
 	Synopsis string  `json:"synopsis"`
 	Rating   string  `json:"rating"`
+	Season   string  `json:"season"`
 	Year     int     `json:"year"`
 	Images   struct {
 		JPG struct {
 			LargeImageURL string `json:"large_image_url"`
 		} `json:"jpg"`
 	} `json:"images"`
-	Genres []struct {
-		Name string `json:"name"`
-	} `json:"genres"`
+	Genres  []jikanNamedItem `json:"genres"`
 	Studios []struct {
 		Name string `json:"name"`
 	} `json:"studios"`
+	Themes       []jikanNamedItem `json:"themes"`
+	Demographics []jikanNamedItem `json:"demographics"`
 }
 
 func NewJikanAnimeProvider(cfg config.AnimeConfig) *JikanAnimeProvider {
@@ -227,16 +236,48 @@ func (p *JikanAnimeProvider) fetchPage(url string) ([]jikanAnime, error) {
 	return result.Data, nil
 }
 
+func joinJikanNames(items []jikanNamedItem) string {
+	if len(items) == 0 {
+		return ""
+	}
+	names := make([]string, len(items))
+	for i, it := range items {
+		names[i] = it.Name
+	}
+	return strings.Join(names, ", ")
+}
+
 func (p *JikanAnimeProvider) toScrapedItem(a jikanAnime, source string) ScrapedItem {
+	title := a.Title
+	if a.TitleEn != "" {
+		title = a.TitleEn
+	}
+
+	studio := ""
+	if len(a.Studios) > 0 {
+		studio = a.Studios[0].Name
+	}
+
 	item := ScrapedItem{
-		Title:       a.Title,
-		MediaType:   model.MediaTypeAnime,
-		ReleaseType: model.ReleaseStreaming,
-		Source:      source,
-		MalID:       a.MalID,
-		ImageURL:    a.Images.JPG.LargeImageURL,
-		Overview:    a.Synopsis,
-		ImdbRating:  a.Score,
+		Title:         title,
+		MediaType:     model.MediaTypeAnime,
+		ReleaseType:   model.ReleaseStreaming,
+		Source:        source,
+		MalID:         a.MalID,
+		ImageURL:      a.Images.JPG.LargeImageURL,
+		Overview:      a.Synopsis,
+		ImdbRating:    a.Score,
+		USRating:      a.Rating,
+		AnimeType:     a.Type,
+		AnimeEpisodes: a.Episodes,
+		AnimeStatus:   a.Status,
+		AnimeMembers:  a.Members,
+		AnimeRank:     a.Rank,
+		AnimeSource:   a.Source,
+		AnimeStudio:   studio,
+		Genres:        joinJikanNames(a.Genres),
+		Themes:        joinJikanNames(a.Themes),
+		Demographics:  joinJikanNames(a.Demographics),
 	}
 
 	if a.Year > 0 {

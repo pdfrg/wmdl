@@ -10,6 +10,7 @@ import (
 
 	"github.com/pdfrg/wmdl/internal/config"
 	"github.com/pdfrg/wmdl/internal/db"
+	"github.com/pdfrg/wmdl/internal/model"
 )
 
 func newDiscoverCmd() *cobra.Command {
@@ -43,7 +44,18 @@ func newDiscoverCmd() *cobra.Command {
 
 			headless, _ := cmd.Flags().GetBool("headless")
 
-			discovered, err := runDiscoverForWeek(cmd.Context(), database, cfg, targetYear, targetWeek, headless)
+			typeFilterStr, _ := cmd.Flags().GetString("type")
+			var typeFilter model.MediaType
+			if typeFilterStr != "" {
+				switch model.MediaType(typeFilterStr) {
+				case model.MediaTypeAnime, model.MediaTypeMusic, model.MediaTypeMovie, model.MediaTypeTV:
+					typeFilter = model.MediaType(typeFilterStr)
+				default:
+					return fmt.Errorf("invalid type %q: must be anime, movie, tv, or music", typeFilterStr)
+				}
+			}
+
+			discovered, err := runDiscoverForWeek(cmd.Context(), database, cfg, targetYear, targetWeek, headless, typeFilter)
 			if err != nil {
 				return err
 			}
@@ -60,6 +72,7 @@ func newDiscoverCmd() *cobra.Command {
 	}
 	addWeekFlag(cmd)
 	cmd.Flags().Bool("headless", false, "Run without opening a browser window (for cron/systemd)")
+	cmd.Flags().String("type", "", "Media type to discover (anime, movie, tv, music)")
 	return cmd
 }
 

@@ -22,22 +22,27 @@ import (
 )
 
 type Runner struct {
-	log           zerolog.Logger
-	cfg           *config.Config
-	db            *db.DB
-	tmdb          *TMDBClient
-	rt            *RTFinder
-	imdb          *IMDbAPIClient
-	mb            *MBClient
-	notify        notifier.Notifier
-	debugURL      string
-	allocCtx      context.Context
-	allocCancel   context.CancelFunc
-	targetYear    int
-	targetWeek    int
-	hasTargetWeek bool
-	headless      bool
-	killBrave     func() error
+	log             zerolog.Logger
+	cfg             *config.Config
+	db              *db.DB
+	tmdb            *TMDBClient
+	rt              *RTFinder
+	imdb            *IMDbAPIClient
+	mb              *MBClient
+	notify          notifier.Notifier
+	debugURL        string
+	allocCtx        context.Context
+	allocCancel     context.CancelFunc
+	targetYear      int
+	targetWeek      int
+	hasTargetWeek   bool
+	headless        bool
+	killBrave       func() error
+	mediaTypeFilter model.MediaType // "" = all types
+}
+
+func (r *Runner) SetMediaTypeFilter(mt model.MediaType) {
+	r.mediaTypeFilter = mt
 }
 
 func (r *Runner) SetTargetWeek(year, week int) {
@@ -72,49 +77,56 @@ func (r *Runner) Run(ctx context.Context) error {
 		return fmt.Errorf("TMDB not configured: set tmdb.api_key or tmdb.access_token in config\n  Get a free API key at https://www.themoviedb.org/settings/api")
 	}
 
+	wantVideo := r.mediaTypeFilter == "" || r.mediaTypeFilter == model.MediaTypeMovie || r.mediaTypeFilter == model.MediaTypeTV
+	wantAnime := r.mediaTypeFilter == "" || r.mediaTypeFilter == model.MediaTypeAnime
+	wantMusic := r.mediaTypeFilter == "" || r.mediaTypeFilter == model.MediaTypeMusic
+
 	// Auto-launch Brave if not already running on the debug port
-	killBrave, err := browser.EnsureRunning(r.cfg.Browser.Binary, r.cfg.Browser.DebugPort, r.cfg.Browser.Profile, r.headless)
-	if err != nil {
-		r.log.Warn().Err(err).Msg("browser unavailable, some features disabled")
-	} else if killBrave != nil {
-		r.killBrave = killBrave
-		r.log.Info().Int("port", r.cfg.Browser.DebugPort).Str("profile", r.cfg.Browser.Profile).Msg("launched Brave")
-	} else {
-		r.log.Info().Int("port", r.cfg.Browser.DebugPort).Msg("connected to Brave")
+	// Only needed for video/TV/movie processing (RT scraping, FlixPatrol).
+	if wantVideo {
+		killBrave, err := browser.EnsureRunning(r.cfg.Browser.Binary, r.cfg.Browser.DebugPort, r.cfg.Browser.Profile, r.headless)
+		if err != nil {
+			r.log.Warn().Err(err).Msg("browser unavailable, some features disabled")
+		} else if killBrave != nil {
+			r.killBrave = killBrave
+			r.log.Info().Int("port", r.cfg.Browser.DebugPort).Str("profile", r.cfg.Browser.Profile).Msg("launched Brave")
+		} else {
+			r.log.Info().Int("port", r.cfg.Browser.DebugPort).Msg("connected to Brave")
+		}
+
+		// If we auto-launched in headless mode, kill the browser when done.
+		// Defer this BEFORE allocCtx setup so allocCancel runs first (LIFO).
+		if r.killBrave != nil && r.headless {
+			defer func() { _ = r.killBrave() }()
+		}
+
+		// Shared chromedp allocator for all RT page scraping (single WebSocket connection)
+		r.allocCtx, r.allocCancel = chromedp.NewRemoteAllocator(ctx, r.debugURL)
+		if r.allocCancel != nil {
+			defer r.allocCancel()
+		}
 	}
 
-	// If we auto-launched in headless mode, kill the browser when done.
-	// Defer this BEFORE allocCtx setup so allocCancel runs first (LIFO).
-	if r.killBrave != nil && r.headless {
-		defer func() { _ = r.killBrave() }()
-	}
+	providers := []ReleaseProvider{}
 
-	// Shared chromedp allocator for all RT page scraping (single WebSocket connection)
-	r.allocCtx, r.allocCancel = chromedp.NewRemoteAllocator(ctx, r.debugURL)
-	if r.allocCancel != nil {
-		defer r.allocCancel()
-	}
+	// Video/movie/TV providers (DVD release dates, TMDB discover, FlixPatrol via chromedp)
+	if wantVideo {
+		providers = append(providers, NewDVDReleaseDates(), NewTMDBDiscoverProvider(r.tmdb))
 
-	providers := []ReleaseProvider{
-		NewDVDReleaseDates(),
-		NewTMDBDiscoverProvider(r.tmdb),
-	}
+		fp := NewFlixPatrolProvider(r.debugURL)
+		providers = append(providers, fp)
 
-	// FlixPatrol via chromedp (best-effort, requires Brave running on debug port)
-	fp := NewFlixPatrolProvider(r.debugURL)
-	providers = append(providers, fp)
-
-	// Set target week on video providers that support it
-	if r.hasTargetWeek {
-		for _, p := range providers {
-			if ws, ok := p.(WeekSettable); ok {
-				ws.SetWeekRange(r.targetYear, r.targetWeek)
+		if r.hasTargetWeek {
+			for _, p := range providers {
+				if ws, ok := p.(WeekSettable); ok {
+					ws.SetWeekRange(r.targetYear, r.targetWeek)
+				}
 			}
 		}
 	}
 
-	// Anime provider (gated on config)
-	if r.cfg.MediaTypes.Anime.Enabled {
+	// Anime provider (gated on config and type filter)
+	if wantAnime && r.cfg.MediaTypes.Anime.Enabled {
 		jikan := NewJikanAnimeProvider(r.cfg.MediaTypes.Anime)
 		if r.hasTargetWeek {
 			animeYear, animeWeek := r.animeTargetWeek(ctx)
@@ -123,14 +135,18 @@ func (r *Runner) Run(ctx context.Context) error {
 		providers = append(providers, jikan)
 	}
 
-	// Music provider (gated on config)
-	if r.cfg.MediaTypes.Music.Enabled {
+	// Music provider (gated on config and type filter)
+	if wantMusic && r.cfg.MediaTypes.Music.Enabled {
 		aoty := NewAOTYProvider(r.cfg.MediaTypes.Music.Filter)
 		if r.hasTargetWeek {
 			musicYear, musicWeek := r.musicTargetWeek(ctx)
 			aoty.SetWeekRange(musicYear, musicWeek)
 		}
 		providers = append(providers, aoty)
+	}
+
+	if len(providers) == 0 {
+		return fmt.Errorf("no providers enabled for type filter %q", r.mediaTypeFilter)
 	}
 
 	var allItems []ScrapedItem
@@ -197,41 +213,57 @@ func (r *Runner) Run(ctx context.Context) error {
 	}
 
 	var processed int
-	var mu sync.Mutex
-	var wg sync.WaitGroup
-	sem := make(chan struct{}, 3)
+	totalItems := len(uniqueVideos) + len(animeItems) + len(uniqueMusic)
 
-	// Process video items
-	wg.Add(len(uniqueVideos))
-	for _, item := range uniqueVideos {
-		go func(item ScrapedItem) {
-			defer wg.Done()
-			select {
-			case sem <- struct{}{}:
-			case <-ctx.Done():
-				return
+	// Process video items (only when type filter matches)
+	if wantVideo && len(uniqueVideos) > 0 {
+		// When filtering to a specific video subtype (movie or tv),
+		// only process items matching that type.
+		toProcess := uniqueVideos
+		if r.mediaTypeFilter == model.MediaTypeMovie || r.mediaTypeFilter == model.MediaTypeTV {
+			var filtered []ScrapedItem
+			for _, item := range uniqueVideos {
+				if item.MediaType == r.mediaTypeFilter {
+					filtered = append(filtered, item)
+				}
 			}
-			defer func() { <-sem }()
+			toProcess = filtered
+		}
 
-			itemCtx, itemCancel := context.WithTimeout(ctx, 2*time.Minute)
-			defer itemCancel()
+		var mu sync.Mutex
+		var wg sync.WaitGroup
+		sem := make(chan struct{}, 3)
+		wg.Add(len(toProcess))
+		for _, item := range toProcess {
+			go func(item ScrapedItem) {
+				defer wg.Done()
+				select {
+				case sem <- struct{}{}:
+				case <-ctx.Done():
+					return
+				}
+				defer func() { <-sem }()
 
-			if err := r.processItem(itemCtx, item, progYear, progWeek); err != nil {
-				r.log.Warn().Err(err).Str("title", item.Title).Msg("error processing item")
-			}
-			mu.Lock()
-			processed++
-			mu.Unlock()
-		}(item)
-	}
-	select {
-	case <-waitDone(ctx, &wg):
-	case <-ctx.Done():
-		return ctx.Err()
+				itemCtx, itemCancel := context.WithTimeout(ctx, 2*time.Minute)
+				defer itemCancel()
+
+				if err := r.processItem(itemCtx, item, progYear, progWeek); err != nil {
+					r.log.Warn().Err(err).Str("title", item.Title).Msg("error processing item")
+				}
+				mu.Lock()
+				processed++
+				mu.Unlock()
+			}(item)
+		}
+		select {
+		case <-waitDone(ctx, &wg):
+		case <-ctx.Done():
+			return ctx.Err()
+		}
 	}
 
 	// Process anime items (with Jikan data, no TMDB/IMDb/RT enrichment)
-	if len(animeItems) > 0 {
+	if wantAnime && len(animeItems) > 0 {
 		var muAnime sync.Mutex
 		var wgAnime sync.WaitGroup
 		semAnime := make(chan struct{}, 3)
@@ -263,7 +295,7 @@ func (r *Runner) Run(ctx context.Context) error {
 	}
 
 	// Process music items (with MusicBrainz enrichment)
-	if len(uniqueMusic) > 0 {
+	if wantMusic && len(uniqueMusic) > 0 {
 		var muMusic sync.Mutex
 		var wgMusic sync.WaitGroup
 		var musicProcessed int
@@ -298,7 +330,6 @@ func (r *Runner) Run(ctx context.Context) error {
 		}
 		processed += musicProcessed
 
-		// Track scrape offset in settings for next run's progression
 		if r.hasTargetWeek {
 			sy, sw := r.musicTargetWeek(ctx)
 			_ = r.db.SetSetting(ctx, "music_last_iso_year", fmt.Sprintf("%d", sy))
@@ -307,17 +338,19 @@ func (r *Runner) Run(ctx context.Context) error {
 	}
 
 	// Track anime week
-	if len(animeItems) > 0 && r.hasTargetWeek {
+	if wantAnime && len(animeItems) > 0 && r.hasTargetWeek {
 		ay, aw := r.animeTargetWeek(ctx)
 		_ = r.db.SetSetting(ctx, "anime_last_iso_year", fmt.Sprintf("%d", ay))
 		_ = r.db.SetSetting(ctx, "anime_last_iso_week", fmt.Sprintf("%d", aw))
 	}
 
-	r.log.Info().Msgf("Processed %d/%d items", processed, len(uniqueVideos)+len(animeItems)+len(uniqueMusic))
+	r.log.Info().Msgf("Processed %d/%d items", processed, totalItems)
 
 	// Track week state — use target week when set, never derive from
 	// streaming items (which can be 2 months in the past).
-	if r.hasTargetWeek {
+	// When a type filter is active, only track if we're running for the
+	// target week's primary type (skip week tracking for filtered dev runs).
+	if r.mediaTypeFilter == "" && r.hasTargetWeek {
 		ws := &model.WeekState{
 			Year:       r.targetYear,
 			Week:       r.targetWeek,
@@ -715,13 +748,25 @@ func (r *Runner) processAnimeItem(ctx context.Context, item ScrapedItem, progYea
 	r.log.Info().Str("title", item.Title).Int("year", item.Year).Msg("processing anime item")
 
 	title := &model.Title{
-		MalID:      item.MalID,
-		Title:      item.Title,
-		Year:       item.Year,
-		MediaType:  model.MediaTypeAnime,
-		Overview:   item.Overview,
-		PosterPath: item.ImageURL,
-		TmdbRating: item.ImdbRating, // stores MAL score for display
+		MalID:         item.MalID,
+		Title:         item.Title,
+		Year:          item.Year,
+		MediaType:     model.MediaTypeAnime,
+		USRating:      item.USRating,
+		Overview:      item.Overview,
+		Genres:        item.Genres,
+		PosterPath:    item.ImageURL,
+		TmdbRating:    item.ImdbRating, // stores MAL score for display
+		AnimeType:     item.AnimeType,
+		AnimeEpisodes: item.AnimeEpisodes,
+		AnimeStatus:   item.AnimeStatus,
+		AnimeMembers:  item.AnimeMembers,
+		AnimeRank:     item.AnimeRank,
+		AnimeSource:   item.AnimeSource,
+		AnimeStudio:   item.AnimeStudio,
+		Themes:        item.Themes,
+		Demographics:  item.Demographics,
+		Streaming:     item.Streaming,
 	}
 
 	var titleID int64

@@ -17,7 +17,7 @@ import (
 	"github.com/pdfrg/wmdl/internal/review"
 )
 
-func runDiscoverForWeek(ctx context.Context, database *db.DB, cfg *config.Config, year, week int, headless bool) (discovered bool, err error) {
+func runDiscoverForWeek(ctx context.Context, database *db.DB, cfg *config.Config, year, week int, headless bool, typeFilter model.MediaType) (discovered bool, err error) {
 	ws, err := database.GetWeekState(ctx, year, week)
 	if err != nil {
 		return false, fmt.Errorf("checking week state: %w", err)
@@ -31,6 +31,9 @@ func runDiscoverForWeek(ctx context.Context, database *db.DB, cfg *config.Config
 	}
 
 	runner := discover.NewRunner(log.Logger, cfg, database, headless)
+	if typeFilter != "" {
+		runner.SetMediaTypeFilter(typeFilter)
+	}
 	if year != 0 && week != 0 {
 		runner.SetTargetWeek(year, week)
 	}

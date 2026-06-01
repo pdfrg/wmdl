@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os/exec"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -513,6 +514,11 @@ func (t *TUI) updateReview(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			if u == "" {
 				u = "https://www.albumoftheyear.org/search/?q=" + url.QueryEscape(it.albumEvent.Album.Title)
 			}
+			if err := exec.Command("xdg-open", u).Start(); err != nil {
+				t.flashMsg = fmt.Sprintf("Failed to open browser: %v", err)
+			}
+		} else if it.event.Title.MediaType == model.MediaTypeAnime && it.event.Title.MalID > 0 {
+			u := fmt.Sprintf("https://myanimelist.net/anime/%d", it.event.Title.MalID)
 			if err := exec.Command("xdg-open", u).Start(); err != nil {
 				t.flashMsg = fmt.Sprintf("Failed to open browser: %v", err)
 			}
@@ -1086,6 +1092,43 @@ func (t *TUI) buildRightContent(tl *model.Title, ev *model.ReleaseEvent, rw int)
 		b.WriteString(strings.Join(parts, " · "))
 	}
 
+	// Anime-specific detail lines
+	if tl.MediaType == model.MediaTypeAnime {
+		var animeParts []string
+		if tl.AnimeType != "" {
+			animeParts = append(animeParts, tl.AnimeType)
+		}
+		if tl.AnimeStatus != "" {
+			animeParts = append(animeParts, tl.AnimeStatus)
+		}
+		if tl.AnimeSource != "" {
+			animeParts = append(animeParts, tl.AnimeSource)
+		}
+		if tl.AnimeStudio != "" {
+			animeParts = append(animeParts, tl.AnimeStudio)
+		}
+		if tl.AnimeEpisodes > 0 {
+			animeParts = append(animeParts, fmt.Sprintf("%d eps", tl.AnimeEpisodes))
+		}
+		if len(animeParts) > 0 {
+			b.WriteString("\n")
+			b.WriteString(strings.Join(animeParts, " · "))
+		}
+
+		if tl.Themes != "" {
+			b.WriteString("\n")
+			b.WriteString(rtStyle.Render("Themes: " + tl.Themes))
+		}
+		if tl.Demographics != "" {
+			b.WriteString("\n")
+			b.WriteString(rtStyle.Render("Demographics: " + tl.Demographics))
+		}
+		if tl.Streaming != "" {
+			b.WriteString("\n")
+			b.WriteString(rtStyle.Render("Streaming: " + tl.Streaming))
+		}
+	}
+
 	// Phase B (currently-airing) notice
 	if strings.HasPrefix(ev.Source, "jikan-airing") {
 		b.WriteString("\n\n")
@@ -1107,10 +1150,19 @@ func (t *TUI) buildRightContent(tl *model.Title, ev *model.ReleaseEvent, rw int)
 
 	// Scores line
 	if tl.MediaType == model.MediaTypeAnime {
+		var ratings []string
 		if tl.TmdbRating > 0 {
-			ratings := fmt.Sprintf("MAL: %s", fmtRating(tl.TmdbRating))
-			b.WriteString("\n")
-			b.WriteString(ratingsLine.Render(ratings))
+			ratings = append(ratings, fmt.Sprintf("MAL: %s", fmtRating(tl.TmdbRating)))
+		}
+		if tl.AnimeMembers > 0 {
+			ratings = append(ratings, fmt.Sprintf("Members: %s", fmtMembers(tl.AnimeMembers)))
+		}
+		if tl.AnimeRank > 0 {
+			ratings = append(ratings, fmt.Sprintf("Rank: #%d", tl.AnimeRank))
+		}
+		if len(ratings) > 0 {
+			b.WriteString("\n\n")
+			b.WriteString(ratingsLine.Render(strings.Join(ratings, " · ")))
 		}
 	} else {
 		ratings := fmt.Sprintf("TMDB: %s · IMDb: %s · MC: %s · YT: %s · 🍅 %s · 🍿 %s",
@@ -1247,6 +1299,17 @@ func extractEndDate(notes string) string {
 		}
 	}
 	return ""
+}
+
+func fmtMembers(n int) string {
+	switch {
+	case n >= 1_000_000:
+		return fmt.Sprintf("%.1fM", float64(n)/1_000_000)
+	case n >= 1_000:
+		return fmt.Sprintf("%.0fK", float64(n)/1_000)
+	default:
+		return strconv.Itoa(n)
+	}
 }
 
 func fmtViews(n int64) string {

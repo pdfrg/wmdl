@@ -80,6 +80,16 @@ func (d *DB) Migrate(ctx context.Context) error {
 		runtime           INTEGER DEFAULT 0,
 		yt_trailer_views  INTEGER DEFAULT 0,
 		poster_path       TEXT DEFAULT '',
+		anime_type        TEXT DEFAULT '',
+		anime_episodes    INTEGER DEFAULT 0,
+		anime_status      TEXT DEFAULT '',
+		anime_members     INTEGER DEFAULT 0,
+		anime_rank        INTEGER DEFAULT 0,
+		anime_source      TEXT DEFAULT '',
+		anime_studio      TEXT DEFAULT '',
+		themes            TEXT DEFAULT '',
+		demographics      TEXT DEFAULT '',
+		streaming         TEXT DEFAULT '',
 		created_at        TEXT NOT NULL DEFAULT (datetime('now')),
 		UNIQUE(tmdb_id, mal_id)
 	);
@@ -238,6 +248,16 @@ func (d *DB) Migrate(ctx context.Context) error {
 			runtime           INTEGER DEFAULT 0,
 			yt_trailer_views  INTEGER DEFAULT 0,
 			poster_path       TEXT DEFAULT '',
+			anime_type        TEXT DEFAULT '',
+			anime_episodes    INTEGER DEFAULT 0,
+			anime_status      TEXT DEFAULT '',
+			anime_members     INTEGER DEFAULT 0,
+			anime_rank        INTEGER DEFAULT 0,
+			anime_source      TEXT DEFAULT '',
+			anime_studio      TEXT DEFAULT '',
+			themes            TEXT DEFAULT '',
+			demographics      TEXT DEFAULT '',
+			streaming         TEXT DEFAULT '',
 			created_at        TEXT NOT NULL DEFAULT (datetime('now')),
 			UNIQUE(tmdb_id, mal_id)
 		)
@@ -248,12 +268,16 @@ func (d *DB) Migrate(ctx context.Context) error {
 			id, tmdb_id, tvdb_id, mal_id, title, year, media_type,
 			imdb_id, imdb_rating, rt_url, rt_critics_score, rt_audience_score,
 			tmdb_rating, metacritic_score, us_rating, original_language, origin_country,
-			yt_trailer_views, overview, genres, runtime, poster_path, created_at
+			yt_trailer_views, overview, genres, runtime, poster_path, created_at,
+			anime_type, anime_episodes, anime_status, anime_members, anime_rank,
+			anime_source, anime_studio, themes, demographics, streaming
 		) SELECT
 			id, tmdb_id, tvdb_id, mal_id, title, year, media_type,
 			imdb_id, imdb_rating, rt_url, rt_critics_score, rt_audience_score,
 			tmdb_rating, metacritic_score, us_rating, original_language, origin_country,
-			yt_trailer_views, overview, genres, runtime, poster_path, created_at
+			yt_trailer_views, overview, genres, runtime, poster_path, created_at,
+			anime_type, anime_episodes, anime_status, anime_members, anime_rank,
+			anime_source, anime_studio, themes, demographics, streaming
 		FROM titles
 	`); err == nil {
 		// Only swap if the old table still exists (has content from original schema)
@@ -278,6 +302,18 @@ func (d *DB) Migrate(ctx context.Context) error {
 	d.db.ExecContext(ctx, `ALTER TABLE titles ADD COLUMN origin_country TEXT DEFAULT ''`)
 	d.db.ExecContext(ctx, `ALTER TABLE titles ADD COLUMN tmdb_title TEXT DEFAULT ''`)
 	d.db.ExecContext(ctx, `ALTER TABLE albums ADD COLUMN aoty_url TEXT NOT NULL DEFAULT ''`)
+
+	// Anime-specific columns
+	d.db.ExecContext(ctx, `ALTER TABLE titles ADD COLUMN anime_type TEXT NOT NULL DEFAULT ''`)
+	d.db.ExecContext(ctx, `ALTER TABLE titles ADD COLUMN anime_episodes INTEGER NOT NULL DEFAULT 0`)
+	d.db.ExecContext(ctx, `ALTER TABLE titles ADD COLUMN anime_status TEXT NOT NULL DEFAULT ''`)
+	d.db.ExecContext(ctx, `ALTER TABLE titles ADD COLUMN anime_members INTEGER NOT NULL DEFAULT 0`)
+	d.db.ExecContext(ctx, `ALTER TABLE titles ADD COLUMN anime_rank INTEGER NOT NULL DEFAULT 0`)
+	d.db.ExecContext(ctx, `ALTER TABLE titles ADD COLUMN anime_source TEXT NOT NULL DEFAULT ''`)
+	d.db.ExecContext(ctx, `ALTER TABLE titles ADD COLUMN anime_studio TEXT NOT NULL DEFAULT ''`)
+	d.db.ExecContext(ctx, `ALTER TABLE titles ADD COLUMN themes TEXT NOT NULL DEFAULT ''`)
+	d.db.ExecContext(ctx, `ALTER TABLE titles ADD COLUMN demographics TEXT NOT NULL DEFAULT ''`)
+	d.db.ExecContext(ctx, `ALTER TABLE titles ADD COLUMN streaming TEXT NOT NULL DEFAULT ''`)
 
 	d.db.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_release_events_week ON release_events(iso_year, iso_week)`)
 	d.db.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_albums_artist_id ON albums(artist_id)`)
@@ -313,7 +349,10 @@ func (d *DB) upsertTitle(ctx context.Context, q querier, t *model.Title) (int64,
 					rt_audience_score = ?, tmdb_rating = ?, metacritic_score = ?,
 					us_rating = ?, original_language = ?, origin_country = ?,
 					yt_trailer_views = ?, overview = ?, genres = ?, runtime = ?,
-					poster_path = ?, tmdb_title = ?
+					poster_path = ?, tmdb_title = ?,
+					anime_type = ?, anime_episodes = ?, anime_status = ?,
+					anime_members = ?, anime_rank = ?, anime_source = ?,
+					anime_studio = ?, themes = ?, demographics = ?, streaming = ?
 				WHERE mal_id = ?
 			`,
 				t.TvdbID, t.Title, t.Year, string(t.MediaType),
@@ -321,7 +360,10 @@ func (d *DB) upsertTitle(ctx context.Context, q querier, t *model.Title) (int64,
 				t.RTAudienceScore, t.TmdbRating, t.MetacriticScore,
 				t.USRating, t.OriginalLanguage, t.OriginCountry,
 				t.YoutubeViews, t.Overview, t.Genres, t.Runtime,
-				t.PosterPath, t.TmdbTitle, t.MalID,
+				t.PosterPath, t.TmdbTitle,
+				t.AnimeType, t.AnimeEpisodes, t.AnimeStatus,
+				t.AnimeMembers, t.AnimeRank, t.AnimeSource,
+				t.AnimeStudio, t.Themes, t.Demographics, t.Streaming, t.MalID,
 			)
 			if err != nil {
 				return 0, fmt.Errorf("updating anime title: %w", err)
@@ -334,8 +376,11 @@ func (d *DB) upsertTitle(ctx context.Context, q querier, t *model.Title) (int64,
 		INSERT INTO titles (tmdb_id, tvdb_id, mal_id, title, tmdb_title, year, media_type, imdb_id, imdb_rating,
 		                    rt_url, rt_critics_score, rt_audience_score, tmdb_rating,
 		                    metacritic_score, us_rating, original_language, origin_country,
-		                    yt_trailer_views, overview, genres, runtime, poster_path, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		                    yt_trailer_views, overview, genres, runtime, poster_path, created_at,
+		                    anime_type, anime_episodes, anime_status, anime_members, anime_rank,
+		                    anime_source, anime_studio, themes, demographics, streaming)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+		        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(tmdb_id, mal_id) DO UPDATE SET
 			title             = excluded.title,
 			tmdb_title        = excluded.tmdb_title,
@@ -357,12 +402,24 @@ func (d *DB) upsertTitle(ctx context.Context, q querier, t *model.Title) (int64,
 			overview          = excluded.overview,
 			genres            = excluded.genres,
 			runtime           = excluded.runtime,
-			poster_path       = excluded.poster_path
+			poster_path       = excluded.poster_path,
+			anime_type        = excluded.anime_type,
+			anime_episodes    = excluded.anime_episodes,
+			anime_status      = excluded.anime_status,
+			anime_members     = excluded.anime_members,
+			anime_rank        = excluded.anime_rank,
+			anime_source      = excluded.anime_source,
+			anime_studio      = excluded.anime_studio,
+			themes            = excluded.themes,
+			demographics      = excluded.demographics,
+			streaming         = excluded.streaming
 	`,
 		t.TmdbID, t.TvdbID, t.MalID, t.Title, t.TmdbTitle, t.Year, string(t.MediaType), t.ImdbID, t.ImdbRating,
 		t.RTURL, t.RTCriticsScore, t.RTAudienceScore, t.TmdbRating,
 		t.MetacriticScore, t.USRating, t.OriginalLanguage, t.OriginCountry,
 		t.YoutubeViews, t.Overview, t.Genres, t.Runtime, t.PosterPath, t.CreatedAt,
+		t.AnimeType, t.AnimeEpisodes, t.AnimeStatus, t.AnimeMembers, t.AnimeRank,
+		t.AnimeSource, t.AnimeStudio, t.Themes, t.Demographics, t.Streaming,
 	)
 	if err != nil {
 		return 0, fmt.Errorf("upserting title: %w", err)
@@ -393,13 +450,17 @@ func (d *DB) getTitleByMalID(ctx context.Context, q querier, malID int) (*model.
 		SELECT id, tmdb_id, tvdb_id, mal_id, title, tmdb_title, year, media_type, imdb_id,
 		       imdb_rating, rt_url, rt_critics_score, rt_audience_score,
 		       tmdb_rating, metacritic_score, yt_trailer_views, us_rating, original_language, origin_country,
-		       overview, genres, runtime, poster_path, created_at
+		       overview, genres, runtime, poster_path, created_at,
+		       anime_type, anime_episodes, anime_status, anime_members, anime_rank,
+		       anime_source, anime_studio, themes, demographics, streaming
 		FROM titles WHERE mal_id = ?
 	`, malID).Scan(
 		&t.ID, &t.TmdbID, &t.TvdbID, &t.MalID, &t.Title, &t.TmdbTitle, &t.Year, &mediaType,
 		&t.ImdbID, &t.ImdbRating, &t.RTURL, &t.RTCriticsScore, &t.RTAudienceScore,
 		&t.TmdbRating, &t.MetacriticScore, &t.YoutubeViews, &t.USRating, &t.OriginalLanguage, &t.OriginCountry,
 		&t.Overview, &t.Genres, &t.Runtime, &t.PosterPath, &createdAt,
+		&t.AnimeType, &t.AnimeEpisodes, &t.AnimeStatus, &t.AnimeMembers, &t.AnimeRank,
+		&t.AnimeSource, &t.AnimeStudio, &t.Themes, &t.Demographics, &t.Streaming,
 	)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -420,13 +481,17 @@ func (d *DB) getTitleByField(ctx context.Context, field string, value int) (*mod
 		SELECT id, tmdb_id, tvdb_id, mal_id, title, tmdb_title, year, media_type, imdb_id,
 		       imdb_rating, rt_url, rt_critics_score, rt_audience_score,
 		       tmdb_rating, metacritic_score, yt_trailer_views, us_rating, original_language, origin_country,
-		       overview, genres, runtime, poster_path, created_at
+		       overview, genres, runtime, poster_path, created_at,
+		       anime_type, anime_episodes, anime_status, anime_members, anime_rank,
+		       anime_source, anime_studio, themes, demographics, streaming
 		FROM titles WHERE %s = ?
 	`, field), value).Scan(
 		&t.ID, &t.TmdbID, &t.TvdbID, &t.MalID, &t.Title, &t.TmdbTitle, &t.Year, &mediaType,
 		&t.ImdbID, &t.ImdbRating, &t.RTURL, &t.RTCriticsScore, &t.RTAudienceScore,
 		&t.TmdbRating, &t.MetacriticScore, &t.YoutubeViews, &t.USRating, &t.OriginalLanguage, &t.OriginCountry,
 		&t.Overview, &t.Genres, &t.Runtime, &t.PosterPath, &createdAt,
+		&t.AnimeType, &t.AnimeEpisodes, &t.AnimeStatus, &t.AnimeMembers, &t.AnimeRank,
+		&t.AnimeSource, &t.AnimeStudio, &t.Themes, &t.Demographics, &t.Streaming,
 	)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -444,7 +509,9 @@ func (d *DB) ListTitles(ctx context.Context) ([]*model.Title, error) {
 		SELECT id, tmdb_id, tvdb_id, mal_id, title, tmdb_title, year, media_type, imdb_id,
 		       imdb_rating, rt_url, rt_critics_score, rt_audience_score,
 		       tmdb_rating, metacritic_score, us_rating, original_language, origin_country,
-		       yt_trailer_views, overview, genres, runtime, poster_path, created_at
+		       yt_trailer_views, overview, genres, runtime, poster_path, created_at,
+		       anime_type, anime_episodes, anime_status, anime_members, anime_rank,
+		       anime_source, anime_studio, themes, demographics, streaming
 		FROM titles ORDER BY created_at DESC
 	`)
 	if err != nil {
@@ -462,6 +529,8 @@ func (d *DB) ListTitles(ctx context.Context) ([]*model.Title, error) {
 			&t.ImdbID, &t.ImdbRating, &t.RTURL, &t.RTCriticsScore, &t.RTAudienceScore,
 			&t.TmdbRating, &t.MetacriticScore, &t.USRating, &t.OriginalLanguage, &t.OriginCountry,
 			&t.YoutubeViews, &t.Overview, &t.Genres, &t.Runtime, &t.PosterPath, &createdAt,
+			&t.AnimeType, &t.AnimeEpisodes, &t.AnimeStatus, &t.AnimeMembers, &t.AnimeRank,
+			&t.AnimeSource, &t.AnimeStudio, &t.Themes, &t.Demographics, &t.Streaming,
 		); err != nil {
 			return nil, fmt.Errorf("scanning title row: %w", err)
 		}
@@ -566,7 +635,9 @@ func (d *DB) ListPendingWithTitles(ctx context.Context) ([]EventWithTitle, error
 		       t.imdb_rating, t.rt_url, t.rt_critics_score, t.rt_audience_score,
 		       t.tmdb_rating, t.metacritic_score, t.us_rating,
 		       t.original_language, t.origin_country,
-		       t.yt_trailer_views, t.overview, t.genres, t.runtime, t.poster_path, t.created_at
+		       t.yt_trailer_views, t.overview, t.genres, t.runtime, t.poster_path, t.created_at,
+		       t.anime_type, t.anime_episodes, t.anime_status, t.anime_members, t.anime_rank,
+		       t.anime_source, t.anime_studio, t.themes, t.demographics, t.streaming
 		FROM release_events e
 		JOIN titles t ON t.id = e.title_id
 		WHERE e.status = 'pending'
@@ -588,7 +659,9 @@ func (d *DB) ListApprovedWithTitles(ctx context.Context) ([]EventWithTitle, erro
 		       t.imdb_rating, t.rt_url, t.rt_critics_score, t.rt_audience_score,
 		       t.tmdb_rating, t.metacritic_score, t.us_rating,
 		       t.original_language, t.origin_country,
-		       t.yt_trailer_views, t.overview, t.genres, t.runtime, t.poster_path, t.created_at
+		       t.yt_trailer_views, t.overview, t.genres, t.runtime, t.poster_path, t.created_at,
+		       t.anime_type, t.anime_episodes, t.anime_status, t.anime_members, t.anime_rank,
+		       t.anime_source, t.anime_studio, t.themes, t.demographics, t.streaming
 		FROM release_events e
 		JOIN titles t ON t.id = e.title_id
 		WHERE e.status = 'approved'
@@ -773,7 +846,9 @@ func (d *DB) ListEventsByWeekWithTitles(ctx context.Context, year, week int) ([]
 		       t.imdb_rating, t.rt_url, t.rt_critics_score, t.rt_audience_score,
 		       t.tmdb_rating, t.metacritic_score, t.us_rating,
 		       t.original_language, t.origin_country,
-		       t.yt_trailer_views, t.overview, t.genres, t.runtime, t.poster_path, t.created_at
+		       t.yt_trailer_views, t.overview, t.genres, t.runtime, t.poster_path, t.created_at,
+		       t.anime_type, t.anime_episodes, t.anime_status, t.anime_members, t.anime_rank,
+		       t.anime_source, t.anime_studio, t.themes, t.demographics, t.streaming
 		FROM release_events e
 		JOIN titles t ON t.id = e.title_id
 		WHERE e.iso_year = ? AND e.iso_week = ?
@@ -807,7 +882,9 @@ func (d *DB) ListEventsByWeekAndStatus(ctx context.Context, year, week int, stat
 		       t.imdb_rating, t.rt_url, t.rt_critics_score, t.rt_audience_score,
 		       t.tmdb_rating, t.metacritic_score, t.us_rating,
 		       t.original_language, t.origin_country,
-		       t.yt_trailer_views, t.overview, t.genres, t.runtime, t.poster_path, t.created_at
+		       t.yt_trailer_views, t.overview, t.genres, t.runtime, t.poster_path, t.created_at,
+		       t.anime_type, t.anime_episodes, t.anime_status, t.anime_members, t.anime_rank,
+		       t.anime_source, t.anime_studio, t.themes, t.demographics, t.streaming
 		FROM release_events e
 		JOIN titles t ON t.id = e.title_id
 		WHERE e.iso_year = ? AND e.iso_week = ?
@@ -1232,6 +1309,8 @@ func scanEventWithTitleRows(rows *sql.Rows) ([]EventWithTitle, error) {
 			&tl.TmdbRating, &tl.MetacriticScore, &tl.USRating,
 			&tl.OriginalLanguage, &tl.OriginCountry,
 			&tl.YoutubeViews, &tl.Overview, &tl.Genres, &tl.Runtime, &tl.PosterPath, &tlCreated,
+			&tl.AnimeType, &tl.AnimeEpisodes, &tl.AnimeStatus, &tl.AnimeMembers, &tl.AnimeRank,
+			&tl.AnimeSource, &tl.AnimeStudio, &tl.Themes, &tl.Demographics, &tl.Streaming,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("scanning event with title: %w", err)
