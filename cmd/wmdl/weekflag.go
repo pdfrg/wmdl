@@ -63,7 +63,15 @@ var weekFlagPatterns = []struct {
 func parseWeekFlag(s string) (int, int, error) {
 	s = strings.TrimSpace(s)
 	if s == "" {
-		y, w := time.Now().ISOWeek()
+		now := time.Now()
+		// wmdl atomic week runs Wed-Tue, anchored on Tuesday (physical media day).
+		// Default to the last completed wmdl week: find the most recent past Tuesday.
+		offset := (int(now.Weekday()) - 2 + 7) % 7 // Tuesday = 2
+		if offset == 0 {
+			offset = 7 // Today is Tuesday — the current week hasn't completed yet.
+		}
+		tuesday := now.AddDate(0, 0, -offset)
+		y, w := tuesday.ISOWeek()
 		return y, w, nil
 	}
 	for _, pat := range weekFlagPatterns {
