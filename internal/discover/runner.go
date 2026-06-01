@@ -136,6 +136,9 @@ func (r *Runner) Run(ctx context.Context) error {
 	var allItems []ScrapedItem
 
 	for _, p := range providers {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
 		r.log.Info().Str("provider", p.Name()).Msg("scraping")
 		items, err := p.Scrape()
 		if err != nil {
@@ -203,7 +206,11 @@ func (r *Runner) Run(ctx context.Context) error {
 	for _, item := range uniqueVideos {
 		go func(item ScrapedItem) {
 			defer wg.Done()
-			sem <- struct{}{}
+			select {
+			case sem <- struct{}{}:
+			case <-ctx.Done():
+				return
+			}
 			defer func() { <-sem }()
 
 			itemCtx, itemCancel := context.WithTimeout(ctx, 2*time.Minute)
@@ -217,7 +224,11 @@ func (r *Runner) Run(ctx context.Context) error {
 			mu.Unlock()
 		}(item)
 	}
-	wg.Wait()
+	select {
+	case <-waitDone(ctx, &wg):
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 
 	// Process anime items (with Jikan data, no TMDB/IMDb/RT enrichment)
 	if len(animeItems) > 0 {
@@ -228,7 +239,11 @@ func (r *Runner) Run(ctx context.Context) error {
 		for _, item := range animeItems {
 			go func(item ScrapedItem) {
 				defer wgAnime.Done()
-				semAnime <- struct{}{}
+				select {
+				case semAnime <- struct{}{}:
+				case <-ctx.Done():
+					return
+				}
 				defer func() { <-semAnime }()
 				itemCtx, itemCancel := context.WithTimeout(ctx, 30*time.Second)
 				defer itemCancel()
@@ -240,7 +255,11 @@ func (r *Runner) Run(ctx context.Context) error {
 				muAnime.Unlock()
 			}(item)
 		}
-		wgAnime.Wait()
+		select {
+		case <-waitDone(ctx, &wgAnime):
+		case <-ctx.Done():
+			return ctx.Err()
+		}
 	}
 
 	// Process music items (with MusicBrainz enrichment)
@@ -253,7 +272,11 @@ func (r *Runner) Run(ctx context.Context) error {
 		for _, item := range uniqueMusic {
 			go func(item ScrapedItem) {
 				defer wgMusic.Done()
-				semMusic <- struct{}{}
+				select {
+				case semMusic <- struct{}{}:
+				case <-ctx.Done():
+					return
+				}
 				defer func() { <-semMusic }()
 				itemCtx, itemCancel := context.WithTimeout(ctx, 2*time.Minute)
 				defer itemCancel()
@@ -263,10 +286,13 @@ func (r *Runner) Run(ctx context.Context) error {
 				}
 				muMusic.Lock()
 				musicProcessed++
-				muMusic.Unlock()
 			}(item)
 		}
-		wgMusic.Wait()
+		select {
+		case <-waitDone(ctx, &wgMusic):
+		case <-ctx.Done():
+			return ctx.Err()
+		}
 		processed += musicProcessed
 
 		// Track scrape offset in settings for next run's progression
@@ -686,13 +712,13 @@ func (r *Runner) processAnimeItem(ctx context.Context, item ScrapedItem, progYea
 	r.log.Info().Str("title", item.Title).Int("year", item.Year).Msg("processing anime item")
 
 	title := &model.Title{
-		MalID:       item.MalID,
-		Title:       item.Title,
-		Year:        item.Year,
-		MediaType:   model.MediaTypeAnime,
-		Overview:    item.Overview,
-		PosterPath:  item.ImageURL,
-		TmdbRating:  item.ImdbRating, // stores MAL score for display
+		MalID:      item.MalID,
+		Title:      item.Title,
+		Year:       item.Year,
+		MediaType:  model.MediaTypeAnime,
+		Overview:   item.Overview,
+		PosterPath: item.ImageURL,
+		TmdbRating: item.ImdbRating, // stores MAL score for display
 	}
 
 	var titleID int64
@@ -887,6 +913,16 @@ func isUpgrade(prevSource string, newReleaseType model.ReleaseType) bool {
 	}
 	// Streaming to physical is always an upgrade
 	return newReleaseType == model.ReleasePhysical
+}
+
+// waitDone returns a channel that closes when the WaitGroup counter reaches zero.
+func waitDone(ctx context.Context, wg *sync.WaitGroup) chan struct{} {
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+	return done
 }
 
 var (
