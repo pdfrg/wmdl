@@ -59,6 +59,7 @@ type Executor struct {
 		SeriesID     int
 		SeasonNumber int
 		SeriesTitle  string
+		MediaType    model.MediaType
 	}
 }
 
@@ -536,7 +537,8 @@ processPicked:
 			tvdbID := item.Event.Title.TvdbID
 			if tvdbID == 0 {
 				if item.Event.Title.MediaType == model.MediaTypeAnime {
-					titleLookup, err := e.sonarr.LookupByTitle(ctx, item.Event.Title.Title)
+					searchTitle := sanitizeSearchQuery(quality.StripSeason(item.Event.Title.Title))
+					titleLookup, err := e.sonarr.LookupByTitle(ctx, searchTitle)
 					if err != nil {
 						e.log.Warn().Err(err).Str("title", item.Event.Title.Title).Msg("anime title lookup in Sonarr failed")
 						goto nextPicked
@@ -572,10 +574,12 @@ processPicked:
 									SeriesID     int
 									SeasonNumber int
 									SeriesTitle  string
+									MediaType    model.MediaType
 								}{
 									SeriesID:     existing.ID,
 									SeasonNumber: missingS.SeasonNumber,
 									SeriesTitle:  existing.Title,
+									MediaType:    item.Event.Title.MediaType,
 								})
 							}
 						}
@@ -733,20 +737,21 @@ func (e *Executor) searchPhase3Season(ctx context.Context, s struct {
 	SeriesID     int
 	SeasonNumber int
 	SeriesTitle  string
+	MediaType    model.MediaType
 }) {
 	stripped := quality.StripSeason(s.SeriesTitle)
 
 	releases, err := e.searchRelease(ctx, &model.Title{
 		Title:     s.SeriesTitle,
 		Year:      0,
-		MediaType: model.MediaTypeTV,
+		MediaType: s.MediaType,
 	}, stripped, s.SeasonNumber)
 	if err != nil {
 		e.log.Warn().Err(err).Str("title", s.SeriesTitle).Int("season", s.SeasonNumber).Msg("error searching earlier season")
 		return
 	}
 
-	prefs := buildQualityPrefs(e.cfg, model.MediaTypeTV)
+	prefs := buildQualityPrefs(e.cfg, s.MediaType)
 	top := quality.SortAndTop(releases, prefs, e.cfg.ShowTopN)
 	if len(top) == 0 {
 		e.log.Info().Str("title", s.SeriesTitle).Int("season", s.SeasonNumber).Msg("no results for earlier season")
@@ -754,7 +759,7 @@ func (e *Executor) searchPhase3Season(ctx context.Context, s struct {
 	}
 
 	sr := &SearchResult{
-		Event:  db.EventWithTitle{Title: &model.Title{Title: s.SeriesTitle, MediaType: model.MediaTypeTV}},
+		Event:  db.EventWithTitle{Title: &model.Title{Title: s.SeriesTitle, MediaType: s.MediaType}},
 		Season: s.SeasonNumber,
 		Top:    top,
 	}
@@ -767,7 +772,7 @@ func (e *Executor) searchPhase3Season(ctx context.Context, s struct {
 	synthEvent := db.EventWithTitle{
 		Title: &model.Title{
 			Title:     s.SeriesTitle,
-			MediaType: model.MediaTypeTV,
+			MediaType: s.MediaType,
 		},
 	}
 	e.addToClient(ctx, synthEvent, chosen)
@@ -794,7 +799,12 @@ func (e *Executor) searchRelease(ctx context.Context, title *model.Title, stripp
 
 	var queries []string
 	if title.MediaType == model.MediaTypeTV || title.MediaType == model.MediaTypeAnime {
-		queries = tvSearchQueries(stripped, season, resKeyword, fallbackRes)
+		// When season defaults to 1 and the title contains an ambiguous
+		// descriptor like "Final Season" or "Last Season", skip the
+		// S01/season-1 query tiers to avoid polluting results.
+		lower := strings.ToLower(title.Title)
+		skipSeason := season == 1 && (strings.Contains(lower, "final season") || strings.Contains(lower, "last season"))
+		queries = tvSearchQueries(stripped, season, resKeyword, fallbackRes, skipSeason)
 	} else {
 		queries = movieSearchQueries(stripped, title.Year, resKeyword)
 	}
@@ -803,11 +813,16 @@ func (e *Executor) searchRelease(ctx context.Context, title *model.Title, stripp
 	numTiers := len(queries)
 	var exactPool, fuzzyPool []quality.ParsedRelease
 
+	// Sanitize the search title so FilterRelease words match what
+	// was actually sent to Prowlarr (e.g. "Hell's" → "Hells",
+	// "Fate/strange" → "Fate strange").
+	sanitized := sanitizeSearchQuery(stripped)
+
 	// For anime: define category sets for tiered search
 	animeCatSets := [][]int{searchCats}
 	allCatSets := [][]int{searchCats}
 	if title.MediaType == model.MediaTypeAnime {
-		animeCatSets = [][]int{{search.CatAnime}, {search.CatTV}}
+		animeCatSets = [][]int{{search.CatAnime}}
 		allCatSets = [][]int{{search.CatTV}}
 	}
 
@@ -829,7 +844,7 @@ func (e *Executor) searchRelease(ctx context.Context, title *model.Title, stripp
 				if err != nil {
 					return nil, err
 				}
-				exact, fuzzy := quality.PartitionReleases(results, stripped, title.Year, season, string(title.MediaType))
+				exact, fuzzy := quality.PartitionReleases(results, sanitized, title.Year, season, string(title.MediaType))
 				exactPool = mergeReleases(exactPool, exact)
 				fuzzyPool = mergeReleases(fuzzyPool, fuzzy)
 				e.log.Debug().Msgf("→ %d exact, %d fuzzy (exact total: %d)", len(exact), len(fuzzy), len(exactPool))
@@ -855,7 +870,7 @@ func (e *Executor) searchRelease(ctx context.Context, title *model.Title, stripp
 			if err != nil {
 				return nil, err
 			}
-			exact, fuzzy := quality.PartitionReleases(results, stripped, title.Year, season, string(title.MediaType))
+			exact, fuzzy := quality.PartitionReleases(results, sanitized, title.Year, season, string(title.MediaType))
 			exactPool = mergeReleases(exactPool, exact)
 			fuzzyPool = mergeReleases(fuzzyPool, fuzzy)
 			e.log.Debug().Msgf("→ %d exact, %d fuzzy (exact total: %d)", len(exact), len(fuzzy), len(exactPool))
@@ -917,29 +932,47 @@ func resolutionSearchKeyword(res string) string {
 }
 
 func movieSearchQueries(title string, year int, res string) []string {
-	return []string{
+	queries := []string{
 		fmt.Sprintf("%s %d %s", title, year, res),
 		fmt.Sprintf("%s %d 4k", title, year),
 		fmt.Sprintf("%s %d 1080p", title, year),
 		fmt.Sprintf("%s %d", title, year),
 	}
+	for i := range queries {
+		queries[i] = sanitizeSearchQuery(queries[i])
+	}
+	return queries
 }
 
-func tvSearchQueries(stripped string, season int, res, fallback string) []string {
+func tvSearchQueries(stripped string, season int, res, fallback string, skipSeason bool) []string {
 	seasonStr := fmt.Sprintf("S%02d", season)
 	seasonWord := fmt.Sprintf("season %d", season)
 
-	tiers := []string{
-		fmt.Sprintf("%s %s complete %s", stripped, seasonStr, res),
-		fmt.Sprintf("%s %s complete %s", stripped, seasonWord, res),
-		fmt.Sprintf("%s %s %s", stripped, seasonStr, res),
-		fmt.Sprintf("%s %s %s", stripped, seasonWord, res),
-		fmt.Sprintf("%s %s", stripped, res),
+	var tiers []string
+	if !skipSeason {
+		tiers = []string{
+			sanitizeSearchQuery(fmt.Sprintf("%s %s complete %s", stripped, seasonStr, res)),
+			sanitizeSearchQuery(fmt.Sprintf("%s %s complete %s", stripped, seasonWord, res)),
+			sanitizeSearchQuery(fmt.Sprintf("%s %s %s", stripped, seasonStr, res)),
+			sanitizeSearchQuery(fmt.Sprintf("%s %s %s", stripped, seasonWord, res)),
+		}
 	}
+	tiers = append(tiers, sanitizeSearchQuery(fmt.Sprintf("%s %s", stripped, res)))
 	if fallback != "" {
-		tiers = append(tiers, fmt.Sprintf("%s %s", stripped, fallback))
+		tiers = append(tiers, sanitizeSearchQuery(fmt.Sprintf("%s %s", stripped, fallback)))
 	}
 	return tiers
+}
+
+// sanitizeSearchQuery removes characters that can interfere with
+// Newznab/Prowlarr search: / is replaced with space, and ambiguous
+// punctuation (' " ?) is stripped to avoid operator interpretation.
+func sanitizeSearchQuery(q string) string {
+	q = strings.ReplaceAll(q, "/", " ")
+	q = strings.ReplaceAll(q, "'", "")
+	q = strings.ReplaceAll(q, "\"", "")
+	q = strings.ReplaceAll(q, "?", "")
+	return strings.TrimSpace(q)
 }
 
 func fallbackResolution(res string) string {
@@ -1070,7 +1103,7 @@ func (e *Executor) AddAiringAnimeToSonarr(ctx context.Context, evt db.EventWithT
 		return nil
 	}
 
-	title := evt.Title.Title
+	title := sanitizeSearchQuery(quality.StripSeason(evt.Title.Title))
 
 	lookup, err := e.sonarr.LookupByTitle(ctx, title)
 	if err != nil {
@@ -1225,10 +1258,12 @@ func (e *Executor) addToSonarr(ctx context.Context, evt db.EventWithTitle, tvdbI
 					SeriesID     int
 					SeasonNumber int
 					SeriesTitle  string
+					MediaType    model.MediaType
 				}{
 					SeriesID:     added.ID,
 					SeasonNumber: s,
 					SeriesTitle:  title,
+					MediaType:    evt.Title.MediaType,
 				})
 			}
 		}

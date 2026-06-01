@@ -38,16 +38,17 @@ type QualityPrefs struct {
 }
 
 var (
-	resPattern   = regexp.MustCompile(`(?i)(\d{3,4}p|4k|uhd)`)
-	srcPattern   = regexp.MustCompile(`(?i)(BluRay|WEB-DL|WebRip|WEBRip|HDTV|REMUX|BDRip|BRRip)`)
-	codecPattern = regexp.MustCompile(`(?i)(x265|x264|h\.?265|h\.?264|hevc|av1)`)
-	hdrPattern   = regexp.MustCompile(`(?i)(HDR(?:10)?|Dolby[.\s]?Vision|DV[.\s]?HDR|DoVi|HLG)`)
-	groupPattern = regexp.MustCompile(`-([a-zA-Z0-9]+(?:\[[^\]]+\])?)$`)
+	resPattern     = regexp.MustCompile(`(?i)(\d{3,4}p|4k|uhd)`)
+	srcPattern     = regexp.MustCompile(`(?i)(BluRay|WEB-DL|WebRip|WEBRip|HDTV|REMUX|BDRip|BRRip)`)
+	codecPattern   = regexp.MustCompile(`(?i)(x265|x264|h\.?265|h\.?264|hevc|av1)`)
+	hdrPattern     = regexp.MustCompile(`(?i)(HDR(?:10)?|Dolby[.\s]?Vision|DV[.\s]?HDR|DoVi|HLG)`)
+	groupPattern   = regexp.MustCompile(`-([a-zA-Z0-9]+(?:\[[^\]]+\])?)$`)
+	groupPrefixPat = regexp.MustCompile(`^\[[^\]]+\]\s*`)
 )
 
 func Parse(rawTitle string) ParsedRelease {
 	r := ParsedRelease{RawTitle: rawTitle}
-	clean := strings.ReplaceAll(rawTitle, ".", " ")
+	clean := stripGroupPrefix(strings.ReplaceAll(rawTitle, ".", " "))
 
 	r.Resolution = parseResolution(clean)
 	r.HDR = hdrPattern.MatchString(clean)
@@ -56,6 +57,15 @@ func Parse(rawTitle string) ParsedRelease {
 	r.ReleaseGroup = parseGroup(rawTitle)
 
 	return r
+}
+
+// stripGroupPrefix removes leading [group] prefixes from anime-style
+// torrent titles, e.g. "[SubsPlease] Show Name" → "Show Name".
+func stripGroupPrefix(s string) string {
+	for groupPrefixPat.MatchString(s) {
+		s = groupPrefixPat.ReplaceAllString(s, "")
+	}
+	return strings.TrimSpace(s)
 }
 
 func parseResolution(s string) int {
@@ -222,17 +232,19 @@ func groupBonus(group string, preferred []string) int {
 
 var (
 	episodeMarkerPat = regexp.MustCompile(`(?i)\bs\d{2}[ .]?e\d{2}\b`)
+	seasonEpisodePat = regexp.MustCompile(`(?i)\bseason[.\s]+(\d+)[.\s]+episode[.\s]+(\d+)\b`)
+	episodeNumPat    = regexp.MustCompile(`(?i)-\s+(\d{1,3})(?:\s|$|\))`)
 	releaseYearPat   = regexp.MustCompile(`\b((?:19|20)\d{2})\b`)
 )
 
 // ExtractShowName strips torrent metadata from a release title,
 // returning the show/movie name portion.
 func ExtractShowName(rawTitle string) string {
-	s := strings.ReplaceAll(rawTitle, ".", " ")
+	s := stripGroupPrefix(strings.ReplaceAll(rawTitle, ".", " "))
 
 	firstIdx := len(s)
 	for _, pat := range []*regexp.Regexp{
-		episodeMarkerPat, shortSeasonPat, seasonNumPat,
+		episodeMarkerPat, shortSeasonPat, seasonEpisodePat, episodeNumPat, seasonNumPat,
 		releaseYearPat, resPattern, srcPattern, codecPattern, hdrPattern,
 	} {
 		loc := pat.FindStringIndex(s)
@@ -249,13 +261,15 @@ func ExtractShowName(rawTitle string) string {
 // FilterRelease checks whether a parsed release should be kept
 // based on title similarity, year (movies), and season/episode (TV).
 func FilterRelease(r ParsedRelease, searchTitle string, searchYear, searchSeason int, mediaType string) bool {
-	// TV: reject single episodes
-	if mediaType == "tv" && episodeMarkerPat.MatchString(r.RawTitle) {
+	// TV/Anime: reject single episodes
+	if (mediaType == "tv" || mediaType == "anime") &&
+		(episodeMarkerPat.MatchString(r.RawTitle) || seasonEpisodePat.MatchString(r.RawTitle) ||
+			episodeNumPat.MatchString(r.RawTitle)) {
 		return false
 	}
 
-	// TV: reject wrong season
-	if mediaType == "tv" {
+	// TV/Anime: reject wrong season
+	if mediaType == "tv" || mediaType == "anime" {
 		relSeason := parseReleaseSeason(r.RawTitle)
 		if relSeason > 0 && relSeason != searchSeason {
 			return false
@@ -367,7 +381,11 @@ func normalizeTitle(s string) string {
 
 func normalizeRelease(rawTitle string) string {
 	s := strings.ToLower(rawTitle)
-	s = strings.NewReplacer(".", " ", "-", " ", "_", " ").Replace(s)
+	s = strings.NewReplacer(
+		".", " ", "-", " ", "_", " ",
+		":", " ",
+		"(", " ", ")", " ", "!", " ", "?", " ",
+	).Replace(s)
 	// Collapse multiple spaces
 	return strings.Join(strings.Fields(s), " ")
 }
@@ -392,8 +410,25 @@ func titleAtStart(releaseNorm string, searchWords []string) bool {
 	if len(releaseWords) < len(searchWords) {
 		return false
 	}
-	for i, sw := range searchWords {
-		if releaseWords[i] != sw {
+	// Check direct start match first
+	if hasPrefixWords(releaseWords, searchWords) {
+		return true
+	}
+	// If there's a pipe separator, try from after it (dual-language titles)
+	for i, w := range releaseWords {
+		if w == "|" && len(releaseWords[i+1:]) >= len(searchWords) {
+			return hasPrefixWords(releaseWords[i+1:], searchWords)
+		}
+	}
+	return false
+}
+
+func hasPrefixWords(words, prefix []string) bool {
+	if len(words) < len(prefix) {
+		return false
+	}
+	for i, w := range prefix {
+		if words[i] != w {
 			return false
 		}
 	}

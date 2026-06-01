@@ -12,6 +12,8 @@ import (
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 	"github.com/spf13/cobra"
+
+	"github.com/pdfrg/wmdl/internal/config"
 )
 
 const (
@@ -21,6 +23,7 @@ const (
 
 var (
 	cfgFile string
+	verbose bool
 	version = "dev"
 )
 
@@ -52,10 +55,32 @@ func main() {
 		Version: version,
 		Long: `Automated workflow for discovering, reviewing, and downloading 
 weekly DVD/streaming releases via Prowlarr, your preferred torrent client, and Radarr/Sonarr.`,
+		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+			// Skip log-level resolution for the completion help command
+			if cmd.Name() == "completion" || cmd.Name() == "help" {
+				return nil
+			}
+			// Resolve log level:
+			//   --verbose flag > config log.level > default InfoLevel
+			if verbose {
+				log.Logger = log.Logger.Level(zerolog.DebugLevel)
+			} else if cfg, err := config.Load(); err == nil {
+				switch cfg.Log.Level {
+				case "debug":
+					log.Logger = log.Logger.Level(zerolog.DebugLevel)
+				case "warn":
+					log.Logger = log.Logger.Level(zerolog.WarnLevel)
+				case "error":
+					log.Logger = log.Logger.Level(zerolog.ErrorLevel)
+				}
+			}
+			return nil
+		},
 	}
 	cmd.SetContext(ctx)
 
 	cmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file path")
+	cmd.PersistentFlags().BoolVarP(&verbose, "verbose", "v", false, "enable debug logging")
 
 	cmd.AddCommand(newDiscoverCmd())
 	cmd.AddCommand(newReviewCmd())

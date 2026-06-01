@@ -49,6 +49,11 @@ func TestExtractShowName(t *testing.T) {
 		{"Dune.Part.Two.2024.2160p.WEB-DL.x265", "Dune Part Two"},
 		{"No.Metadata.Here", "No Metadata Here"},
 		{"Show.Name.S01E01.1080p.x264-GROUP", "Show Name"},
+		{"Show.Season.01.Episode.02.1080p.WEB-DL.x265-GROUP", "Show"},
+		// Anime-style [group] prefix stripped
+		{"[SubsPlease] Show Name S01E01 1080p x264", "Show Name"},
+		// Anime: standalone episode number
+		{"[SubsPlease] Golden Kamuy Final Season - 08 [1080p CR WEB-DL AVC AAC]", "Golden Kamuy Final Season"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.raw, func(t *testing.T) {
@@ -127,6 +132,26 @@ func TestFilterRelease(t *testing.T) {
 		{"Show.S01E03.1080p.WEB-DL.x265-GROUP", "Show", 0, 1, "tv", false},
 		// Episode marker: S01-only (no episode) is a season pack
 		{"Show.S01.1080p.WEB-DL.x265-GROUP", "Show", 0, 1, "tv", true},
+		// Anime: single episode S01E02 should be rejected
+		{"Show.S01E02.1080p.WEB-DL.x265-GROUP", "Show", 0, 1, "anime", false},
+		// Anime: season pack should be accepted
+		{"Show.S01.1080p.WEB-DL.x265-GROUP", "Show", 0, 1, "anime", true},
+		// Anime: wrong season should be rejected
+		{"Show.S03.1080p.WEB-DL.x265-GROUP", "Show", 0, 4, "anime", false},
+		// TV: "season N episode M" format rejected
+		{"Show.Season.01.Episode.02.1080p.WEB-DL.x265-GROUP", "Show", 0, 1, "tv", false},
+		// Anime: "season N episode M" format rejected
+		{"Show.Season.02.Episode.05.1080p.WEB-DL.x265-GROUP", "Show", 0, 2, "anime", false},
+		// Anime: "season N episode M" with season pack (no episode match)
+		{"Show.Season.01.1080p.WEB-DL.x265-GROUP", "Show", 0, 1, "anime", true},
+		// Dual-language title with pipe: search words after pipe
+		{"[DB] Golden Kamuy: Saishuushou | Golden Kamuy Final Season [Dual Audio 10bit 1080p][HEVC-x265]", "Golden Kamuy Final Season", 0, 1, "anime", true},
+		// Anime: standalone episode number " - 08 " format (single season)
+		{"[Erai-raws] Golden Kamuy Final Season - 08 [1080p CR WEB-DL AVC AAC][MultiSub]", "Golden Kamuy Final Season", 0, 1, "anime", false},
+		// Anime: standalone episode number " - 13 " with parenthetical resolution
+		{"[SubsPlease] Fate Strange Fake - 13 (1080p) [E21C372E].mkv", "Fate Strange Fake", 0, 1, "anime", false},
+		// Anime: season pack (no episode number) should still be accepted
+		{"[SubsPlease] Fate Strange Fake - 1080p [E21C372E].mkv", "Fate Strange Fake", 0, 1, "anime", true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.raw, func(t *testing.T) {

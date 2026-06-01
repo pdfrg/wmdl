@@ -149,7 +149,7 @@ func (p *JikanAnimeProvider) scrapePhaseA(weekStart, weekEnd time.Time) ([]Scrap
 				return phaseA, nil
 			}
 
-			if endTime.After(weekEnd) || endTime.Equal(weekEnd) {
+			if endTime.After(weekEnd) {
 				continue
 			}
 
@@ -315,5 +315,9 @@ func parseJikanTime(s string) (time.Time, error) {
 	if err == nil {
 		return t, nil
 	}
-	return time.Parse("2006-01-02T00:00:00+00:00", s)
+	t, err = time.Parse("2006-01-02T00:00:00+00:00", s)
+	if err == nil {
+		return t, nil
+	}
+	return time.Parse("2006-01-02", s)
 }

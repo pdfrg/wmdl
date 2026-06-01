@@ -67,8 +67,10 @@ const (
 
 func categoryKey(cat int) string {
 	switch cat {
-	case CatMovie, CatTV, CatAnime:
+	case CatMovie, CatTV:
 		return "videos"
+	case CatAnime:
+		return "anime"
 	case CatMusic:
 		return "music"
 	}

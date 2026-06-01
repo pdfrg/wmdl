@@ -26,6 +26,10 @@ func TestParseSeasonNumber(t *testing.T) {
 		{"S04E01 Episode Name", 4},
 		{"Show Name (2025)", 1},
 		{"Show Name (Season 12)", 12},
+		// "Final Season" doesn't parse as a season number → defaults to 1
+		{"Show Name Final Season", 1},
+		// "season N episode M" format
+		{"Show Season 02 Episode 05 1080p", 2},
 	}
 	for _, tt := range tests {
 		t.Run(tt.title, func(t *testing.T) {

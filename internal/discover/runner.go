@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"html"
 	"regexp"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -129,7 +128,7 @@ func (r *Runner) Run(ctx context.Context) error {
 	if wantAnime && r.cfg.MediaTypes.Anime.Enabled {
 		jikan := NewJikanAnimeProvider(r.cfg.MediaTypes.Anime)
 		if r.hasTargetWeek {
-			animeYear, animeWeek := r.animeTargetWeek(ctx)
+			animeYear, animeWeek := r.animeTargetWeek()
 			jikan.SetWeekRange(animeYear, animeWeek)
 		}
 		providers = append(providers, jikan)
@@ -139,7 +138,7 @@ func (r *Runner) Run(ctx context.Context) error {
 	if wantMusic && r.cfg.MediaTypes.Music.Enabled {
 		aoty := NewAOTYProvider(r.cfg.MediaTypes.Music.Filter)
 		if r.hasTargetWeek {
-			musicYear, musicWeek := r.musicTargetWeek(ctx)
+			musicYear, musicWeek := r.musicTargetWeek()
 			aoty.SetWeekRange(musicYear, musicWeek)
 		}
 		providers = append(providers, aoty)
@@ -329,19 +328,6 @@ func (r *Runner) Run(ctx context.Context) error {
 			return ctx.Err()
 		}
 		processed += musicProcessed
-
-		if r.hasTargetWeek {
-			sy, sw := r.musicTargetWeek(ctx)
-			_ = r.db.SetSetting(ctx, "music_last_iso_year", fmt.Sprintf("%d", sy))
-			_ = r.db.SetSetting(ctx, "music_last_iso_week", fmt.Sprintf("%d", sw))
-		}
-	}
-
-	// Track anime week
-	if wantAnime && len(animeItems) > 0 && r.hasTargetWeek {
-		ay, aw := r.animeTargetWeek(ctx)
-		_ = r.db.SetSetting(ctx, "anime_last_iso_year", fmt.Sprintf("%d", ay))
-		_ = r.db.SetSetting(ctx, "anime_last_iso_week", fmt.Sprintf("%d", aw))
 	}
 
 	eventCount, _ := r.db.CountReleaseEventsByWeek(ctx, progYear, progWeek)
@@ -697,59 +683,23 @@ func (r *Runner) processItem(ctx context.Context, item ScrapedItem, progYear, pr
 	return nil
 }
 
-// animeTargetWeek determines which week to scrape for anime.
-// First run: current ISO week.
-// Subsequent runs: last discovered anime week + 1.
-func (r *Runner) animeTargetWeek(ctx context.Context) (int, int) {
-	lastYearStr, _ := r.db.GetSetting(ctx, "anime_last_iso_year")
-	lastWeekStr, _ := r.db.GetSetting(ctx, "anime_last_iso_week")
-
-	if lastYearStr == "" || lastWeekStr == "" {
-		return r.targetYear, r.targetWeek
-	}
-
-	lastYear, _ := strconv.Atoi(lastYearStr)
-	lastWeek, _ := strconv.Atoi(lastWeekStr)
-
-	nextWeek := lastWeek + 1
-	nextYear := lastYear
-	if nextWeek > 52 {
-		nextWeek = 1
-		nextYear++
-	}
-
-	return nextYear, nextWeek
+// animeTargetWeek returns the week to scrape for anime.
+// Uses the runner's target week directly (no timeshift), consistent
+// with video/movie/TV physical media discovery.
+func (r *Runner) animeTargetWeek() (int, int) {
+	return r.targetYear, r.targetWeek
 }
 
-// musicTargetWeek determines which release week to scrape for music.
-// First run: current video week - timeshift offset.
-// Subsequent runs: last discovered music week + 1.
-func (r *Runner) musicTargetWeek(ctx context.Context) (int, int) {
+// musicTargetWeek returns the release week to scrape for music.
+// Applies the configured InitialTimeshiftWeeks offset from the runner's
+// target week. Consistent with video/movie/TV physical media discovery.
+func (r *Runner) musicTargetWeek() (int, int) {
 	timeshiftWeeks := r.cfg.MediaTypes.Music.InitialTimeshiftWeeks
 	if timeshiftWeeks <= 0 {
 		timeshiftWeeks = 1
 	}
 
-	lastYearStr, _ := r.db.GetSetting(ctx, "music_last_iso_year")
-	lastWeekStr, _ := r.db.GetSetting(ctx, "music_last_iso_week")
-
-	if lastYearStr == "" || lastWeekStr == "" {
-		// First run: derive from video target week
-		return r.targetYear, r.targetWeek - timeshiftWeeks
-	}
-
-	lastYear, _ := strconv.Atoi(lastYearStr)
-	lastWeek, _ := strconv.Atoi(lastWeekStr)
-
-	// Advance by 1 wmdl week
-	nextWeek := lastWeek + 1
-	nextYear := lastYear
-	if nextWeek > 52 {
-		nextWeek = 1
-		nextYear++
-	}
-
-	return nextYear, nextWeek
+	return r.targetYear, r.targetWeek - timeshiftWeeks
 }
 
 // processMusicItem stores a scraped music item and enriches with MusicBrainz

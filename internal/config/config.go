@@ -10,6 +10,7 @@ import (
 )
 
 type Config struct {
+	Log              LogConfig        `mapstructure:"log"`
 	Notifier         NotifierConfig   `mapstructure:"notifier"`
 	Browser          BrowserConfig    `mapstructure:"browser"`
 	Prowlarr         ProwlarrConfig   `mapstructure:"prowlarr"`
@@ -24,6 +25,10 @@ type Config struct {
 	PosterMode       string           `mapstructure:"poster_mode"`
 	ProcessMode      string           `mapstructure:"process_mode"`
 	CheckCollections bool             `mapstructure:"check_collections"`
+}
+
+type LogConfig struct {
+	Level string `mapstructure:"level"`
 }
 
 type NotifierConfig struct {
@@ -246,6 +251,13 @@ func (c *Config) Validate() error {
 		errs = append(errs, "library.sonarr.api_key is required when library.sonarr.url is set")
 	}
 
+	// Validate log level
+	switch c.Log.Level {
+	case "debug", "info", "warn", "error", "":
+	default:
+		errs = append(errs, fmt.Sprintf("log.level must be one of: debug, info, warn, error"))
+	}
+
 	if len(errs) == 0 {
 		return nil
 	}
@@ -266,6 +278,8 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("poster_mode", "auto")
 	v.SetDefault("process_mode", "batch")
 	v.SetDefault("check_collections", true)
+	v.SetDefault("log.level", "info")
+
 	v.SetDefault("quality.movies.resolution", "2160p")
 	v.SetDefault("quality.movies.prefer_hdr", true)
 	v.SetDefault("quality.movies.source_priority", []string{"bluray", "web-dl", "webrip"})
