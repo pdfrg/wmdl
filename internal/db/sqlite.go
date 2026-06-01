@@ -785,6 +785,26 @@ func (d *DB) GetLatestDiscoveredWeek(ctx context.Context) (*model.WeekState, err
 	return &ws, nil
 }
 
+func (d *DB) GetPreviousAnimeWeek(ctx context.Context, excludeYear, excludeWeek int) (int, int, error) {
+	var year, week int
+	err := d.db.QueryRowContext(ctx, `
+		SELECT e.iso_year, e.iso_week
+		FROM release_events e
+		JOIN titles t ON t.id = e.title_id
+		WHERE t.media_type = 'anime'
+		AND (e.iso_year < ? OR (e.iso_year = ? AND e.iso_week < ?))
+		ORDER BY e.iso_year DESC, e.iso_week DESC
+		LIMIT 1
+	`, excludeYear, excludeYear, excludeWeek).Scan(&year, &week)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return 0, 0, nil
+		}
+		return 0, 0, err
+	}
+	return year, week, nil
+}
+
 func (d *DB) GetDownloadByTitleID(ctx context.Context, titleID int64) (*model.Download, error) {
 	return d.getDownloadByTitleID(ctx, d.db, titleID)
 }

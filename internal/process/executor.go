@@ -535,7 +535,20 @@ processPicked:
 		} else {
 			tvdbID := item.Event.Title.TvdbID
 			if tvdbID == 0 {
-				continue
+				if item.Event.Title.MediaType == model.MediaTypeAnime {
+					titleLookup, err := e.sonarr.LookupByTitle(ctx, item.Event.Title.Title)
+					if err != nil {
+						e.log.Warn().Err(err).Str("title", item.Event.Title.Title).Msg("anime title lookup in Sonarr failed")
+						goto nextPicked
+					}
+					if titleLookup == nil {
+						e.log.Warn().Str("title", item.Event.Title.Title).Msg("anime not found in Sonarr by title lookup")
+						goto nextPicked
+					}
+					tvdbID = titleLookup.TVDBID
+				} else {
+					continue
+				}
 			}
 			for {
 				existing, err := e.sonarr.Exists(ctx, tvdbID)
@@ -625,7 +638,7 @@ processPicked:
 			var addErr error
 		actionRetry:
 			if a.isTV {
-				addErr = e.addToSonarr(ctx, a.evt, a.season, true)
+				addErr = e.addToSonarr(ctx, a.evt, a.tvdbID, a.season, true)
 			} else {
 				addErr = e.addToRadarr(ctx, a.evt, true)
 			}
@@ -945,7 +958,19 @@ func (e *Executor) addToLibrary(ctx context.Context, evt db.EventWithTitle, seas
 	if evt.Title.MediaType == model.MediaTypeMovie {
 		return e.addToRadarr(ctx, evt, false)
 	}
-	return e.addToSonarr(ctx, evt, season, false)
+	tvdbID := evt.Title.TvdbID
+	if tvdbID == 0 && evt.Title.MediaType == model.MediaTypeAnime {
+		lookup, err := e.sonarr.LookupByTitle(ctx, evt.Title.Title)
+		if err != nil {
+			return fmt.Errorf("anime title lookup in Sonarr: %w", err)
+		}
+		if lookup == nil {
+			e.log.Warn().Str("title", evt.Title.Title).Msg("anime not found in Sonarr by title lookup")
+			return nil
+		}
+		tvdbID = lookup.TVDBID
+	}
+	return e.addToSonarr(ctx, evt, tvdbID, season, false)
 }
 
 func (e *Executor) resolveProfileID(ctx context.Context, profileName string) int {
@@ -1062,6 +1087,18 @@ func (e *Executor) AddAiringAnimeToSonarr(ctx context.Context, evt db.EventWithT
 		return nil
 	}
 
+	e.log.Info().Msgf("Add to Sonarr? %s (%d)", lookup.Title, lookup.Year)
+	if lookup.Overview != "" {
+		for _, line := range formatOverview(lookup.Overview, 72) {
+			e.log.Info().Msg(line)
+		}
+	}
+	e.log.Info().Str("profile", e.cfg.Library.Sonarr.QualityProfile).Str("root", e.cfg.Library.Sonarr.RootFolder).Msg("Sonarr config")
+	if !promptYesNo(ctx, "  Add to Sonarr?") {
+		e.log.Info().Str("title", title).Msg("skipped adding airing anime to Sonarr")
+		return nil
+	}
+
 	profileID := e.resolveSonarrProfileID(ctx, e.cfg.Library.Sonarr.QualityProfile)
 	langProfiles, err := e.sonarr.GetLanguageProfiles(ctx)
 	if err != nil {
@@ -1090,8 +1127,7 @@ func (e *Executor) AddAiringAnimeToSonarr(ctx context.Context, evt db.EventWithT
 	return nil
 }
 
-func (e *Executor) addToSonarr(ctx context.Context, evt db.EventWithTitle, season int, confirmed bool) error {
-	tvdbID := evt.Title.TvdbID
+func (e *Executor) addToSonarr(ctx context.Context, evt db.EventWithTitle, tvdbID, season int, confirmed bool) error {
 	if tvdbID == 0 {
 		return nil
 	}

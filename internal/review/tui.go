@@ -99,9 +99,12 @@ type TUI struct {
 	filtered        []int           // indices into items matching current filter
 	pendingQuit     bool
 	filterUndecided bool
+	year            int
+	week            int
+	prevAnimeWeek   string // most recent earlier week with anime events, for re-review hint
 }
 
-func NewReviewTUIWithEvents(events []db.EventWithTitle, albumEvents []db.EventWithAlbum, database *db.DB, posterMode string) (*TUI, error) {
+func NewReviewTUIWithEvents(events []db.EventWithTitle, albumEvents []db.EventWithAlbum, database *db.DB, posterMode string, year, week int, prevAnimeWeek string) (*TUI, error) {
 	totalItems := len(events) + len(albumEvents)
 	if totalItems == 0 {
 		return nil, fmt.Errorf("no events to review")
@@ -123,11 +126,14 @@ func NewReviewTUIWithEvents(events []db.EventWithTitle, albumEvents []db.EventWi
 	vp.SetHeight(10)
 
 	t := &TUI{
-		items:      items,
-		database:   database,
-		height:     24,
-		posterMode: ParsePosterMode(posterMode),
-		vpConfirm:  vp,
+		items:         items,
+		database:      database,
+		height:        24,
+		posterMode:    ParsePosterMode(posterMode),
+		vpConfirm:     vp,
+		year:          year,
+		week:          week,
+		prevAnimeWeek: prevAnimeWeek,
 	}
 
 	t.rebuildFiltered()
@@ -150,7 +156,7 @@ func NewReviewTUI(database *db.DB, posterMode string) (*TUI, error) {
 		return nil, fmt.Errorf("no pending releases to review")
 	}
 
-	return NewReviewTUIWithEvents(events, albumEvents, database, posterMode)
+	return NewReviewTUIWithEvents(events, albumEvents, database, posterMode, 0, 0, "")
 }
 
 func (t *TUI) Run() error {
@@ -704,6 +710,10 @@ func (t *TUI) buildReviewContent() string {
 
 	it := t.currentItem()
 	if it == nil {
+		if t.filter == model.MediaTypeAnime && t.prevAnimeWeek != "" {
+			return fmt.Sprintf("No new anime items for W%d.\nPreviously-reviewed anime items are in %s.\nRun: wmdl review --week %s",
+				t.week, t.prevAnimeWeek, t.prevAnimeWeek)
+		}
 		return "no items match the current filter"
 	}
 

@@ -784,9 +784,16 @@ func (r *Runner) processAnimeItem(ctx context.Context, item ScrapedItem, progYea
 			return fmt.Errorf("checking existing events: %w", err)
 		}
 
-		if existing != nil && existing.Status == model.StatusPending {
-			existingEvent = existing
-			return nil
+		if existing != nil {
+			if existing.Status == model.StatusPending {
+				existingEvent = existing
+				return nil
+			}
+			if existing.Source == item.Source &&
+				(existing.Status == model.StatusDownloaded || existing.Status == model.StatusRejected) {
+				r.log.Info().Str("title", item.Title).Msg("anime already handled, skipping")
+				return nil
+			}
 		}
 
 		evt := &model.ReleaseEvent{
