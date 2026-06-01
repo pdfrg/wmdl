@@ -99,6 +99,7 @@ func (p *JikanAnimeProvider) Scrape() ([]ScrapedItem, error) {
 	items = append(items, phaseA...)
 
 	if len(phaseA) < p.cfg.MinPhaseBResults && p.cfg.PhaseBEnabled {
+		time.Sleep(time.Second)
 		phaseB, err := p.scrapePhaseB()
 		if err != nil {
 			return nil, fmt.Errorf("phase B: %w", err)
@@ -154,7 +155,7 @@ func (p *JikanAnimeProvider) scrapePhaseA(weekStart, weekEnd time.Time) ([]Scrap
 		}
 
 		page++
-		time.Sleep(400 * time.Millisecond)
+		time.Sleep(time.Second)
 	}
 
 	return phaseA, nil
@@ -197,7 +198,7 @@ func (p *JikanAnimeProvider) scrapePhaseB() ([]ScrapedItem, error) {
 			break
 		}
 		page++
-		time.Sleep(400 * time.Millisecond)
+		time.Sleep(time.Second)
 	}
 
 	return phaseB, nil
