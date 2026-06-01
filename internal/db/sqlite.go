@@ -81,7 +81,7 @@ func (d *DB) Migrate(ctx context.Context) error {
 		yt_trailer_views  INTEGER DEFAULT 0,
 		poster_path       TEXT DEFAULT '',
 		created_at        TEXT NOT NULL DEFAULT (datetime('now')),
-		UNIQUE(tmdb_id)
+		UNIQUE(tmdb_id, mal_id)
 	);
 
 	CREATE TABLE IF NOT EXISTS release_events (
@@ -239,7 +239,7 @@ func (d *DB) Migrate(ctx context.Context) error {
 			yt_trailer_views  INTEGER DEFAULT 0,
 			poster_path       TEXT DEFAULT '',
 			created_at        TEXT NOT NULL DEFAULT (datetime('now')),
-			UNIQUE(tmdb_id)
+			UNIQUE(tmdb_id, mal_id)
 		)
 	`)
 	// If the old titles table exists and the new one was just created, copy data
@@ -250,7 +250,7 @@ func (d *DB) Migrate(ctx context.Context) error {
 			tmdb_rating, metacritic_score, us_rating, original_language, origin_country,
 			yt_trailer_views, overview, genres, runtime, poster_path, created_at
 		) SELECT
-			id, tmdb_id, tvdb_id, 0, title, year, media_type,
+			id, tmdb_id, tvdb_id, mal_id, title, year, media_type,
 			imdb_id, imdb_rating, rt_url, rt_critics_score, rt_audience_score,
 			tmdb_rating, metacritic_score, us_rating, original_language, origin_country,
 			yt_trailer_views, overview, genres, runtime, poster_path, created_at
@@ -336,7 +336,7 @@ func (d *DB) upsertTitle(ctx context.Context, q querier, t *model.Title) (int64,
 		                    metacritic_score, us_rating, original_language, origin_country,
 		                    yt_trailer_views, overview, genres, runtime, poster_path, created_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT(tmdb_id) DO UPDATE SET
+		ON CONFLICT(tmdb_id, mal_id) DO UPDATE SET
 			title             = excluded.title,
 			tmdb_title        = excluded.tmdb_title,
 			year              = excluded.year,

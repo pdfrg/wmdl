@@ -21,6 +21,7 @@ import (
 
 	"github.com/pdfrg/wmdl/internal/model"
 
+	_ "golang.org/x/image/webp"
 	_ "image/jpeg"
 )
 

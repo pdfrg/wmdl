@@ -119,10 +119,10 @@ func runReviewForWeek(ctx context.Context, database *db.DB, cfg *config.Config, 
 				approved = len(tui.ApprovedTitles())
 				if approved > 0 {
 					fmt.Fprintf(os.Stderr, "\nApproved %d titles for processing.\n", approved)
-				}
-				target.Reviewed = true
-				if err := database.UpsertWeekState(ctx, target); err != nil {
-					fmt.Fprintf(os.Stderr, "Warning: tracking week state: %v\n", err)
+					target.Reviewed = true
+					if err := database.UpsertWeekState(ctx, target); err != nil {
+						fmt.Fprintf(os.Stderr, "Warning: tracking week state: %v\n", err)
+					}
 				}
 				return approved, nil
 			case "e":
@@ -162,11 +162,10 @@ func runReviewForWeek(ctx context.Context, database *db.DB, cfg *config.Config, 
 	approved = len(tui.ApprovedTitles())
 	if approved > 0 {
 		fmt.Fprintf(os.Stderr, "\nApproved %d titles for processing.\n", approved)
-	}
-
-	target.Reviewed = true
-	if err := database.UpsertWeekState(ctx, target); err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: tracking week state: %v\n", err)
+		target.Reviewed = true
+		if err := database.UpsertWeekState(ctx, target); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: tracking week state: %v\n", err)
+		}
 	}
 
 	return approved, nil
