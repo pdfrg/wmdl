@@ -344,7 +344,17 @@ func (r *Runner) Run(ctx context.Context) error {
 		_ = r.db.SetSetting(ctx, "anime_last_iso_week", fmt.Sprintf("%d", aw))
 	}
 
-	r.log.Info().Msgf("Processed %d/%d items", processed, totalItems)
+	eventCount, _ := r.db.CountReleaseEventsByWeek(ctx, progYear, progWeek)
+	albumCount, _ := r.db.CountAlbumReleaseEventsByWeek(ctx, progYear, progWeek)
+	totalEvents := eventCount + albumCount
+	skipped := processed - totalEvents
+	if skipped > 0 {
+		r.log.Info().Msgf("Processed %d/%d items (%d events created, %d duplicate%s skipped)",
+			processed, totalItems, totalEvents, skipped, map[bool]string{true: "s", false: ""}[skipped != 1])
+	} else {
+		r.log.Info().Msgf("Processed %d/%d items (%d events created)",
+			processed, totalItems, totalEvents)
+	}
 
 	// Track week state — use target week when set, never derive from
 	// streaming items (which can be 2 months in the past).

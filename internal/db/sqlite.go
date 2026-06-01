@@ -958,6 +958,30 @@ func (d *DB) GetWeekProcessCounts(ctx context.Context, year, week int) (download
 	return downloaded, approved, nil
 }
 
+func (d *DB) CountReleaseEventsByWeek(ctx context.Context, year, week int) (int, error) {
+	var count int
+	err := d.db.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM release_events
+		WHERE iso_year = ? AND iso_week = ?
+	`, year, week).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("counting release events: %w", err)
+	}
+	return count, nil
+}
+
+func (d *DB) CountAlbumReleaseEventsByWeek(ctx context.Context, year, week int) (int, error) {
+	var count int
+	err := d.db.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM album_release_events
+		WHERE iso_year = ? AND iso_week = ?
+	`, year, week).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("counting album release events: %w", err)
+	}
+	return count, nil
+}
+
 // ─── Music API ────────────────────────────────────────────────────────────
 
 type EventWithAlbum struct {
