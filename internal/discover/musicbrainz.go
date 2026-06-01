@@ -24,7 +24,7 @@ type MBClient struct {
 
 func NewMBClient() *MBClient {
 	return &MBClient{
-		client:    &http.Client{Timeout: 30 * time.Second},
+		client:    &http.Client{Timeout: 10 * time.Second},
 		userAgent: "wmdl/0.1.0 (https://github.com/pdfrg/wmdl)",
 	}
 }

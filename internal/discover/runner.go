@@ -286,6 +286,9 @@ func (r *Runner) Run(ctx context.Context) error {
 				}
 				muMusic.Lock()
 				musicProcessed++
+				count := musicProcessed
+				muMusic.Unlock()
+				r.log.Info().Int("processed", count).Int("total", len(uniqueMusic)).Msg("music processing progress")
 			}(item)
 		}
 		select {
@@ -310,7 +313,7 @@ func (r *Runner) Run(ctx context.Context) error {
 		_ = r.db.SetSetting(ctx, "anime_last_iso_week", fmt.Sprintf("%d", aw))
 	}
 
-	r.log.Info().Msgf("Processed %d/%d items", processed, len(uniqueVideos)+len(uniqueMusic))
+	r.log.Info().Msgf("Processed %d/%d items", processed, len(uniqueVideos)+len(animeItems)+len(uniqueMusic))
 
 	// Track week state — use target week when set, never derive from
 	// streaming items (which can be 2 months in the past).
