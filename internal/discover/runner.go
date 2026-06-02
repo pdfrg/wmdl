@@ -3,9 +3,11 @@ package discover
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"html"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -16,9 +18,36 @@ import (
 	"github.com/pdfrg/wmdl/internal/browser"
 	"github.com/pdfrg/wmdl/internal/config"
 	"github.com/pdfrg/wmdl/internal/db"
+	"github.com/pdfrg/wmdl/internal/library"
 	"github.com/pdfrg/wmdl/internal/model"
 	"github.com/pdfrg/wmdl/internal/notifier"
 )
+
+type asyncResult[T any] struct {
+	ready chan struct{}
+	val   T
+	err   error
+}
+
+func newAsyncResult[T any]() *asyncResult[T] {
+	return &asyncResult[T]{ready: make(chan struct{})}
+}
+
+func (a *asyncResult[T]) done(val T, err error) {
+	a.val = val
+	a.err = err
+	close(a.ready)
+}
+
+func (a *asyncResult[T]) wait(ctx context.Context) (T, error) {
+	select {
+	case <-a.ready:
+		return a.val, a.err
+	case <-ctx.Done():
+		var zero T
+		return zero, ctx.Err()
+	}
+}
 
 type Runner struct {
 	log             zerolog.Logger
@@ -28,6 +57,9 @@ type Runner struct {
 	rt              *RTFinder
 	imdb            *IMDbAPIClient
 	mb              *MBClient
+	radarr          *library.RadarrClient
+	sonarr          *library.SonarrClient
+	lidarr          *library.LidarrClient
 	notify          notifier.Notifier
 	debugURL        string
 	allocCtx        context.Context
@@ -38,6 +70,13 @@ type Runner struct {
 	headless        bool
 	killBrave       func() error
 	mediaTypeFilter model.MediaType // "" = all types
+
+	radarrRes *asyncResult[[]library.RadarrMovie]
+	sonarrRes *asyncResult[[]library.SonarrSeries]
+	lidarrRes *asyncResult[struct {
+		artists []library.LidarrArtist
+		albums  []library.LidarrAlbum
+	}]
 }
 
 func (r *Runner) SetMediaTypeFilter(mt model.MediaType) {
@@ -57,7 +96,7 @@ func NewRunner(logger zerolog.Logger, cfg *config.Config, database *db.DB, headl
 		notify = nil
 	}
 
-	return &Runner{
+	r := &Runner{
 		log:      logger,
 		cfg:      cfg,
 		db:       database,
@@ -69,6 +108,148 @@ func NewRunner(logger zerolog.Logger, cfg *config.Config, database *db.DB, headl
 		debugURL: fmt.Sprintf("http://127.0.0.1:%d", cfg.Browser.DebugPort),
 		headless: headless,
 	}
+
+	if cfg.Library.Radarr.URL != "" && cfg.Library.Radarr.APIKey != "" {
+		r.radarr = library.NewRadarrClient(cfg.Library.Radarr.URL, cfg.Library.Radarr.APIKey, cfg.Library.Radarr.Timeout)
+	}
+	if cfg.Library.Sonarr.URL != "" && cfg.Library.Sonarr.APIKey != "" {
+		r.sonarr = library.NewSonarrClient(cfg.Library.Sonarr.URL, cfg.Library.Sonarr.APIKey, cfg.Library.Sonarr.Timeout)
+	}
+	if cfg.Library.Lidarr.URL != "" && cfg.Library.Lidarr.APIKey != "" {
+		r.lidarr = library.NewLidarrClient(cfg.Library.Lidarr.URL, cfg.Library.Lidarr.APIKey, cfg.Library.Lidarr.Timeout)
+	}
+
+	return r
+}
+
+func (r *Runner) cacheLibraryData(ctx context.Context) error {
+	if r.radarrRes == nil && r.sonarrRes == nil && r.lidarrRes == nil {
+		return nil
+	}
+	r.log.Info().Msg("persisting library cache from background fetches")
+
+	var sonarrSeries []library.SonarrSeries
+
+	if r.sonarrRes != nil {
+		r.log.Info().Msg("waiting for Sonarr library...")
+		series, err := r.sonarrRes.wait(ctx)
+		if err != nil {
+			r.log.Warn().Err(err).Msg("failed to fetch Sonarr library")
+		} else {
+			sonarrSeries = series
+			var entries []db.LibraryCache
+			for _, s := range series {
+				details, _ := json.Marshal(s)
+				entries = append(entries, db.LibraryCache{
+					Source: "sonarr", ExtID: strconv.Itoa(s.TVDBID),
+					ArrID: int64(s.ID), ArrTitle: s.Title, Details: string(details),
+				})
+			}
+			if err := r.db.BulkUpsertLibraryCache(ctx, entries); err != nil {
+				r.log.Warn().Err(err).Msg("failed to save Sonarr library cache")
+			} else {
+				r.log.Info().Int("count", len(series)).Msg("cached Sonarr library")
+			}
+		}
+	}
+
+	if r.radarrRes != nil {
+		r.log.Info().Msg("waiting for Radarr library...")
+		movies, err := r.radarrRes.wait(ctx)
+		if err != nil {
+			r.log.Warn().Err(err).Msg("failed to fetch Radarr library")
+		} else {
+			var entries []db.LibraryCache
+			for _, m := range movies {
+				details, _ := json.Marshal(m)
+				entries = append(entries, db.LibraryCache{
+					Source: "radarr", ExtID: strconv.Itoa(m.TMDBID),
+					ArrID: int64(m.ID), ArrTitle: m.Title, Details: string(details),
+				})
+			}
+			if err := r.db.BulkUpsertLibraryCache(ctx, entries); err != nil {
+				r.log.Warn().Err(err).Msg("failed to save Radarr library cache")
+			} else {
+				r.log.Info().Int("count", len(movies)).Msg("cached Radarr library")
+			}
+		}
+	}
+
+	if r.lidarrRes != nil {
+		r.log.Info().Msg("waiting for Lidarr library...")
+		result, err := r.lidarrRes.wait(ctx)
+		if err != nil {
+			r.log.Warn().Err(err).Msg("failed to fetch Lidarr library")
+		} else {
+			{
+				var entries []db.LibraryCache
+				for _, a := range result.artists {
+					details, _ := json.Marshal(a)
+					entries = append(entries, db.LibraryCache{
+						Source: "lidarr", ExtID: a.MBID,
+						ArrID: int64(a.ID), ArrTitle: a.ArtistName, Details: string(details),
+					})
+				}
+				if err := r.db.BulkUpsertLibraryCache(ctx, entries); err != nil {
+					r.log.Warn().Err(err).Msg("failed to save Lidarr artist cache")
+				} else {
+					r.log.Info().Int("count", len(result.artists)).Msg("cached Lidarr artists")
+				}
+			}
+			{
+				var entries []db.LibraryCache
+				for _, a := range result.albums {
+					details, _ := json.Marshal(a)
+					entries = append(entries, db.LibraryCache{
+						Source: "lidarr-album", ExtID: a.ForeignAlbumID,
+						ArrID: int64(a.ID), ArrTitle: a.Title, Details: string(details),
+					})
+				}
+				if err := r.db.BulkUpsertLibraryCache(ctx, entries); err != nil {
+					r.log.Warn().Err(err).Msg("failed to save Lidarr album cache")
+				} else {
+					r.log.Info().Int("count", len(result.albums)).Msg("cached Lidarr albums")
+				}
+			}
+		}
+	}
+
+	// Anime title matching: for items with mal_id but no tvdb_id, try to match
+	// against cached Sonarr series by title.
+	if len(sonarrSeries) > 0 {
+		titles, err := r.db.ListTitles(ctx)
+		if err != nil {
+			r.log.Warn().Err(err).Msg("failed to list titles for anime matching")
+			return nil
+		}
+		for _, t := range titles {
+			if t.MediaType != model.MediaTypeAnime || t.TvdbID != 0 || t.MalID == 0 {
+				continue
+			}
+			matchTitle := strings.ToLower(strings.TrimSpace(t.Title))
+			if idx := strings.Index(matchTitle, "(season"); idx > 0 {
+				matchTitle = strings.TrimSpace(matchTitle[:idx])
+			}
+			for _, s := range sonarrSeries {
+				seriesTitle := strings.ToLower(strings.TrimSpace(s.Title))
+				if matchTitle == seriesTitle || strings.HasPrefix(seriesTitle, matchTitle) || strings.HasPrefix(matchTitle, seriesTitle) {
+					r.log.Info().Str("anime", t.Title).Int("tvdb_id", s.TVDBID).Str("sonarr_title", s.Title).Msg("matched anime to Sonarr series")
+					if err := r.db.UpdateTitleTvdbID(ctx, t.ID, s.TVDBID); err != nil {
+						r.log.Warn().Err(err).Msg("failed to update anime tvdb_id")
+						continue
+					}
+					t.TvdbID = s.TVDBID
+					details, _ := json.Marshal(s)
+					if err := r.db.UpsertLibraryCache(ctx, "sonarr", strconv.Itoa(s.TVDBID), int64(s.ID), s.Title, string(details)); err != nil {
+						r.log.Warn().Err(err).Msg("failed to upsert sonarr cache for matched anime")
+					}
+					break
+				}
+			}
+		}
+	}
+
+	return nil
 }
 
 func (r *Runner) Run(ctx context.Context) error {
@@ -79,6 +260,43 @@ func (r *Runner) Run(ctx context.Context) error {
 	wantVideo := r.mediaTypeFilter == "" || r.mediaTypeFilter == model.MediaTypeMovie || r.mediaTypeFilter == model.MediaTypeTV
 	wantAnime := r.mediaTypeFilter == "" || r.mediaTypeFilter == model.MediaTypeAnime
 	wantMusic := r.mediaTypeFilter == "" || r.mediaTypeFilter == model.MediaTypeMusic
+
+	// Kick off *arr library fetches in background so they run during scraping.
+	if r.sonarr != nil {
+		r.sonarrRes = newAsyncResult[[]library.SonarrSeries]()
+		go func() {
+			series, err := r.sonarr.GetAllSeries(ctx)
+			r.sonarrRes.done(series, err)
+		}()
+	}
+	if r.radarr != nil {
+		r.radarrRes = newAsyncResult[[]library.RadarrMovie]()
+		go func() {
+			movies, err := r.radarr.GetAllMovies(ctx)
+			r.radarrRes.done(movies, err)
+		}()
+	}
+	if r.lidarr != nil {
+		r.lidarrRes = newAsyncResult[struct {
+			artists []library.LidarrArtist
+			albums  []library.LidarrAlbum
+		}]()
+		go func() {
+			artists, aErr := r.lidarr.GetAllArtists(ctx)
+			albums, alErr := r.lidarr.GetAllAlbums(ctx)
+			if aErr != nil {
+				r.lidarrRes.done(struct {
+					artists []library.LidarrArtist
+					albums  []library.LidarrAlbum
+				}{}, aErr)
+				return
+			}
+			r.lidarrRes.done(struct {
+				artists []library.LidarrArtist
+				albums  []library.LidarrAlbum
+			}{artists, albums}, alErr)
+		}()
+	}
 
 	// Auto-launch Brave if not already running on the debug port
 	// Only needed for video/TV/movie processing (RT scraping, FlixPatrol).
@@ -361,6 +579,12 @@ func (r *Runner) Run(ctx context.Context) error {
 		if err := r.db.UpsertWeekState(ctx, ws); err != nil {
 			r.log.Warn().Err(err).Msg("tracking week state")
 		}
+	}
+
+	// Cache library data from Radarr/Sonarr/Lidarr for review and process use.
+	// Best-effort: failures only log a warning; the week is already discovered.
+	if err := r.cacheLibraryData(ctx); err != nil {
+		r.log.Warn().Err(err).Msg("library cache failed (will be fetched during process)")
 	}
 
 	// Send notification

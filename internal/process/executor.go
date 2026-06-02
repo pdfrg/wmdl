@@ -3,10 +3,13 @@ package process
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/rs/zerolog"
 
@@ -120,14 +123,133 @@ type HealthCheckResult struct {
 }
 
 func (e *Executor) PreWarmRadarr(ctx context.Context) {
-	if _, err := e.radarr.GetAllMovies(ctx); err != nil {
-		e.log.Warn().Err(err).Msg("background pre-warm Radarr")
+	// Try loading from library_cache first (if fresh enough)
+	if e.tryLoadRadarrCache(ctx) {
+		return
+	}
+	movies, err := e.radarr.GetAllMovies(ctx)
+	if err != nil {
+		e.log.Warn().Err(err).Msg("pre-warm Radarr")
+		return
+	}
+	e.updateRadarrCache(ctx, movies)
+}
+
+func (e *Executor) tryLoadRadarrCache(ctx context.Context) bool {
+	fetchedAt, err := e.db.GetLibraryCacheFetchedAt(ctx, "radarr")
+	if err != nil || fetchedAt == "" {
+		return false
+	}
+	fetched, err := time.Parse("2006-01-02 15:04:05", fetchedAt)
+	if err != nil {
+		return false
+	}
+	ttl := time.Duration(e.cfg.CacheTTLHours) * time.Hour
+	if ttl <= 0 {
+		ttl = 48 * time.Hour
+	}
+	if time.Since(fetched) > ttl {
+		return false
+	}
+	caches, err := e.db.GetAllLibraryCache(ctx)
+	if err != nil {
+		return false
+	}
+	var movies []library.RadarrMovie
+	for _, c := range caches {
+		if c.Source != "radarr" {
+			continue
+		}
+		var m library.RadarrMovie
+		if err := json.Unmarshal([]byte(c.Details), &m); err != nil {
+			continue
+		}
+		movies = append(movies, m)
+	}
+	if len(movies) == 0 {
+		return false
+	}
+	// Set the in-memory cache on the radarr client
+	e.radarr.SetAllMovies(movies)
+	return true
+}
+
+func (e *Executor) updateRadarrCache(ctx context.Context, movies []library.RadarrMovie) {
+	var entries []db.LibraryCache
+	for _, m := range movies {
+		details, _ := json.Marshal(m)
+		entries = append(entries, db.LibraryCache{
+			Source: "radarr", ExtID: strconv.Itoa(m.TMDBID),
+			ArrID: int64(m.ID), ArrTitle: m.Title, Details: string(details),
+		})
+	}
+	if err := e.db.BulkUpsertLibraryCache(ctx, entries); err != nil {
+		e.log.Warn().Err(err).Msg("saving Radarr cache")
 	}
 }
 
 func (e *Executor) PreWarmSonarr(ctx context.Context) {
-	if _, err := e.sonarr.GetAllSeries(ctx); err != nil {
-		e.log.Warn().Err(err).Msg("background pre-warm Sonarr")
+	// Try loading from library_cache first (if fresh enough)
+	if e.tryLoadSonarrCache(ctx) {
+		return
+	}
+	series, err := e.sonarr.GetAllSeries(ctx)
+	if err != nil {
+		e.log.Warn().Err(err).Msg("pre-warm Sonarr")
+		return
+	}
+	e.updateSonarrCache(ctx, series)
+}
+
+func (e *Executor) tryLoadSonarrCache(ctx context.Context) bool {
+	fetchedAt, err := e.db.GetLibraryCacheFetchedAt(ctx, "sonarr")
+	if err != nil || fetchedAt == "" {
+		return false
+	}
+	fetched, err := time.Parse("2006-01-02 15:04:05", fetchedAt)
+	if err != nil {
+		return false
+	}
+	ttl := time.Duration(e.cfg.CacheTTLHours) * time.Hour
+	if ttl <= 0 {
+		ttl = 48 * time.Hour
+	}
+	if time.Since(fetched) > ttl {
+		return false
+	}
+	caches, err := e.db.GetAllLibraryCache(ctx)
+	if err != nil {
+		return false
+	}
+	var series []library.SonarrSeries
+	for _, c := range caches {
+		if c.Source != "sonarr" {
+			continue
+		}
+		var s library.SonarrSeries
+		if err := json.Unmarshal([]byte(c.Details), &s); err != nil {
+			continue
+		}
+		series = append(series, s)
+	}
+	if len(series) == 0 {
+		return false
+	}
+	e.sonarr.SetAllSeries(series)
+	return true
+}
+
+func (e *Executor) updateSonarrCache(ctx context.Context, series []library.SonarrSeries) {
+	var entries []db.LibraryCache
+	for _, s := range series {
+		details, _ := json.Marshal(s)
+		entries = append(entries, db.LibraryCache{
+			Source: "sonarr", ExtID: strconv.Itoa(s.TVDBID),
+			ArrID: int64(s.ID), ArrTitle: s.Title, Details: string(details),
+		})
+	}
+	if err := e.db.BulkUpsertLibraryCache(ctx, entries); err != nil {
+		e.log.Warn().Err(err).Msg("saving Sonarr cache")
 	}
 }
 

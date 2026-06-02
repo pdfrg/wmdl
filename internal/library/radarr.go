@@ -112,6 +112,10 @@ func (r *RadarrClient) retry(ctx context.Context, fn func() error) error {
 	return err
 }
 
+func (r *RadarrClient) SetAllMovies(movies []RadarrMovie) {
+	r.moviesCache = movies
+}
+
 func (r *RadarrClient) GetAllMovies(ctx context.Context) ([]RadarrMovie, error) {
 	if r.moviesCache != nil {
 		return r.moviesCache, nil

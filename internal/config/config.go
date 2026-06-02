@@ -25,6 +25,7 @@ type Config struct {
 	PosterMode       string           `mapstructure:"poster_mode"`
 	ProcessMode      string           `mapstructure:"process_mode"`
 	CheckCollections bool             `mapstructure:"check_collections"`
+	CacheTTLHours    int              `mapstructure:"cache_ttl_hours"`
 }
 
 type LogConfig struct {
@@ -278,6 +279,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("poster_mode", "auto")
 	v.SetDefault("process_mode", "batch")
 	v.SetDefault("check_collections", true)
+	v.SetDefault("cache_ttl_hours", 48)
 	v.SetDefault("log.level", "info")
 
 	v.SetDefault("quality.movies.resolution", "2160p")

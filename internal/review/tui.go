@@ -3,6 +3,7 @@ package review
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"image"
 	"net/url"
@@ -70,6 +71,110 @@ func (it *itemState) displayTitle() string {
 	return it.event.Title.Title
 }
 
+type libStatus int
+
+const (
+	libNone    libStatus = iota
+	libFull              // green — all files present
+	libPartial           // yellow — some files missing or 0 files
+)
+
+type libInfo struct {
+	label  string
+	status libStatus
+}
+
+func (it *itemState) libraryInfo(dbCache map[string]*db.LibraryCache) libInfo {
+	if it.albumEvent != nil {
+		artistKey := "lidarr:" + it.albumEvent.Artist.MBID
+		albumKey := "lidarr-album:" + it.albumEvent.Album.MBID
+		artistCache := dbCache[artistKey]
+		albumCache := dbCache[albumKey]
+		if artistCache != nil && albumCache != nil {
+			return libInfo{
+				label:  fmt.Sprintf("✓ Lidarr — %s [album in library]", it.albumEvent.Artist.Name),
+				status: libFull,
+			}
+		}
+		if artistCache != nil {
+			return libInfo{
+				label:  fmt.Sprintf("⚠ Lidarr — %s [artist in library, album not found]", it.albumEvent.Artist.Name),
+				status: libPartial,
+			}
+		}
+		return libInfo{status: libNone}
+	}
+
+	tl := it.event.Title
+	if tl.TmdbID > 0 {
+		if c := dbCache["radarr:"+strconv.Itoa(tl.TmdbID)]; c != nil {
+			return libInfo{
+				label:  fmt.Sprintf("✓ Radarr — %s", c.ArrTitle),
+				status: libFull,
+			}
+		}
+	}
+	if tl.TvdbID > 0 {
+		if c := dbCache["sonarr:"+strconv.Itoa(tl.TvdbID)]; c != nil {
+			label := fmt.Sprintf("✓ Sonarr — %s", c.ArrTitle)
+			status := libFull
+			var series struct {
+				Seasons []struct {
+					SeasonNumber int `json:"seasonNumber"`
+					Statistics   *struct {
+						EpisodeFileCount  int `json:"episodeFileCount"`
+						EpisodeCount      int `json:"episodeCount"`
+						TotalEpisodeCount int `json:"totalEpisodeCount"`
+					} `json:"statistics,omitempty"`
+				} `json:"seasons"`
+			}
+			if err := json.Unmarshal([]byte(c.Details), &series); err == nil && len(series.Seasons) > 0 {
+				var complete, partial []string
+				anyMissing := false
+				for _, s := range series.Seasons {
+					if s.SeasonNumber == 0 {
+						continue // skip specials
+					}
+					if s.Statistics == nil || s.Statistics.TotalEpisodeCount == 0 {
+						continue
+					}
+					total := s.Statistics.TotalEpisodeCount
+					aired := s.Statistics.EpisodeCount
+					if aired <= 0 {
+						aired = total
+					}
+					if s.Statistics.EpisodeFileCount >= total {
+						complete = append(complete, strconv.Itoa(s.SeasonNumber))
+					} else {
+						partial = append(partial, fmt.Sprintf("S%d(%d/%d)", s.SeasonNumber, s.Statistics.EpisodeFileCount, total))
+						if s.Statistics.EpisodeFileCount >= aired {
+							// Up-to-date with aired episodes, waiting for future airings
+						} else {
+							anyMissing = true
+						}
+					}
+				}
+				if anyMissing {
+					status = libPartial
+				}
+				if len(complete) > 0 || len(partial) > 0 {
+					var parts []string
+					if len(complete) > 0 {
+						parts = append(parts, "S"+strings.Join(complete, ","))
+					}
+					parts = append(parts, partial...)
+					label += " [" + strings.Join(parts, " ") + "]"
+				} else if len(series.Seasons) > 0 {
+					// Seasons exist in Sonarr but none have stats yet (e.g. newly added, 0 episodes)
+					status = libPartial
+				}
+			}
+			return libInfo{label: label, status: status}
+		}
+	}
+	return libInfo{status: libNone}
+}
+
 func (it *itemState) displayYear() int {
 	if it.albumEvent != nil {
 		return it.albumEvent.Album.Year
@@ -101,7 +206,8 @@ type TUI struct {
 	filterUndecided bool
 	year            int
 	week            int
-	prevAnimeWeek   string // most recent earlier week with anime events, for re-review hint
+	prevAnimeWeek   string                      // most recent earlier week with anime events, for re-review hint
+	libraryCache    map[string]*db.LibraryCache // key: "source:ext_id"
 }
 
 func NewReviewTUIWithEvents(events []db.EventWithTitle, albumEvents []db.EventWithAlbum, database *db.DB, posterMode string, year, week int, prevAnimeWeek string) (*TUI, error) {
@@ -134,10 +240,54 @@ func NewReviewTUIWithEvents(events []db.EventWithTitle, albumEvents []db.EventWi
 		year:          year,
 		week:          week,
 		prevAnimeWeek: prevAnimeWeek,
+		libraryCache:  buildLibraryCacheMap(database, events, albumEvents),
 	}
 
 	t.rebuildFiltered()
 	return t, nil
+}
+
+func buildLibraryCacheMap(database *db.DB, events []db.EventWithTitle, albumEvents []db.EventWithAlbum) map[string]*db.LibraryCache {
+	ctx := context.Background()
+	var lookups []struct{ Source, ExtID string }
+	seen := make(map[string]bool)
+	for _, e := range events {
+		if e.Title.TmdbID > 0 {
+			key := "radarr:" + strconv.Itoa(e.Title.TmdbID)
+			if !seen[key] {
+				lookups = append(lookups, struct{ Source, ExtID string }{"radarr", strconv.Itoa(e.Title.TmdbID)})
+				seen[key] = true
+			}
+		}
+		if e.Title.TvdbID > 0 {
+			key := "sonarr:" + strconv.Itoa(e.Title.TvdbID)
+			if !seen[key] {
+				lookups = append(lookups, struct{ Source, ExtID string }{"sonarr", strconv.Itoa(e.Title.TvdbID)})
+				seen[key] = true
+			}
+		}
+	}
+	for _, ae := range albumEvents {
+		if ae.Artist.MBID != "" {
+			key := "lidarr:" + ae.Artist.MBID
+			if !seen[key] {
+				lookups = append(lookups, struct{ Source, ExtID string }{"lidarr", ae.Artist.MBID})
+				seen[key] = true
+			}
+		}
+		if ae.Album.MBID != "" {
+			key := "lidarr-album:" + ae.Album.MBID
+			if !seen[key] {
+				lookups = append(lookups, struct{ Source, ExtID string }{"lidarr-album", ae.Album.MBID})
+				seen[key] = true
+			}
+		}
+	}
+	result, err := database.GetLibraryCacheMap(ctx, lookups)
+	if err != nil {
+		return nil
+	}
+	return result
 }
 
 func NewReviewTUI(database *db.DB, posterMode string) (*TUI, error) {
@@ -943,6 +1093,21 @@ func (t *TUI) buildMusicContent(ae *db.EventWithAlbum, rw int) string {
 		b.WriteString(ratingsLine.Render(fmt.Sprintf("MB artist rating: %s", fmtRating(ar.MBRating))))
 	}
 
+	// Library status
+	it = t.currentItem()
+	if it != nil && it.albumEvent != nil {
+		if info := it.libraryInfo(t.libraryCache); info.status != libNone {
+			style := approvedStyle
+			if info.status == libPartial {
+				style = warnStyle
+			}
+			b.WriteString("\n\n")
+			b.WriteString(style.Render("Library:"))
+			b.WriteString("\n")
+			b.WriteString(style.Render("  " + info.label))
+		}
+	}
+
 	return b.String()
 }
 
@@ -1185,6 +1350,21 @@ func (t *TUI) buildRightContent(tl *model.Title, ev *model.ReleaseEvent, rw int)
 		)
 		b.WriteString("\n\n")
 		b.WriteString(ratingsLine.Render(ratings))
+	}
+
+	// Library status
+	it = t.currentItem()
+	if it != nil && it.albumEvent == nil {
+		if info := it.libraryInfo(t.libraryCache); info.status != libNone {
+			style := approvedStyle
+			if info.status == libPartial {
+				style = warnStyle
+			}
+			b.WriteString("\n\n")
+			b.WriteString(style.Render("Library:"))
+			b.WriteString("\n")
+			b.WriteString(style.Render("  " + info.label))
+		}
 	}
 
 	// Overview

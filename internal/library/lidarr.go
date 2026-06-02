@@ -124,6 +124,32 @@ func (c *LidarrClient) retry(ctx context.Context, fn func() error) error {
 	return err
 }
 
+func (c *LidarrClient) GetAllArtists(ctx context.Context) ([]LidarrArtist, error) {
+	if c.artistCache != nil {
+		return c.artistCache, nil
+	}
+	var artists []LidarrArtist
+	err := c.retry(ctx, func() error {
+		return c.get(ctx, "/api/v1/artist", &artists)
+	})
+	if err != nil {
+		return nil, err
+	}
+	c.artistCache = artists
+	return artists, nil
+}
+
+func (c *LidarrClient) GetAllAlbums(ctx context.Context) ([]LidarrAlbum, error) {
+	var albums []LidarrAlbum
+	err := c.retry(ctx, func() error {
+		return c.get(ctx, "/api/v1/album", &albums)
+	})
+	if err != nil {
+		return nil, err
+	}
+	return albums, nil
+}
+
 func (c *LidarrClient) GetQualityProfiles(ctx context.Context) ([]LidarrQualityProfile, error) {
 	if c.profileCache != nil {
 		return c.profileCache, nil
@@ -217,23 +243,10 @@ func (c *LidarrClient) LookupArtist(ctx context.Context, mbid string) (*LidarrAr
 }
 
 func (c *LidarrClient) GetArtist(ctx context.Context, mbid string) (*LidarrArtist, error) {
-	if c.artistCache != nil {
-		for _, a := range c.artistCache {
-			if a.MBID == mbid {
-				return &a, nil
-			}
-		}
-		return nil, nil
-	}
-
-	var artists []LidarrArtist
-	err := c.retry(ctx, func() error {
-		return c.get(ctx, "/api/v1/artist", &artists)
-	})
+	artists, err := c.GetAllArtists(ctx)
 	if err != nil {
 		return nil, err
 	}
-	c.artistCache = artists
 	for _, a := range artists {
 		if a.MBID == mbid {
 			return &a, nil

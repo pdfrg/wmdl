@@ -115,6 +115,10 @@ func (s *SonarrClient) retry(ctx context.Context, fn func() error) error {
 	return err
 }
 
+func (s *SonarrClient) SetAllSeries(series []SonarrSeries) {
+	s.seriesCache = series
+}
+
 func (s *SonarrClient) GetAllSeries(ctx context.Context) ([]SonarrSeries, error) {
 	if s.seriesCache != nil {
 		return s.seriesCache, nil

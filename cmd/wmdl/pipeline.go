@@ -128,10 +128,12 @@ func runReviewForWeek(ctx context.Context, database *db.DB, cfg *config.Config, 
 				approved = len(tui.ApprovedTitles())
 				if approved > 0 {
 					fmt.Fprintf(os.Stderr, "\nApproved %d titles for processing.\n", approved)
-					target.Reviewed = true
-					if err := database.UpsertWeekState(ctx, target); err != nil {
-						fmt.Fprintf(os.Stderr, "Warning: tracking week state: %v\n", err)
-					}
+				} else {
+					fmt.Fprintf(os.Stderr, "\nAll items rejected.\n")
+				}
+				target.Reviewed = true
+				if err := database.UpsertWeekState(ctx, target); err != nil {
+					fmt.Fprintf(os.Stderr, "Warning: tracking week state: %v\n", err)
 				}
 				return approved, nil
 			case "e":
@@ -170,10 +172,12 @@ func runReviewForWeek(ctx context.Context, database *db.DB, cfg *config.Config, 
 	approved = len(tui.ApprovedTitles())
 	if approved > 0 {
 		fmt.Fprintf(os.Stderr, "\nApproved %d titles for processing.\n", approved)
-		target.Reviewed = true
-		if err := database.UpsertWeekState(ctx, target); err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: tracking week state: %v\n", err)
-		}
+	} else {
+		fmt.Fprintf(os.Stderr, "\nAll items rejected — nothing to process.\n")
+	}
+	target.Reviewed = true
+	if err := database.UpsertWeekState(ctx, target); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: tracking week state: %v\n", err)
 	}
 
 	return approved, nil
@@ -230,7 +234,11 @@ func runProcessForWeek(ctx context.Context, database *db.DB, cfg *config.Config,
 
 	switch {
 	case len(pending) == 0 && len(downloaded) == 0 && len(albumEventsForProcess) == 0:
-		log.Info().Msgf("No processable releases for week %d-W%02d.", year, week)
+		log.Info().Msgf("No processable releases for week %d-W%02d — all rejected.", year, week)
+		target.Processed = true
+		if err := database.UpsertWeekState(ctx, target); err != nil {
+			log.Warn().Err(err).Msg("tracking week state")
+		}
 		return nil
 
 	case len(downloaded) > 0 && len(pending) == 0:

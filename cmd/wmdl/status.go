@@ -49,12 +49,10 @@ func newStatusCmd() *cobra.Command {
 
 			// Enrich display weeks with download counts
 			for _, s := range display {
-				if s.Processed {
-					dl, app, err := database.GetWeekProcessCounts(ctx, s.Year, s.Week)
-					if err == nil {
-						s.DownloadedCount = dl
-						s.ApprovedCount = app
-					}
+				dl, app, err := database.GetWeekProcessCounts(ctx, s.Year, s.Week)
+				if err == nil {
+					s.DownloadedCount = dl
+					s.ApprovedCount = app
 				}
 			}
 
@@ -86,6 +84,8 @@ func newStatusCmd() *cobra.Command {
 					todo = append(todo, fmt.Sprintf("wmdl discover (W%02d %d)", s.Week, s.Year))
 				} else if !s.Reviewed {
 					todo = append(todo, fmt.Sprintf("wmdl review (W%02d %d)", s.Week, s.Year))
+				} else if !s.Processed && s.ApprovedCount == 0 {
+					// All items rejected, nothing to process
 				} else if !s.Processed {
 					todo = append(todo, fmt.Sprintf("wmdl process (W%02d %d)", s.Week, s.Year))
 				}
@@ -117,16 +117,19 @@ func newStatusCmd() *cobra.Command {
 }
 
 func processStatus(s *model.WeekState) string {
-	if !s.Processed {
+	if !s.Reviewed {
 		return "✗"
 	}
 	if s.ApprovedCount == 0 {
+		return "N/A"
+	}
+	if s.Processed && s.DownloadedCount >= s.ApprovedCount {
 		return "✓"
 	}
-	if s.DownloadedCount >= s.ApprovedCount {
-		return "✓"
+	if s.Processed {
+		return fmt.Sprintf("%d/%d", s.DownloadedCount, s.ApprovedCount)
 	}
-	return fmt.Sprintf("%d/%d", s.DownloadedCount, s.ApprovedCount)
+	return "✗"
 }
 
 func weekLabel(s *model.WeekState) string {

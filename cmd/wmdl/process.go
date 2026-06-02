@@ -39,6 +39,14 @@ and send it to the download client.`,
 			}
 			defer database.Close()
 
+			refreshCache, _ := cmd.Flags().GetBool("refresh-cache")
+			if refreshCache {
+				if err := database.PurgeLibraryCache(cmd.Context()); err != nil {
+					return fmt.Errorf("purging library cache: %w", err)
+				}
+				fmt.Fprintf(os.Stderr, "  Library cache purged, will re-fetch from *arr services\n")
+			}
+
 			targetYear, targetWeek, err := resolveWeek(cmd)
 			if err != nil {
 				return err
@@ -49,6 +57,7 @@ and send it to the download client.`,
 		},
 	}
 	addWeekFlag(cmd)
+	cmd.Flags().Bool("refresh-cache", false, "Force re-fetch of library cache from *arr services")
 	return cmd
 }
 
