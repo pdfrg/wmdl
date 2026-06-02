@@ -174,11 +174,13 @@ func (d *DB) Migrate(ctx context.Context) error {
 		overview        TEXT NOT NULL DEFAULT '',
 		poster_path     TEXT NOT NULL DEFAULT '',
 		aoty_url        TEXT NOT NULL DEFAULT '',
+		allmusic_url    TEXT NOT NULL DEFAULT '',
 		aoty_critic_score REAL DEFAULT 0,
 		aoty_critic_count INTEGER DEFAULT 0,
 		aoty_user_score    REAL DEFAULT 0,
 		aoty_user_count    INTEGER DEFAULT 0,
 		aoty_must_hear     INTEGER DEFAULT 0,
+		allmusic_rating    REAL DEFAULT 0,
 		mb_rating          REAL DEFAULT 0,
 		created_at      TEXT NOT NULL DEFAULT (datetime('now')),
 		UNIQUE(artist_id, title, year)
@@ -313,6 +315,8 @@ func (d *DB) Migrate(ctx context.Context) error {
 	d.db.ExecContext(ctx, `ALTER TABLE titles ADD COLUMN origin_country TEXT DEFAULT ''`)
 	d.db.ExecContext(ctx, `ALTER TABLE titles ADD COLUMN tmdb_title TEXT DEFAULT ''`)
 	d.db.ExecContext(ctx, `ALTER TABLE albums ADD COLUMN aoty_url TEXT NOT NULL DEFAULT ''`)
+	d.db.ExecContext(ctx, `ALTER TABLE albums ADD COLUMN allmusic_url TEXT NOT NULL DEFAULT ''`)
+	d.db.ExecContext(ctx, `ALTER TABLE albums ADD COLUMN allmusic_rating REAL DEFAULT 0`)
 
 	// Anime-specific columns
 	d.db.ExecContext(ctx, `ALTER TABLE titles ADD COLUMN anime_type TEXT NOT NULL DEFAULT ''`)
@@ -1076,11 +1080,12 @@ func (d *DB) GetArtistByName(ctx context.Context, name string) (*model.Artist, e
 func (d *DB) UpsertAlbum(ctx context.Context, a *model.Album) (int64, error) {
 	res, err := d.db.ExecContext(ctx, `
 		INSERT INTO albums (artist_id, title, year, mbid, album_type,
-		                    release_date, genres, overview, poster_path, aoty_url,
+		                    release_date, genres, overview, poster_path,
+		                    aoty_url, allmusic_url,
 		                    aoty_critic_score, aoty_critic_count,
 		                    aoty_user_score, aoty_user_count,
-		                    aoty_must_hear, mb_rating, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+		                    aoty_must_hear, allmusic_rating, mb_rating, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
 		ON CONFLICT(artist_id, title, year) DO UPDATE SET
 			mbid              = excluded.mbid,
 			album_type        = excluded.album_type,
@@ -1089,17 +1094,20 @@ func (d *DB) UpsertAlbum(ctx context.Context, a *model.Album) (int64, error) {
 			overview          = excluded.overview,
 			poster_path       = excluded.poster_path,
 			aoty_url          = excluded.aoty_url,
+			allmusic_url      = excluded.allmusic_url,
 			aoty_critic_score = excluded.aoty_critic_score,
 			aoty_critic_count = excluded.aoty_critic_count,
 			aoty_user_score   = excluded.aoty_user_score,
 			aoty_user_count   = excluded.aoty_user_count,
 			aoty_must_hear    = excluded.aoty_must_hear,
+			allmusic_rating   = excluded.allmusic_rating,
 			mb_rating         = excluded.mb_rating
 	`, a.ArtistID, a.Title, a.Year, a.MBID, string(a.AlbumType),
-		a.ReleaseDate, a.Genres, a.Overview, a.PosterPath, a.AOTYURL,
+		a.ReleaseDate, a.Genres, a.Overview, a.PosterPath,
+		a.AOTYURL, a.AllMusicURL,
 		a.AOTYCriticScore, a.AOTYCriticCount,
 		a.AOTYUserScore, a.AOTYUserCount,
-		boolToInt(a.AOTYMustHear), a.MBRating)
+		boolToInt(a.AOTYMustHear), a.AllMusicRating, a.MBRating)
 	if err != nil {
 		return 0, fmt.Errorf("upserting album: %w", err)
 	}
@@ -1116,17 +1124,19 @@ func (d *DB) GetAlbumByMBID(ctx context.Context, mbid string) (*model.Album, err
 	var mustHear int
 	err := d.db.QueryRowContext(ctx, `
 		SELECT id, artist_id, title, year, mbid, album_type,
-		       release_date, genres, overview, poster_path, aoty_url,
+		       release_date, genres, overview, poster_path,
+		       aoty_url, allmusic_url,
 		       aoty_critic_score, aoty_critic_count,
 		       aoty_user_score, aoty_user_count,
-		       aoty_must_hear, mb_rating, created_at
+		       aoty_must_hear, allmusic_rating, mb_rating, created_at
 		FROM albums WHERE mbid = ?
 	`, mbid).Scan(
 		&a.ID, &a.ArtistID, &a.Title, &a.Year, &a.MBID, &albumType,
-		&a.ReleaseDate, &a.Genres, &a.Overview, &a.PosterPath, &a.AOTYURL,
+		&a.ReleaseDate, &a.Genres, &a.Overview, &a.PosterPath,
+		&a.AOTYURL, &a.AllMusicURL,
 		&a.AOTYCriticScore, &a.AOTYCriticCount,
 		&a.AOTYUserScore, &a.AOTYUserCount,
-		&mustHear, &a.MBRating, &createdAt)
+		&mustHear, &a.AllMusicRating, &a.MBRating, &createdAt)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil, nil
@@ -1176,6 +1186,13 @@ func (d *DB) UpdateAlbumReleaseEventStatus(ctx context.Context, id int64, status
 	return d.updateAlbumReleaseEventStatus(ctx, d.db, id, status)
 }
 
+func (d *DB) RequeueAlbumReleaseEvent(ctx context.Context, id int64, source, notes string) error {
+	_, err := d.db.ExecContext(ctx,
+		`UPDATE album_release_events SET status = ?, previous_status = status, notes = ?, source = ? WHERE id = ?`,
+		string(model.StatusPending), notes, source, id)
+	return err
+}
+
 func (d *DB) UpdateAlbumReleaseEventStatusTx(ctx context.Context, tx *sql.Tx, id int64, status model.ReleaseStatus) error {
 	return d.updateAlbumReleaseEventStatus(ctx, tx, id, status)
 }
@@ -1190,9 +1207,9 @@ func (d *DB) ListPendingAlbumEventsWithAlbums(ctx context.Context) ([]EventWithA
 		SELECT e.id, e.album_id, e.source, e.release_date,
 		       e.status, e.previous_status, e.notes, e.created_at, e.iso_year, e.iso_week,
 		       a.id, a.artist_id, a.title, a.year, a.mbid, a.album_type,
-		       a.release_date, a.genres, a.overview, a.poster_path, a.aoty_url,
+		       a.release_date, a.genres, a.overview, a.poster_path, a.aoty_url, a.allmusic_url,
 		       a.aoty_critic_score, a.aoty_critic_count, a.aoty_user_score, a.aoty_user_count,
-		       a.aoty_must_hear, a.mb_rating, a.created_at,
+		       a.aoty_must_hear, a.allmusic_rating, a.mb_rating, a.created_at,
 		       ar.id, ar.mbid, ar.name, ar.lidarr_id,
 		       ar.country, ar.artist_type, ar.begin_date, ar.end_date, ar.begin_area, ar.area, ar.disambiguation, ar.tags, ar.genres, ar.mb_rating, ar.created_at
 		FROM album_release_events e
@@ -1213,9 +1230,9 @@ func (d *DB) ListApprovedAlbumEventsWithAlbums(ctx context.Context) ([]EventWith
 		SELECT e.id, e.album_id, e.source, e.release_date,
 		       e.status, e.previous_status, e.notes, e.created_at, e.iso_year, e.iso_week,
 		       a.id, a.artist_id, a.title, a.year, a.mbid, a.album_type,
-		       a.release_date, a.genres, a.overview, a.poster_path, a.aoty_url,
+		       a.release_date, a.genres, a.overview, a.poster_path, a.aoty_url, a.allmusic_url,
 		       a.aoty_critic_score, a.aoty_critic_count, a.aoty_user_score, a.aoty_user_count,
-		       a.aoty_must_hear, a.mb_rating, a.created_at,
+		       a.aoty_must_hear, a.allmusic_rating, a.mb_rating, a.created_at,
 		       ar.id, ar.mbid, ar.name, ar.lidarr_id,
 		       ar.country, ar.artist_type, ar.begin_date, ar.end_date, ar.begin_area, ar.area, ar.disambiguation, ar.tags, ar.genres, ar.mb_rating, ar.created_at
 		FROM album_release_events e
@@ -1236,9 +1253,9 @@ func (d *DB) ListAlbumEventsByWeek(ctx context.Context, year, week int) ([]Event
 		SELECT e.id, e.album_id, e.source, e.release_date,
 		       e.status, e.previous_status, e.notes, e.created_at, e.iso_year, e.iso_week,
 		       a.id, a.artist_id, a.title, a.year, a.mbid, a.album_type,
-		       a.release_date, a.genres, a.overview, a.poster_path, a.aoty_url,
+		       a.release_date, a.genres, a.overview, a.poster_path, a.aoty_url, a.allmusic_url,
 		       a.aoty_critic_score, a.aoty_critic_count, a.aoty_user_score, a.aoty_user_count,
-		       a.aoty_must_hear, a.mb_rating, a.created_at,
+		       a.aoty_must_hear, a.allmusic_rating, a.mb_rating, a.created_at,
 		       ar.id, ar.mbid, ar.name, ar.lidarr_id,
 		       ar.country, ar.artist_type, ar.begin_date, ar.end_date, ar.begin_area, ar.area, ar.disambiguation, ar.tags, ar.genres, ar.mb_rating, ar.created_at
 		FROM album_release_events e
@@ -1269,9 +1286,9 @@ func (d *DB) ListAlbumEventsByWeekAndStatus(ctx context.Context, year, week int,
 		SELECT e.id, e.album_id, e.source, e.release_date,
 		       e.status, e.previous_status, e.notes, e.created_at, e.iso_year, e.iso_week,
 		       a.id, a.artist_id, a.title, a.year, a.mbid, a.album_type,
-		       a.release_date, a.genres, a.overview, a.poster_path, a.aoty_url,
+		       a.release_date, a.genres, a.overview, a.poster_path, a.aoty_url, a.allmusic_url,
 		       a.aoty_critic_score, a.aoty_critic_count, a.aoty_user_score, a.aoty_user_count,
-		       a.aoty_must_hear, a.mb_rating, a.created_at,
+		       a.aoty_must_hear, a.allmusic_rating, a.mb_rating, a.created_at,
 		       ar.id, ar.mbid, ar.name, ar.lidarr_id,
 		       ar.country, ar.artist_type, ar.begin_date, ar.end_date, ar.begin_area, ar.area, ar.disambiguation, ar.tags, ar.genres, ar.mb_rating, ar.created_at
 		FROM album_release_events e
@@ -1324,9 +1341,9 @@ func scanEventWithAlbumRows(rows *sql.Rows) ([]EventWithAlbum, error) {
 			&ev.ID, &ev.AlbumID, &ev.Source, &ev.ReleaseDate,
 			&evStatus, &evPrevStatus, &ev.Notes, &evCreated, &ev.ISOYear, &ev.ISOWeek,
 			&al.ID, &al.ArtistID, &al.Title, &al.Year, &al.MBID, &alAlbumType,
-			&al.ReleaseDate, &al.Genres, &al.Overview, &al.PosterPath, &al.AOTYURL,
+			&al.ReleaseDate, &al.Genres, &al.Overview, &al.PosterPath, &al.AOTYURL, &al.AllMusicURL,
 			&al.AOTYCriticScore, &al.AOTYCriticCount, &al.AOTYUserScore, &al.AOTYUserCount,
-			&alMustHear, &al.MBRating, &alCreated,
+			&alMustHear, &al.AllMusicRating, &al.MBRating, &alCreated,
 			&ar.ID, &ar.MBID, &ar.Name, &ar.LidarrID,
 			&ar.Country, &ar.ArtistType, &ar.BeginDate, &ar.EndDate, &ar.BeginArea, &ar.Area, &ar.Disambiguation, &ar.Tags, &ar.Genres, &ar.MBRating, &arCreated,
 		)

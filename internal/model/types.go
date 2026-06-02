@@ -162,6 +162,8 @@ type Album struct {
 	AOTYUserCount   int
 	AOTYMustHear    bool
 	AOTYURL         string
+	AllMusicRating  float64 // AllMusic editor rating (1-10)
+	AllMusicURL     string  // allmusic.com/album/... page
 
 	MBRating float64
 

@@ -987,13 +987,24 @@ func (t *TUI) buildMusicContent(ae *db.EventWithAlbum, rw int) string {
 	// Line 2: empty
 	b.WriteString("\n\n")
 
+	isAllMusic := ev.Source == "allmusic"
+
 	// Line 3: [album] type · source · release_date
 	var tagParts []string
 	tagParts = append(tagParts, fmt.Sprintf("[album] %s", string(al.AlbumType)))
-	if ev.Source != "" {
+	if isAllMusic {
+		tagParts = append(tagParts, "AllMusic Editor's Choice")
+	} else if ev.Source != "" {
 		tagParts = append(tagParts, ev.Source)
 	}
-	if al.ReleaseDate != "" {
+	if isAllMusic && al.ReleaseDate != "" {
+		// Format "2026-05-01" as "May 2026"
+		if t, err := time.Parse("2006-01-02", al.ReleaseDate); err == nil {
+			tagParts = append(tagParts, t.Format("January 2006"))
+		} else {
+			tagParts = append(tagParts, al.ReleaseDate)
+		}
+	} else if al.ReleaseDate != "" {
 		tagParts = append(tagParts, al.ReleaseDate)
 	}
 	b.WriteString(tagStyle.Render(strings.Join(tagParts, " · ")))
@@ -1001,36 +1012,53 @@ func (t *TUI) buildMusicContent(ae *db.EventWithAlbum, rw int) string {
 	// Line 4: MB info or warning
 	if al.MBID != "" {
 		b.WriteString("\n")
-		b.WriteString(rtStyle.Render(fmt.Sprintf("%s · %s", string(al.AlbumType), al.ReleaseDate)))
+		infoParts := []string{string(al.AlbumType)}
+		if isAllMusic && al.ReleaseDate != "" {
+			if t, err := time.Parse("2006-01-02", al.ReleaseDate); err == nil {
+				infoParts = append(infoParts, t.Format("January 2006"))
+			} else {
+				infoParts = append(infoParts, al.ReleaseDate)
+			}
+		} else {
+			infoParts = append(infoParts, al.ReleaseDate)
+		}
+		b.WriteString(rtStyle.Render(strings.Join(infoParts, " · ")))
 	}
 	if al.MBID == "" {
 		b.WriteString("\n")
 		b.WriteString(rejectedStyle.Render("⚠ No MusicBrainz match — may not add to Lidarr"))
 	}
 
-	// Line 5: empty
+	// Line 5: AllMusic Editor's Choice badge
+	if isAllMusic {
+		b.WriteString("\n")
+		b.WriteString(approvedStyle.Render("🏅 AllMusic Editor's Choice"))
+	}
+
+	// Line 6: empty before scores
 	b.WriteString("\n")
 
-	// Line 6: AOTY scores
-	hasScore := al.AOTYCriticScore > 0 || al.AOTYUserScore > 0
-	if hasScore {
-		var scoreParts []string
-		if al.AOTYCriticScore > 0 {
-			scoreParts = append(scoreParts, fmt.Sprintf("critic: %.0f (%d reviews)", al.AOTYCriticScore, al.AOTYCriticCount))
-		}
-		if al.AOTYUserScore > 0 {
-			scoreParts = append(scoreParts, fmt.Sprintf("user: %.0f (%d ratings)", al.AOTYUserScore, al.AOTYUserCount))
-		}
-		b.WriteString("\n")
+	// Line 7: Scores (AOTY + AllMusic)
+	var scoreParts []string
+	if al.AOTYCriticScore > 0 {
+		scoreParts = append(scoreParts, fmt.Sprintf("AOTY critic: %.0f (%d reviews)", al.AOTYCriticScore, al.AOTYCriticCount))
+	}
+	if al.AOTYUserScore > 0 {
+		scoreParts = append(scoreParts, fmt.Sprintf("AOTY user: %.0f (%d ratings)", al.AOTYUserScore, al.AOTYUserCount))
+	}
+	if al.AllMusicRating > 0 {
+		scoreParts = append(scoreParts, fmt.Sprintf("AllMusic: %.0f/10", al.AllMusicRating))
+	}
+	if len(scoreParts) > 0 {
 		b.WriteString(ratingsLine.Render(strings.Join(scoreParts, " · ")))
 	}
 
-	// Line 7: empty before must-hear
-	if al.AOTYMustHear || hasScore {
+	// Line 8: empty before must-hear
+	if len(scoreParts) > 0 || al.AOTYMustHear {
 		b.WriteString("\n")
 	}
 
-	// Line 8: Must Hear (if true)
+	// Line 9: Must Hear (if true)
 	if al.AOTYMustHear {
 		b.WriteString(approvedStyle.Render("★ Must Hear (Editor's Pick)"))
 	}

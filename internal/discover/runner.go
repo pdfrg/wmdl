@@ -299,8 +299,8 @@ func (r *Runner) Run(ctx context.Context) error {
 	}
 
 	// Auto-launch Brave if not already running on the debug port
-	// Only needed for video/TV/movie processing (RT scraping, FlixPatrol).
-	if wantVideo {
+	// Needed for video/TV/movie processing and AllMusic scraping.
+	if wantVideo || wantMusic {
 		killBrave, err := browser.EnsureRunning(r.cfg.Browser.Binary, r.cfg.Browser.DebugPort, r.cfg.Browser.Profile, r.headless)
 		if err != nil {
 			r.log.Warn().Err(err).Msg("browser unavailable, some features disabled")
@@ -352,7 +352,7 @@ func (r *Runner) Run(ctx context.Context) error {
 		providers = append(providers, jikan)
 	}
 
-	// Music provider (gated on config and type filter)
+	// Music providers (gated on config and type filter)
 	if wantMusic && r.cfg.MediaTypes.Music.Enabled {
 		aoty := NewAOTYProvider(r.cfg.MediaTypes.Music.Filter)
 		if r.hasTargetWeek {
@@ -360,6 +360,15 @@ func (r *Runner) Run(ctx context.Context) error {
 			aoty.SetWeekRange(musicYear, musicWeek)
 		}
 		providers = append(providers, aoty)
+
+		// AllMusic Editor's Choice (requires chromedp/Brave)
+		if r.allocCtx != nil {
+			allmusic := NewAllMusicProvider(r.debugURL, r.allocCtx)
+			if r.hasTargetWeek {
+				allmusic.SetWeekRange(r.targetYear, r.targetWeek)
+			}
+			providers = append(providers, allmusic)
+		}
 	}
 
 	if len(providers) == 0 {
@@ -412,11 +421,12 @@ func (r *Runner) Run(ctx context.Context) error {
 		uniqueVideos = append(uniqueVideos, item)
 	}
 
-	// Deduplicate music items by artist+album
+	// Deduplicate music items by artist+album (normalize titles: strip bracketed suffixes)
 	seenMusic := make(map[string]bool)
 	var uniqueMusic []ScrapedItem
 	for _, item := range musicItems {
-		key := fmt.Sprintf("%s|%s", item.ArtistName, item.Title)
+		title := strings.TrimSpace(allMusicBracketRe.ReplaceAllString(item.Title, ""))
+		key := fmt.Sprintf("%s|%s", item.ArtistName, title)
 		if seenMusic[key] {
 			continue
 		}
@@ -1012,10 +1022,12 @@ func (r *Runner) processMusicItem(ctx context.Context, item ScrapedItem, progYea
 	apiCtx, apiCancel := context.WithTimeout(ctx, 30*time.Second)
 	defer apiCancel()
 
-	// Filter: skip low-quality albums immediately
-	if !passesMusicFilter(r.cfg.MediaTypes.Music.Filter, item) {
-		r.log.Info().Str("artist", item.ArtistName).Str("album", item.Title).Msg("does not pass filter, skipping")
-		return nil
+	// Filter: skip low-quality albums immediately (AOTY only — AllMusic is curator-filtered)
+	if item.Source != "allmusic" {
+		if !passesMusicFilter(r.cfg.MediaTypes.Music.Filter, item) {
+			r.log.Info().Str("artist", item.ArtistName).Str("album", item.Title).Msg("does not pass filter, skipping")
+			return nil
+		}
 	}
 	r.log.Info().Str("artist", item.ArtistName).Str("album", item.Title).Msg("musicbrainz: searching release group")
 
@@ -1101,6 +1113,8 @@ func (r *Runner) processMusicItem(ctx context.Context, item ScrapedItem, progYea
 		AOTYUserScore:   item.AOTYUserScore,
 		AOTYUserCount:   item.AOTYUserCount,
 		AOTYMustHear:    item.AOTYMustHear,
+		AllMusicRating:  item.AllMusicRating,
+		AllMusicURL:     item.AllMusicURL,
 		MBRating:        mbRating,
 	}
 	albumID, err := r.db.UpsertAlbum(ctx, album)
@@ -1108,18 +1122,39 @@ func (r *Runner) processMusicItem(ctx context.Context, item ScrapedItem, progYea
 		return fmt.Errorf("saving album: %w", err)
 	}
 
-	// Step 4: Create release event
+	// Step 4: Create/update release event
 	existing, err := r.db.GetLatestAlbumReleaseEvent(ctx, albumID)
 	if err != nil {
 		return fmt.Errorf("checking existing events: %w", err)
 	}
-	if existing != nil && existing.Status == model.StatusPending {
-		return nil // already pending
+
+	if existing != nil {
+		switch existing.Status {
+		case model.StatusPending:
+			return nil // already in review queue
+		case model.StatusApproved, model.StatusDownloaded:
+			return nil // already processed, don't re-queue
+		case model.StatusRejected:
+			// AllMusic gives rejected items a second chance
+			if item.Source == "allmusic" {
+				notes := existing.Notes
+				if notes != "" {
+					notes += "; "
+				}
+				notes += "AllMusic Editor's Choice"
+				if err := r.db.RequeueAlbumReleaseEvent(ctx, existing.ID, "allmusic", notes); err != nil {
+					return fmt.Errorf("re-queuing album release event: %w", err)
+				}
+				r.log.Info().Str("artist", item.ArtistName).Str("album", item.Title).Msg("re-queued from rejected by AllMusic Editor's Choice")
+				return nil
+			}
+			return nil // AOTY item rejected, don't re-queue
+		}
 	}
 
 	evt := &model.AlbumReleaseEvent{
 		AlbumID:     albumID,
-		Source:      "albumoftheyear",
+		Source:      item.Source,
 		ReleaseDate: item.ReleaseDate,
 		Status:      model.StatusPending,
 		ISOYear:     progYear,
@@ -1169,6 +1204,8 @@ var (
 	// Keep parentheticals that look like alternate titles e.g. "(good boy)".
 	metaParen   = regexp.MustCompile(`(?i)\s*\((season\s+\d+|complete\s+.*|series\s+\d+|vol\..*)\)`)
 	trailingFmt = regexp.MustCompile(`(?i)\s+(season\s+\d+|dvd|blu-ray|4k)\s*$`)
+	// Strip AllMusic formatting suffixes like [2 CD], [Deluxe Edition], [Super Deluxe]
+	allMusicBracketRe = regexp.MustCompile(`\s*\[[^\]]*\]`)
 )
 
 func cleanTitleForSearch(title string) string {

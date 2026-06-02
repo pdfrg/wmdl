@@ -55,6 +55,8 @@ type ScrapedItem struct {
 	AOTYMustHear    bool
 	ImageURL        string
 	AOTYURL         string
+	AllMusicRating  float64
+	AllMusicURL     string
 
 	// Anime-specific fields (empty for non-anime)
 	AnimeType     string
