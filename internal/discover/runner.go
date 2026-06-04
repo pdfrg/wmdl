@@ -98,7 +98,7 @@ func NewRunner(logger zerolog.Logger, cfg *config.Config, database *db.DB, headl
 		notify = nil
 	}
 
-	hcClient := NewHardcoverClient(cfg.Library.Audiobookshelf.APIKey)
+	hcClient := NewHardcoverClient(cfg.Hardcover.APIKey)
 	// If HC key is not set, still create the client (search will just return nil)
 
 	r := &Runner{

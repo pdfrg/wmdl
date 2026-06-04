@@ -11,6 +11,7 @@ import (
 
 type Config struct {
 	Log              LogConfig        `mapstructure:"log"`
+	Hardcover        HardcoverConfig  `mapstructure:"hardcover"`
 	Notifier         NotifierConfig   `mapstructure:"notifier"`
 	Browser          BrowserConfig    `mapstructure:"browser"`
 	Prowlarr         ProwlarrConfig   `mapstructure:"prowlarr"`
@@ -62,6 +63,10 @@ type IndexerPerCategory struct {
 type TMDBConfig struct {
 	APIKey      string `mapstructure:"api_key"`
 	AccessToken string `mapstructure:"access_token"`
+}
+
+type HardcoverConfig struct {
+	APIKey string `mapstructure:"api_key"`
 }
 
 type DownloaderConfig struct {
@@ -377,4 +382,5 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("media_types.books.filter.min_ratings", 100)
 
 	v.SetDefault("library.audiobookshelf.timeout", 60)
+	v.SetDefault("hardcover.api_key", "")
 }
