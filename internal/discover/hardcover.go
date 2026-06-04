@@ -72,6 +72,9 @@ func NewHardcoverClient(apiKey string) *HardcoverClient {
 
 const hardcoverAPI = "https://api.hardcover.app/v1/graphql"
 
+// Hardcover API rate limit: 60 requests/minute.
+var hcLimiter = time.NewTicker(time.Second)
+
 func (c *HardcoverClient) query(ctx context.Context, query string, vars map[string]any) ([]byte, error) {
 	body := map[string]any{"query": query, "variables": vars}
 	b, err := json.Marshal(body)
@@ -79,30 +82,52 @@ func (c *HardcoverClient) query(ctx context.Context, query string, vars map[stri
 		return nil, fmt.Errorf("marshal: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, hardcoverAPI, bytes.NewReader(b))
-	if err != nil {
-		return nil, fmt.Errorf("request: %w", err)
-	}
-	req.Header.Set("Authorization", "Bearer "+c.apiKey)
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("User-Agent", "wmdl/1.0")
+	var lastErr error
+	for attempt := 0; attempt < 3; attempt++ {
+		if attempt > 0 {
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(time.Duration(1<<attempt) * time.Second):
+			}
+		}
 
-	resp, err := c.http.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("http: %w", err)
-	}
-	defer resp.Body.Close()
+		// Wait for rate limiter
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-hcLimiter.C:
+		}
 
-	respBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("read body: %w", err)
-	}
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, hardcoverAPI, bytes.NewReader(b))
+		if err != nil {
+			return nil, fmt.Errorf("request: %w", err)
+		}
+		req.Header.Set("Authorization", "Bearer "+c.apiKey)
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("User-Agent", "wmdl/1.0")
 
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("hardcover api: status=%d body=%s", resp.StatusCode, string(respBody))
-	}
+		resp, err := c.http.Do(req)
+		if err != nil {
+			return nil, fmt.Errorf("http: %w", err)
+		}
 
-	return respBody, nil
+		respBody, err := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if err != nil {
+			return nil, fmt.Errorf("read body: %w", err)
+		}
+
+		if resp.StatusCode == http.StatusTooManyRequests {
+			lastErr = fmt.Errorf("hardcover api: status=%d body=%s", resp.StatusCode, string(respBody))
+			continue
+		}
+		if resp.StatusCode != http.StatusOK {
+			return nil, fmt.Errorf("hardcover api: status=%d body=%s", resp.StatusCode, string(respBody))
+		}
+		return respBody, nil
+	}
+	return nil, lastErr
 }
 
 func (c *HardcoverClient) GetBook(ctx context.Context, hcID int) (*HCBookResult, error) {
@@ -128,45 +153,50 @@ func (c *HardcoverClient) GetBook(ctx context.Context, hcID int) (*HCBookResult,
 }
 
 func (c *HardcoverClient) SearchBook(ctx context.Context, title, author string) (*HCBookResult, error) {
-	q := `query SearchBook($title: String!, $author: String!) {
-		books(
-			where: {
-				title: {_ilike: $title},
-				contributions: {author: {name: {_ilike: $author}}}
-			},
-			limit: 5,
-			order_by: {users_count: desc}
-		) {
-			id title subtitle description
-			pages audio_seconds release_date release_year
-			rating ratings_count users_count
-			image { url }
-			language { language }
-			default_physical_edition { isbn_13 isbn_10 asin publisher { name } }
-			default_ebook_edition { isbn_13 isbn_10 asin publisher { name } }
-			default_audio_edition { isbn_13 isbn_10 asin publisher { name } }
-			literary_type_id
-			cached_tags
-			book_mappings { source external_id }
-			contributions {
-				author { id name bio born_date death_date image { url } identifiers }
+	// Use the Typesense search endpoint (text operators like _ilike are disabled on this server).
+	searchQuery := `query SearchBook($query: String!) {
+		search(query: $query, query_type: "Book", per_page: 5) {
+			results {
+				... on Book { id title }
 			}
 		}
 	}`
-	result, err := c.searchBooks(ctx, q, map[string]any{"title": "%" + title + "%", "author": "%" + author + "%"})
+
+	q := strings.TrimSpace(title + " " + author)
+
+	respBody, err := c.query(ctx, searchQuery, map[string]any{"query": q})
 	if err != nil {
 		return nil, err
 	}
-	if result == nil {
+
+	var searchResp struct {
+		Data struct {
+			Search struct {
+				Results []json.RawMessage `json:"results"`
+			} `json:"search"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(respBody, &searchResp); err != nil {
+		return nil, fmt.Errorf("unmarshal search: %w", err)
+	}
+
+	if len(searchResp.Data.Search.Results) == 0 {
 		return nil, nil
 	}
-	if title != "" && !strings.Contains(strings.ToLower(result.Title), strings.ToLower(title)) {
+
+	var first struct {
+		ID    int    `json:"id"`
+		Title string `json:"title"`
+	}
+	if err := json.Unmarshal(searchResp.Data.Search.Results[0], &first); err != nil {
+		return nil, fmt.Errorf("decode search result: %w", err)
+	}
+
+	if title != "" && !strings.Contains(strings.ToLower(first.Title), strings.ToLower(title)) {
 		return nil, nil
 	}
-	if author != "" && result.Author != nil && !strings.Contains(strings.ToLower(result.Author.Name), strings.ToLower(author)) {
-		return nil, nil
-	}
-	return result, nil
+
+	return c.GetBook(ctx, first.ID)
 }
 
 func (c *HardcoverClient) searchBooks(ctx context.Context, query string, vars map[string]any) (*HCBookResult, error) {
