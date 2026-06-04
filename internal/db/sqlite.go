@@ -1147,12 +1147,16 @@ func (d *DB) upsertAuthor(ctx context.Context, q querier, a *model.Author) (int6
 		// Only update if the existing entry has a synthetic OLID, meaning
 		// it was created without real enrichment. Otherwise keep both.
 		if strings.HasPrefix(existing.OLID, "_nm_") {
+			olidVal := a.OLID
+			if olidVal == "" {
+				olidVal = existing.OLID // keep existing synthetic OLID
+			}
 			_, err := q.ExecContext(ctx, `
 				UPDATE authors SET
 					hardcover_id = ?, olid = ?, bio = ?, born_date = ?, death_date = ?,
 					image_url = ?, identifiers = ?, links = ?
 				WHERE id = ?
-			`, a.HardcoverID, a.OLID, a.Bio, a.BornDate, a.DeathDate, a.ImageURL, a.Identifiers, a.Links, existing.ID)
+			`, a.HardcoverID, olidVal, a.Bio, a.BornDate, a.DeathDate, a.ImageURL, a.Identifiers, a.Links, existing.ID)
 			if err != nil {
 				return 0, fmt.Errorf("updating existing author: %w", err)
 			}
