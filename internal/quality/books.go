@@ -132,6 +132,23 @@ func PartitionBookReleases(releases []ParsedBookRelease, author, title string) (
 	return
 }
 
+// PartitionBookReleasesRaw partitions raw Prowlarr results (pre-parse).
+func PartitionBookReleasesRaw(releases []ParsedRelease, author, title string) (exact, fuzzy []ParsedRelease) {
+	authorWords := strings.Fields(strings.ToLower(author))
+	titleWords := strings.Fields(strings.ToLower(title))
+
+	for _, r := range releases {
+		cleanTitle := strings.ToLower(r.RawTitle)
+
+		if wordsMatchBook(cleanTitle, authorWords, titleWords) {
+			exact = append(exact, r)
+		} else {
+			fuzzy = append(fuzzy, r)
+		}
+	}
+	return
+}
+
 func wordsMatchBook(clean string, authorWords, titleWords []string) bool {
 	allMatch := true
 	for _, w := range authorWords {

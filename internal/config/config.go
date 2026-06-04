@@ -296,6 +296,18 @@ func (c *Config) Validate() error {
 	}
 
 	// Validate log level
+	// Validate book config
+	if c.MediaTypes.Books.Enabled {
+		switch c.MediaTypes.Books.DefaultFormat {
+		case "ebook", "audiobook", "both", "":
+		default:
+			errs = append(errs, "media_types.books.default_format must be one of: ebook, audiobook, both")
+		}
+		if c.MediaTypes.Books.InitialTimeshiftWeeks < 0 {
+			errs = append(errs, "media_types.books.initial_timeshift_weeks must be >= 0")
+		}
+	}
+
 	switch c.Log.Level {
 	case "debug", "info", "warn", "error", "":
 	default:

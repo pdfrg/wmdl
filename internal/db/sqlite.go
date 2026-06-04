@@ -1105,6 +1105,29 @@ type EventWithBook struct {
 }
 
 func (d *DB) UpsertAuthor(ctx context.Context, a *model.Author) (int64, error) {
+	// When no Open Library ID is known, check for an existing author by name
+	// before creating a synthetic OLID. This prevents duplicates when the
+	// same author is later discovered with a real OLID from Hardcover.
+	if a.OLID == "" {
+		existing, err := d.GetAuthorByName(ctx, a.Name)
+		if err != nil {
+			return 0, fmt.Errorf("checking existing author by name: %w", err)
+		}
+		if existing != nil {
+			// Update existing record with new enrichment data
+			_, err := d.db.ExecContext(ctx, `
+				UPDATE authors SET
+					hardcover_id = ?, bio = ?, born_date = ?, death_date = ?,
+					image_url = ?, identifiers = ?, links = ?
+				WHERE id = ?
+			`, a.HardcoverID, a.Bio, a.BornDate, a.DeathDate, a.ImageURL, a.Identifiers, a.Links, existing.ID)
+			if err != nil {
+				return 0, fmt.Errorf("updating existing author: %w", err)
+			}
+			return existing.ID, nil
+		}
+	}
+
 	olid := a.OLID
 	if olid == "" {
 		h := sha256.Sum256([]byte(a.Name))
@@ -1144,6 +1167,21 @@ func (d *DB) GetAuthorByOLID(ctx context.Context, olid string) (*model.Author, e
 			return nil, nil
 		}
 		return nil, fmt.Errorf("querying author by olid: %w", err)
+	}
+	return &a, nil
+}
+
+func (d *DB) GetAuthorByName(ctx context.Context, name string) (*model.Author, error) {
+	var a model.Author
+	err := d.db.QueryRowContext(ctx, `
+		SELECT id, hardcover_id, olid, name, bio, born_date, death_date, image_url, identifiers, links, created_at
+		FROM authors WHERE name = ?
+	`, name).Scan(&a.ID, &a.HardcoverID, &a.OLID, &a.Name, &a.Bio, &a.BornDate, &a.DeathDate, &a.ImageURL, &a.Identifiers, &a.Links, &a.CreatedAt)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("querying author by name: %w", err)
 	}
 	return &a, nil
 }
@@ -1429,6 +1467,31 @@ type EventWithAlbum struct {
 }
 
 func (d *DB) UpsertArtist(ctx context.Context, a *model.Artist) (int64, error) {
+	// When no MusicBrainz ID is known, check for an existing artist by name
+	// before creating a synthetic MBID. This prevents duplicates when the
+	// same artist is later discovered with a real MBID.
+	if a.MBID == "" {
+		existing, err := d.GetArtistByName(ctx, a.Name)
+		if err != nil {
+			return 0, fmt.Errorf("checking existing artist by name: %w", err)
+		}
+		if existing != nil {
+			_, err := d.db.ExecContext(ctx, `
+				UPDATE artists SET
+					lidarr_id = ?, country = ?, artist_type = ?,
+					begin_date = ?, end_date = ?, begin_area = ?, area = ?,
+					disambiguation = ?, tags = ?, genres = ?, mb_rating = ?
+				WHERE id = ?
+			`, a.LidarrID, a.Country, a.ArtistType,
+				a.BeginDate, a.EndDate, a.BeginArea, a.Area,
+				a.Disambiguation, a.Tags, a.Genres, a.MBRating, existing.ID)
+			if err != nil {
+				return 0, fmt.Errorf("updating existing artist: %w", err)
+			}
+			return existing.ID, nil
+		}
+	}
+
 	mbid := a.MBID
 	if mbid == "" {
 		mbid = noMatchMBID(a.Name)

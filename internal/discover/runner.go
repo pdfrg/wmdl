@@ -62,6 +62,7 @@ type Runner struct {
 	radarr          *library.RadarrClient
 	sonarr          *library.SonarrClient
 	lidarr          *library.LidarrClient
+	abs             *library.AudiobookshelfClient
 	notify          notifier.Notifier
 	debugURL        string
 	allocCtx        context.Context
@@ -128,11 +129,20 @@ func NewRunner(logger zerolog.Logger, cfg *config.Config, database *db.DB, headl
 		r.lidarr = library.NewLidarrClient(cfg.Library.Lidarr.URL, cfg.Library.Lidarr.APIKey, cfg.Library.Lidarr.Timeout)
 	}
 
+	if cfg.Library.Audiobookshelf.URL != "" && cfg.Library.Audiobookshelf.APIKey != "" {
+		r.abs = library.NewAudiobookshelfClient(
+			cfg.Library.Audiobookshelf.URL,
+			cfg.Library.Audiobookshelf.APIKey,
+			cfg.Library.Audiobookshelf.LibraryID,
+			cfg.Library.Audiobookshelf.Timeout,
+		)
+	}
+
 	return r
 }
 
 func (r *Runner) cacheLibraryData(ctx context.Context) error {
-	if r.radarrRes == nil && r.sonarrRes == nil && r.lidarrRes == nil {
+	if r.radarrRes == nil && r.sonarrRes == nil && r.lidarrRes == nil && r.abs == nil {
 		return nil
 	}
 	r.log.Info().Msg("persisting library cache from background fetches")
@@ -218,6 +228,40 @@ func (r *Runner) cacheLibraryData(ctx context.Context) error {
 					r.log.Warn().Err(err).Msg("failed to save Lidarr album cache")
 				} else {
 					r.log.Info().Int("count", len(result.albums)).Msg("cached Lidarr albums")
+				}
+			}
+		}
+	}
+
+	// Cache Audiobookshelf library items by ISBN/ASIN for library status display
+	if r.abs != nil {
+		r.log.Info().Msg("fetching Audiobookshelf library...")
+		items, err := r.abs.GetLibraryItems(ctx)
+		if err != nil {
+			r.log.Warn().Err(err).Msg("failed to fetch Audiobookshelf library")
+		} else {
+			var entries []db.LibraryCache
+			for _, item := range items {
+				meta := item.Media.Metadata
+				details, _ := json.Marshal(item)
+				if meta.ISBN != "" {
+					entries = append(entries, db.LibraryCache{
+						Source: "abs", ExtID: meta.ISBN,
+						ArrID: 0, ArrTitle: meta.Title, Details: string(details),
+					})
+				}
+				if meta.ASIN != "" && meta.ASIN != meta.ISBN {
+					entries = append(entries, db.LibraryCache{
+						Source: "abs", ExtID: meta.ASIN,
+						ArrID: 0, ArrTitle: meta.Title, Details: string(details),
+					})
+				}
+			}
+			if len(entries) > 0 {
+				if err := r.db.BulkUpsertLibraryCache(ctx, entries); err != nil {
+					r.log.Warn().Err(err).Msg("failed to save Audiobookshelf library cache")
+				} else {
+					r.log.Info().Int("count", len(items)).Msg("cached Audiobookshelf library")
 				}
 			}
 		}
@@ -366,7 +410,7 @@ func (r *Runner) Run(ctx context.Context) error {
 	if wantBooks && r.cfg.MediaTypes.Books.Enabled {
 		// Goodreads requires chromedp/Brave
 		if r.allocCtx != nil {
-			gr := NewGoodreadsProvider(r.debugURL)
+			gr := NewGoodreadsProvider(r.debugURL, r.allocCtx)
 			if r.hasTargetWeek {
 				bookYear, bookWeek := r.bookTargetWeek()
 				gr.SetWeekRange(bookYear, bookWeek)
@@ -659,19 +703,36 @@ func (r *Runner) Run(ctx context.Context) error {
 		r.log.Warn().Err(err).Msg("library cache failed (will be fetched during process)")
 	}
 
-	// Send notification
+	// Send notification (up to 5 items, from all media types)
 	if r.notify != nil && processed > 0 {
 		msg := fmt.Sprintf("**%d new release%s** ready for review:\n", processed, map[bool]string{true: "s", false: ""}[processed != 1])
-		count := 0
+		type namedItem struct {
+			title string
+			year  int
+		}
+		var notifyItems []namedItem
 		for _, item := range uniqueVideos {
+			notifyItems = append(notifyItems, namedItem{item.Title, item.Year})
+		}
+		for _, item := range animeItems {
+			notifyItems = append(notifyItems, namedItem{item.Title, item.Year})
+		}
+		for _, item := range uniqueMusic {
+			notifyItems = append(notifyItems, namedItem{item.ArtistName + " — " + item.Title, item.Year})
+		}
+		for _, item := range bookItems {
+			notifyItems = append(notifyItems, namedItem{item.ArtistName + " — " + item.Title, item.Year})
+		}
+		count := 0
+		for _, item := range notifyItems {
 			if count >= 5 {
 				msg += fmt.Sprintf("\n+ %d more", processed-count)
 				break
 			}
-			if item.Year > 0 {
-				msg += fmt.Sprintf("\n- %s (%d)", item.Title, item.Year)
+			if item.year > 0 {
+				msg += fmt.Sprintf("\n- %s (%d)", item.title, item.year)
 			} else {
-				msg += fmt.Sprintf("\n- %s", item.Title)
+				msg += fmt.Sprintf("\n- %s", item.title)
 			}
 			count++
 		}
@@ -1287,6 +1348,13 @@ func (r *Runner) processBookItem(ctx context.Context, item ScrapedItem, progYear
 	if hcResult != nil && hcResult.RatingsCount > 0 {
 		ratingsCount = hcResult.RatingsCount
 	}
+
+	// Warn when filters are configured but enrichment data is unavailable
+	enrichmentFailed := hcResult == nil && r.hc != nil
+	if enrichmentFailed && (minRating > 0 || minRatings > 0) {
+		r.log.Warn().Str("book", item.Title).Msg("enrichment unavailable, filter thresholds may not be applied")
+	}
+
 	if minRatings > 0 && ratingsCount > 0 && ratingsCount < minRatings {
 		r.log.Info().Str("book", item.Title).Int("ratings", ratingsCount).Int("min", minRatings).Msg("below min_ratings filter, skipping")
 		return nil

@@ -1934,72 +1934,153 @@ type BookSearchResult struct {
 	Error error
 }
 
+func bookSearchQueries(evt db.EventWithBook) []string {
+	var queries []string
+	seen := make(map[string]bool)
+
+	add := func(q string) {
+		q = strings.TrimSpace(q)
+		if q != "" && !seen[q] {
+			seen[q] = true
+			queries = append(queries, q)
+		}
+	}
+
+	// Prefer exact IDs: these match structured indexers with ISBN/ASIN support
+	add(evt.Book.ISBN13)
+	add(evt.Book.ASIN)
+	add(evt.Book.ISBN10)
+
+	// Title + author tiers (for trackers without ID-based search)
+	if evt.Author.Name != "" {
+		if evt.Book.ReleaseYear > 0 {
+			add(fmt.Sprintf("%s %s %d", evt.Author.Name, evt.Book.Title, evt.Book.ReleaseYear))
+		}
+		add(fmt.Sprintf("%s %s", evt.Author.Name, evt.Book.Title))
+	}
+	if evt.Book.ReleaseYear > 0 {
+		add(fmt.Sprintf("%s %d", evt.Book.Title, evt.Book.ReleaseYear))
+	}
+	add(evt.Book.Title)
+
+	return queries
+}
+
 func (e *Executor) SearchBook(ctx context.Context, evt db.EventWithBook) *BookSearchResult {
 	e.log.Info().Str("book", evt.Book.Title).Str("author", evt.Author.Name).Msg("searching book")
 
-	// Build search query: prefer ISBN, then ASIN, then title+author
-	query := evt.Book.Title
-	if evt.Book.ISBN13 != "" {
-		query = evt.Book.ISBN13
-	} else if evt.Book.ASIN != "" {
-		query = evt.Book.ASIN
-	} else if evt.Book.ISBN10 != "" {
-		query = evt.Book.ISBN10
-	} else if evt.Author.Name != "" {
-		query = fmt.Sprintf("%s %s", evt.Author.Name, evt.Book.Title)
-	}
-
-	var allProwl []quality.ParsedRelease
-
-	// Search appropriate category(s) based on format preference
-	var formatPrefs []bool
-	switch evt.Event.FormatPref {
-	case model.BookFormatBoth:
-		formatPrefs = []bool{false, true} // ebook then audiobook
-	case model.BookFormatAudiobook:
-		formatPrefs = []bool{true}
-	default: // ebook or unknown
-		formatPrefs = []bool{false}
-	}
-
-	for _, isAudio := range formatPrefs {
-		prowlReleases, err := e.prowl.SearchBooks(ctx, query, isAudio)
-		if err != nil {
-			e.log.Warn().Err(err).Str("book", evt.Book.Title).Msg("prowlarr book search failed")
-			continue
-		}
-
-		if len(prowlReleases) == 0 && query != evt.Book.Title {
-			prowlReleases, err = e.prowl.SearchBooks(ctx, evt.Book.Title, isAudio)
-			if err != nil {
-				e.log.Warn().Err(err).Str("book", evt.Book.Title).Msg("prowlarr fallback search failed")
-			}
-		}
-
-		allProwl = append(allProwl, prowlReleases...)
-	}
-
-	var bookReleases []quality.ParsedBookRelease
-	for _, pr := range allProwl {
-		br := quality.ParseBookRelease(pr.RawTitle)
-		br.ParsedRelease = pr
-		bookReleases = append(bookReleases, br)
-	}
-
-	if len(bookReleases) == 0 {
+	queries := bookSearchQueries(evt)
+	if len(queries) == 0 {
 		e.Unfound = append(e.Unfound, fmt.Sprintf("%s by %s", evt.Book.Title, evt.Author.Name))
 		return &BookSearchResult{Event: evt}
 	}
 
-	// Partition and score
-	prefs := buildBookQualityPrefs(e.cfg)
-	exact, _ := quality.PartitionBookReleases(bookReleases, evt.Author.Name, evt.Book.Title)
+	// Determine categories to search based on format preference
+	var bookCatSets [][]int
+	switch evt.Event.FormatPref {
+	case model.BookFormatAudiobook:
+		bookCatSets = [][]int{{search.CatBookAudio}}
+	case model.BookFormatBoth:
+		bookCatSets = [][]int{{search.CatBookEbook}, {search.CatBookAudio}}
+	default: // ebook or unknown
+		bookCatSets = [][]int{{search.CatBookEbook}}
+	}
+
+	preferredID := e.prowl.PreferredIndexerID(search.CatBook)
+	numTiers := len(queries)
+	var exactPool, fuzzyPool []quality.ParsedRelease
+
+	// Phase 1: preferred indexer
+	if preferredID > 0 {
+		name := e.prowl.GetIndexerName(ctx, preferredID)
+		e.log.Info().Str("name", name).Int("id", preferredID).Msg("preferred indexer (books)")
+
+		for _, cats := range bookCatSets {
+			for i, q := range queries {
+				e.log.Info().Msgf("[%d/%d] preferred (cats=%v): %s", i+1, numTiers, cats, q)
+				results, err := e.prowl.Search(ctx, search.SearchParams{
+					Query:      q,
+					Type:       "search",
+					IndexerID:  preferredID,
+					Limit:      50,
+					Categories: cats,
+				})
+				if err != nil {
+					e.log.Warn().Err(err).Str("book", evt.Book.Title).Msg("preferred indexer search failed")
+					continue
+				}
+				exact, fuzzy := quality.PartitionBookReleasesRaw(results, evt.Author.Name, evt.Book.Title)
+				exactPool = mergeReleases(exactPool, exact)
+				fuzzyPool = mergeReleases(fuzzyPool, fuzzy)
+				e.log.Debug().Msgf("→ %d exact, %d fuzzy (exact total: %d)", len(exact), len(fuzzy), len(exactPool))
+				if len(exactPool) >= e.cfg.ShowTopN {
+					return e.buildBookSearchResult(evt, exactPool, fuzzyPool, e.cfg)
+				}
+			}
+		}
+
+		e.log.Info().Msgf("→ %d exact from preferred, searching all indexers", len(exactPool))
+	}
+
+	// Phase 2: all indexers
+	for _, cats := range bookCatSets {
+		for i, q := range queries {
+			e.log.Info().Msgf("[%d/%d] searching all (cats=%v): %s", i+1, numTiers, cats, q)
+			results, err := e.prowl.Search(ctx, search.SearchParams{
+				Query:      q,
+				Type:       "search",
+				Limit:      50,
+				Categories: cats,
+			})
+			if err != nil {
+				e.log.Warn().Err(err).Str("book", evt.Book.Title).Msg("prowlarr book search failed")
+				continue
+			}
+			exact, fuzzy := quality.PartitionBookReleasesRaw(results, evt.Author.Name, evt.Book.Title)
+			exactPool = mergeReleases(exactPool, exact)
+			fuzzyPool = mergeReleases(fuzzyPool, fuzzy)
+			e.log.Debug().Msgf("→ %d exact, %d fuzzy (exact total: %d)", len(exact), len(fuzzy), len(exactPool))
+			if len(exactPool) >= e.cfg.ShowTopN {
+				return e.buildBookSearchResult(evt, exactPool, fuzzyPool, e.cfg)
+			}
+		}
+	}
+
+	return e.buildBookSearchResult(evt, exactPool, fuzzyPool, e.cfg)
+}
+
+func (e *Executor) buildBookSearchResult(evt db.EventWithBook, exactPool, fuzzyPool []quality.ParsedRelease, cfg *config.Config) *BookSearchResult {
+	if len(exactPool) == 0 && len(fuzzyPool) == 0 {
+		e.Unfound = append(e.Unfound, fmt.Sprintf("%s by %s", evt.Book.Title, evt.Author.Name))
+		return &BookSearchResult{Event: evt}
+	}
+
+	// Convert to ParsedBookRelease and parse format info
+	parseBookResults := func(releases []quality.ParsedRelease) []quality.ParsedBookRelease {
+		var result []quality.ParsedBookRelease
+		for _, pr := range releases {
+			br := quality.ParseBookRelease(pr.RawTitle)
+			br.ParsedRelease = pr
+			result = append(result, br)
+		}
+		return result
+	}
+
+	exactBooks := parseBookResults(exactPool)
+	fuzzyBooks := parseBookResults(fuzzyPool)
+
+	prefs := buildBookQualityPrefs(cfg)
+	showTopN := cfg.ShowTopN
 
 	var top []quality.ParsedBookRelease
-	if len(exact) > 0 {
-		top = quality.SortBookTop(exact, prefs, e.cfg.ShowTopN)
-	} else {
-		top = quality.SortBookTop(bookReleases, prefs, e.cfg.ShowTopN)
+	if len(exactBooks) > 0 {
+		top = quality.SortBookTop(exactBooks, prefs, showTopN)
+		if n := showTopN - len(top); n > 0 && len(fuzzyBooks) > 0 {
+			fuzzyTop := quality.SortBookTop(fuzzyBooks, prefs, n)
+			top = append(top, fuzzyTop...)
+		}
+	} else if len(fuzzyBooks) > 0 {
+		top = quality.SortBookTop(fuzzyBooks, prefs, showTopN)
 	}
 
 	return &BookSearchResult{Event: evt, Top: top}

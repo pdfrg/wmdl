@@ -409,12 +409,19 @@ func (t *TUI) loadCurrentPosterCmd() tea.Cmd {
 	if it == nil {
 		return t.clearPosterCmd()
 	}
-	if it.albumEvent != nil {
+	switch {
+	case it.bookEvent != nil:
+		if it.bookEvent.Book.ImageURL == "" {
+			return t.clearPosterCmd()
+		}
+	case it.albumEvent != nil:
 		if it.albumEvent.Album.PosterPath == "" {
 			return t.clearPosterCmd()
 		}
-	} else if it.event.Title.PosterPath == "" {
-		return t.clearPosterCmd()
+	default:
+		if it.event.Title.PosterPath == "" {
+			return t.clearPosterCmd()
+		}
 	}
 	return t.loadPosterCmd()
 }
@@ -428,23 +435,31 @@ func (t *TUI) loadPosterCmd() tea.Cmd {
 		return nil
 	}
 
-	if it.albumEvent != nil {
-		url := it.albumEvent.Album.PosterPath
-		if url == "" {
-			return t.clearPosterCmd()
-		}
-		return func() tea.Msg {
-			img, err := getAlbumPosterImage(url)
-			if err != nil {
-				return posterReadyMsg{err: err}
+	var imageURL string
+	switch {
+	case it.bookEvent != nil:
+		imageURL = it.bookEvent.Book.ImageURL
+	case it.albumEvent != nil:
+		imageURL = it.albumEvent.Album.PosterPath
+	default:
+		tl := it.event.Title
+		if tl.PosterPath != "" {
+			return func() tea.Msg {
+				img, err := getPosterImage(tl)
+				if err != nil {
+					return posterReadyMsg{err: err}
+				}
+				return posterReadyMsg{img: img}
 			}
-			return posterReadyMsg{img: img}
 		}
+		return t.clearPosterCmd()
 	}
 
-	tl := it.event.Title
+	if imageURL == "" {
+		return t.clearPosterCmd()
+	}
 	return func() tea.Msg {
-		img, err := getPosterImage(tl)
+		img, err := getAlbumPosterImage(imageURL)
 		if err != nil {
 			return posterReadyMsg{err: err}
 		}
@@ -1422,10 +1437,13 @@ func (t *TUI) posterHeight() int {
 	if fontW <= 0 || fontH <= 0 {
 		return 16
 	}
-	// Estimate poster rows assuming 2:3 aspect ratio for movies, 1:1 for albums
+	// Estimate poster rows: 2:3 aspect ratio for movies and book covers,
+	// 1:1 for albums (square cover art).
 	aspect := 1.5
-	if it := t.currentItem(); it != nil && it.albumEvent != nil {
-		aspect = 1.0
+	if it := t.currentItem(); it != nil {
+		if it.albumEvent != nil {
+			aspect = 1.0
+		}
 	}
 	h := int(float64(posterCols*fontW) * aspect / float64(fontH))
 	if h < 10 {

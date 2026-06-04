@@ -123,6 +123,50 @@ func (c *AudiobookshelfClient) GetLibraryFolders(ctx context.Context) ([]ABSFold
 	return result.Library.Folders, nil
 }
 
+type ABSLibraryItem struct {
+	ID    string `json:"id"`
+	Media struct {
+		Metadata struct {
+			Title      string `json:"title"`
+			AuthorName string `json:"authorName"`
+			ISBN       string `json:"isbn"`
+			ASIN       string `json:"asin"`
+		} `json:"metadata"`
+	} `json:"media"`
+}
+
+// GetLibraryItems returns all items in the configured library.
+func (c *AudiobookshelfClient) GetLibraryItems(ctx context.Context) ([]ABSLibraryItem, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
+		c.baseURL+"/api/libraries/"+c.libraryID+"/items", nil)
+	if err != nil {
+		return nil, fmt.Errorf("request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+c.apiKey)
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("http: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("read: %w", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("audiobookshelf items: status=%d body=%s", resp.StatusCode, string(body))
+	}
+
+	var result struct {
+		Results []ABSLibraryItem `json:"results"`
+	}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, fmt.Errorf("unmarshal: %w", err)
+	}
+	return result.Results, nil
+}
+
 type UploadResult struct {
 	LibraryItemID string `json:"libraryItemId"`
 }
