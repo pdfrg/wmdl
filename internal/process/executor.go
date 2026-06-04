@@ -2182,11 +2182,16 @@ func (e *Executor) addBookToClient(ctx context.Context, evt db.EventWithBook, ch
 			quality = r.Codec
 		}
 
+		actualFormat := model.BookFormatEbook
+		if r.IsAudiobook {
+			actualFormat = model.BookFormatAudiobook
+		}
+
 		// Record the download
 		dl := &model.BookDownload{
 			BookID:           evt.Book.ID,
 			BookReleaseEvent: evt.Event.ID,
-			Format:           evt.Event.FormatPref,
+			Format:           actualFormat,
 			Quality:          quality,
 			SourceType:       r.Source,
 			Codec:            r.Codec,
@@ -2201,9 +2206,9 @@ func (e *Executor) addBookToClient(ctx context.Context, evt db.EventWithBook, ch
 	}
 }
 
-func (e *Executor) uploadToAudiobookshelf(ctx context.Context, evt db.EventWithBook) {
+func (e *Executor) uploadToAudiobookshelf(ctx context.Context) {
 	if e.abs == nil {
-		e.log.Info().Str("book", evt.Book.Title).Msg("Audiobookshelf not configured, skipping upload")
+		e.log.Info().Msg("Audiobookshelf not configured, skipping upload")
 		return
 	}
 
@@ -2231,6 +2236,7 @@ func (e *Executor) ProcessBooks(ctx context.Context, events []db.EventWithBook) 
 	fmt.Fprintln(os.Stderr, "\n── Book Processing ──")
 
 	results := e.SearchAllBooks(ctx, events)
+	downloaded := false
 	for _, sr := range results {
 		if len(sr.Top) == 0 {
 			fmt.Fprintf(os.Stderr, "  %s by %s: no results\n", sr.Event.Book.Title, sr.Event.Author.Name)
@@ -2250,9 +2256,12 @@ func (e *Executor) ProcessBooks(ctx context.Context, events []db.EventWithBook) 
 			continue
 		}
 		e.addBookToClient(ctx, sr.Event, chosen)
-		e.uploadToAudiobookshelf(ctx, sr.Event)
 		e.markBookDownloaded(ctx, sr.Event)
+		downloaded = true
 		fmt.Fprintf(os.Stderr, "  ✓ %s by %s\n", sr.Event.Book.Title, sr.Event.Author.Name)
+	}
+	if downloaded {
+		e.uploadToAudiobookshelf(ctx)
 	}
 }
 

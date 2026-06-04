@@ -1104,28 +1104,25 @@ type EventWithBook struct {
 	Author *model.Author
 }
 
-func (d *DB) UpsertAuthor(ctx context.Context, a *model.Author) (int64, error) {
-	// When no Open Library ID is known, check for an existing author by name
-	// before creating a synthetic OLID. This prevents duplicates when the
-	// same author is later discovered with a real OLID from Hardcover.
-	if a.OLID == "" {
-		existing, err := d.GetAuthorByName(ctx, a.Name)
+func (d *DB) upsertAuthor(ctx context.Context, q querier, a *model.Author) (int64, error) {
+	// Always check for existing author by name first to prevent duplicates
+	// when a synthetic OLID (name-hash) was used on a prior scrape and a
+	// real OLID is now available from Hardcover enrichment.
+	existing, err := d.getAuthorByName(ctx, q, a.Name)
+	if err != nil {
+		return 0, fmt.Errorf("checking existing author by name: %w", err)
+	}
+	if existing != nil {
+		_, err := q.ExecContext(ctx, `
+			UPDATE authors SET
+				hardcover_id = ?, olid = ?, bio = ?, born_date = ?, death_date = ?,
+				image_url = ?, identifiers = ?, links = ?
+			WHERE id = ?
+		`, a.HardcoverID, a.OLID, a.Bio, a.BornDate, a.DeathDate, a.ImageURL, a.Identifiers, a.Links, existing.ID)
 		if err != nil {
-			return 0, fmt.Errorf("checking existing author by name: %w", err)
+			return 0, fmt.Errorf("updating existing author: %w", err)
 		}
-		if existing != nil {
-			// Update existing record with new enrichment data
-			_, err := d.db.ExecContext(ctx, `
-				UPDATE authors SET
-					hardcover_id = ?, bio = ?, born_date = ?, death_date = ?,
-					image_url = ?, identifiers = ?, links = ?
-				WHERE id = ?
-			`, a.HardcoverID, a.Bio, a.BornDate, a.DeathDate, a.ImageURL, a.Identifiers, a.Links, existing.ID)
-			if err != nil {
-				return 0, fmt.Errorf("updating existing author: %w", err)
-			}
-			return existing.ID, nil
-		}
+		return existing.ID, nil
 	}
 
 	olid := a.OLID
@@ -1133,7 +1130,7 @@ func (d *DB) UpsertAuthor(ctx context.Context, a *model.Author) (int64, error) {
 		h := sha256.Sum256([]byte(a.Name))
 		olid = fmt.Sprintf("_nm_%x", h[:8])
 	}
-	res, err := d.db.ExecContext(ctx, `
+	res, err := q.ExecContext(ctx, `
 		INSERT INTO authors (hardcover_id, olid, name, bio, born_date, death_date, image_url, identifiers, links, created_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
 		ON CONFLICT(olid) DO UPDATE SET
@@ -1156,9 +1153,17 @@ func (d *DB) UpsertAuthor(ctx context.Context, a *model.Author) (int64, error) {
 	return id, nil
 }
 
-func (d *DB) GetAuthorByOLID(ctx context.Context, olid string) (*model.Author, error) {
+func (d *DB) UpsertAuthor(ctx context.Context, a *model.Author) (int64, error) {
+	return d.upsertAuthor(ctx, d.db, a)
+}
+
+func (d *DB) UpsertAuthorTx(ctx context.Context, tx *sql.Tx, a *model.Author) (int64, error) {
+	return d.upsertAuthor(ctx, tx, a)
+}
+
+func (d *DB) getAuthorByOLID(ctx context.Context, q querier, olid string) (*model.Author, error) {
 	var a model.Author
-	err := d.db.QueryRowContext(ctx, `
+	err := q.QueryRowContext(ctx, `
 		SELECT id, hardcover_id, olid, name, bio, born_date, death_date, image_url, identifiers, links, created_at
 		FROM authors WHERE olid = ?
 	`, olid).Scan(&a.ID, &a.HardcoverID, &a.OLID, &a.Name, &a.Bio, &a.BornDate, &a.DeathDate, &a.ImageURL, &a.Identifiers, &a.Links, &a.CreatedAt)
@@ -1171,9 +1176,13 @@ func (d *DB) GetAuthorByOLID(ctx context.Context, olid string) (*model.Author, e
 	return &a, nil
 }
 
-func (d *DB) GetAuthorByName(ctx context.Context, name string) (*model.Author, error) {
+func (d *DB) GetAuthorByOLID(ctx context.Context, olid string) (*model.Author, error) {
+	return d.getAuthorByOLID(ctx, d.db, olid)
+}
+
+func (d *DB) getAuthorByName(ctx context.Context, q querier, name string) (*model.Author, error) {
 	var a model.Author
-	err := d.db.QueryRowContext(ctx, `
+	err := q.QueryRowContext(ctx, `
 		SELECT id, hardcover_id, olid, name, bio, born_date, death_date, image_url, identifiers, links, created_at
 		FROM authors WHERE name = ?
 	`, name).Scan(&a.ID, &a.HardcoverID, &a.OLID, &a.Name, &a.Bio, &a.BornDate, &a.DeathDate, &a.ImageURL, &a.Identifiers, &a.Links, &a.CreatedAt)
@@ -1186,8 +1195,43 @@ func (d *DB) GetAuthorByName(ctx context.Context, name string) (*model.Author, e
 	return &a, nil
 }
 
-func (d *DB) UpsertBook(ctx context.Context, b *model.Book) (int64, error) {
-	res, err := d.db.ExecContext(ctx, `
+func (d *DB) GetAuthorByName(ctx context.Context, name string) (*model.Author, error) {
+	return d.getAuthorByName(ctx, d.db, name)
+}
+
+func (d *DB) upsertBook(ctx context.Context, q querier, b *model.Book) (int64, error) {
+	// When ISBN-13 is known, prefer it for dedup over the
+	// (author_id, title, release_year) conflict key to handle
+	// slight title differences across sources.
+	if b.ISBN13 != "" {
+		existing, err := d.getBookByISBN(ctx, q, b.ISBN13)
+		if err != nil {
+			return 0, fmt.Errorf("checking existing book by isbn: %w", err)
+		}
+		if existing != nil {
+			_, err := q.ExecContext(ctx, `
+				UPDATE books SET
+					author_id = ?, title = ?, subtitle = ?, hardcover_id = ?,
+					olid = ?, isbn10 = ?, asin = ?,
+					pages = ?, audio_seconds = ?, description = ?,
+					release_date = ?, release_year = ?,
+					rating = ?, ratings_count = ?, image_url = ?,
+					language = ?, publisher = ?, tags = ?, literary_type = ?
+				WHERE id = ?
+			`, b.AuthorID, b.Title, b.Subtitle, b.HardcoverID,
+				b.OLID, b.ISBN10, b.ASIN,
+				b.Pages, b.AudioSeconds, b.Description,
+				b.ReleaseDate, b.ReleaseYear,
+				b.Rating, b.RatingsCount, b.ImageURL,
+				b.Language, b.Publisher, b.Tags, b.LiteraryType, existing.ID)
+			if err != nil {
+				return 0, fmt.Errorf("updating existing book by isbn: %w", err)
+			}
+			return existing.ID, nil
+		}
+	}
+
+	res, err := q.ExecContext(ctx, `
 		INSERT INTO books (author_id, title, subtitle, hardcover_id, olid, isbn10, isbn13, asin,
 		                   pages, audio_seconds, description, release_date, release_year,
 		                   rating, ratings_count, image_url, language, publisher, tags, literary_type, created_at)
@@ -1223,12 +1267,20 @@ func (d *DB) UpsertBook(ctx context.Context, b *model.Book) (int64, error) {
 	return id, nil
 }
 
-func (d *DB) GetBookByISBN(ctx context.Context, isbn13 string) (*model.Book, error) {
+func (d *DB) UpsertBook(ctx context.Context, b *model.Book) (int64, error) {
+	return d.upsertBook(ctx, d.db, b)
+}
+
+func (d *DB) UpsertBookTx(ctx context.Context, tx *sql.Tx, b *model.Book) (int64, error) {
+	return d.upsertBook(ctx, tx, b)
+}
+
+func (d *DB) getBookByISBN(ctx context.Context, q querier, isbn13 string) (*model.Book, error) {
 	if isbn13 == "" {
 		return nil, nil
 	}
 	var b model.Book
-	err := d.db.QueryRowContext(ctx, `
+	err := q.QueryRowContext(ctx, `
 		SELECT id, author_id, title, subtitle, hardcover_id, olid, isbn10, isbn13, asin,
 		       pages, audio_seconds, description, release_date, release_year,
 		       rating, ratings_count, image_url, language, publisher, tags, literary_type, created_at
@@ -1245,6 +1297,10 @@ func (d *DB) GetBookByISBN(ctx context.Context, isbn13 string) (*model.Book, err
 		return nil, fmt.Errorf("querying book by isbn: %w", err)
 	}
 	return &b, nil
+}
+
+func (d *DB) GetBookByISBN(ctx context.Context, isbn13 string) (*model.Book, error) {
+	return d.getBookByISBN(ctx, d.db, isbn13)
 }
 
 func (d *DB) CreateBookReleaseEvent(ctx context.Context, e *model.BookReleaseEvent) (int64, error) {

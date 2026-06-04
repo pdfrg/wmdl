@@ -48,10 +48,10 @@ func newDiscoverCmd() *cobra.Command {
 			var typeFilter model.MediaType
 			if typeFilterStr != "" {
 				switch model.MediaType(typeFilterStr) {
-				case model.MediaTypeAnime, model.MediaTypeMusic, model.MediaTypeMovie, model.MediaTypeTV:
+				case model.MediaTypeAnime, model.MediaTypeMusic, model.MediaTypeMovie, model.MediaTypeTV, model.MediaTypeBook:
 					typeFilter = model.MediaType(typeFilterStr)
 				default:
-					return fmt.Errorf("invalid type %q: must be anime, movie, tv, or music", typeFilterStr)
+					return fmt.Errorf("invalid type %q: must be anime, movie, tv, music, or book", typeFilterStr)
 				}
 			}
 
@@ -72,7 +72,7 @@ func newDiscoverCmd() *cobra.Command {
 	}
 	addWeekFlag(cmd)
 	cmd.Flags().Bool("headless", false, "Run without opening a browser window (for cron/systemd)")
-	cmd.Flags().String("type", "", "Media type to discover (anime, movie, tv, music)")
+	cmd.Flags().String("type", "", "Media type to discover (anime, movie, tv, music, book)")
 	return cmd
 }
 

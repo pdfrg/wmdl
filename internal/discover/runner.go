@@ -1417,12 +1417,7 @@ func (r *Runner) processBookItem(ctx context.Context, item ScrapedItem, progYear
 		DeathDate:   authorDied,
 		ImageURL:    authorImage,
 	}
-	authorID, err := r.db.UpsertAuthor(ctx, author)
-	if err != nil {
-		return fmt.Errorf("saving author: %w", err)
-	}
 
-	// Step 5: Build book from enrichment data
 	isbn10, isbn13, asin := "", "", ""
 	pages := 0
 	audioSeconds := 0
@@ -1491,66 +1486,74 @@ func (r *Runner) processBookItem(ctx context.Context, item ScrapedItem, progYear
 		tags = strings.Join(olResult.Subjects, ", ")
 	}
 
-	book := &model.Book{
-		AuthorID:     authorID,
-		Title:        title,
-		Subtitle:     subtitle,
-		HardcoverID:  hcBookID,
-		OLID:         olWorkID,
-		ISBN10:       isbn10,
-		ISBN13:       isbn13,
-		ASIN:         asin,
-		Pages:        pages,
-		AudioSeconds: audioSeconds,
-		Description:  description,
-		ReleaseDate:  releaseDate,
-		ReleaseYear:  releaseYear,
-		Rating:       hcRating,
-		RatingsCount: hcRatingsCount,
-		ImageURL:     imageURL,
-		Language:     language,
-		Publisher:    publisher,
-		Tags:         tags,
-		LiteraryType: literaryType,
-	}
-	bookID, err := r.db.UpsertBook(ctx, book)
-	if err != nil {
-		return fmt.Errorf("saving book: %w", err)
-	}
-
-	// Step 6: Create/reuse book release event
-	existing, err := r.db.GetLatestBookReleaseEvent(ctx, bookID)
-	if err != nil {
-		return fmt.Errorf("checking existing events: %w", err)
-	}
-
-	if existing != nil {
-		switch existing.Status {
-		case model.StatusPending:
-			return nil // already in review queue
-		case model.StatusApproved, model.StatusDownloaded:
-			return nil // already processed
-		case model.StatusRejected:
-			return nil // don't re-queue
+	err := r.db.Transaction(ctx, func(tx *sql.Tx) error {
+		authorID, err := r.db.UpsertAuthorTx(ctx, tx, author)
+		if err != nil {
+			return fmt.Errorf("saving author: %w", err)
 		}
-	}
 
-	formatPref := model.BookFormat(r.cfg.MediaTypes.Books.DefaultFormat)
+		book := &model.Book{
+			AuthorID:     authorID,
+			Title:        title,
+			Subtitle:     subtitle,
+			HardcoverID:  hcBookID,
+			OLID:         olWorkID,
+			ISBN10:       isbn10,
+			ISBN13:       isbn13,
+			ASIN:         asin,
+			Pages:        pages,
+			AudioSeconds: audioSeconds,
+			Description:  description,
+			ReleaseDate:  releaseDate,
+			ReleaseYear:  releaseYear,
+			Rating:       hcRating,
+			RatingsCount: hcRatingsCount,
+			ImageURL:     imageURL,
+			Language:     language,
+			Publisher:    publisher,
+			Tags:         tags,
+			LiteraryType: literaryType,
+		}
+		bookID, err := r.db.UpsertBookTx(ctx, tx, book)
+		if err != nil {
+			return fmt.Errorf("saving book: %w", err)
+		}
 
-	evt := &model.BookReleaseEvent{
-		BookID:      bookID,
-		Source:      item.Source,
-		ReleaseDate: releaseDate,
-		FormatPref:  formatPref,
-		Status:      model.StatusPending,
-		ISOYear:     progYear,
-		ISOWeek:     progWeek,
-	}
-	if _, err := r.db.CreateBookReleaseEvent(ctx, evt); err != nil {
-		return fmt.Errorf("saving book release event: %w", err)
-	}
+		existing, err := r.db.GetLatestBookReleaseEvent(ctx, bookID)
+		if err != nil {
+			return fmt.Errorf("checking existing events: %w", err)
+		}
 
-	return nil
+		if existing != nil {
+			switch existing.Status {
+			case model.StatusPending:
+				return nil // already in review queue
+			case model.StatusApproved, model.StatusDownloaded:
+				return nil // already processed
+			case model.StatusRejected:
+				return nil // don't re-queue
+			}
+		}
+
+		formatPref := model.BookFormat(r.cfg.MediaTypes.Books.DefaultFormat)
+
+		evt := &model.BookReleaseEvent{
+			BookID:      bookID,
+			Source:      item.Source,
+			ReleaseDate: releaseDate,
+			FormatPref:  formatPref,
+			Status:      model.StatusPending,
+			ISOYear:     progYear,
+			ISOWeek:     progWeek,
+		}
+		if _, err := r.db.CreateBookReleaseEvent(ctx, evt); err != nil {
+			return fmt.Errorf("saving book release event: %w", err)
+		}
+
+		return nil
+	})
+
+	return err
 }
 
 // isUpgrade checks if a new release type is an upgrade over a previous download's source type.
