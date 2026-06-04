@@ -1488,7 +1488,14 @@ func (r *Runner) processBookItem(ctx context.Context, item ScrapedItem, progYear
 
 	// Filter: only keep books whose release date falls in the target ISO week
 	if releaseDate != "" {
-		t, parseErr := time.Parse("2006-01-02", releaseDate)
+		var t time.Time
+		var parseErr error
+		for _, f := range []string{"2006-01-02", "January 2, 2006", "Jan 2, 2006"} {
+			t, parseErr = time.Parse(f, releaseDate)
+			if parseErr == nil {
+				break
+			}
+		}
 		if parseErr == nil {
 			bookYear, bookWeek := t.ISOWeek()
 			if bookYear != progYear || bookWeek != progWeek {

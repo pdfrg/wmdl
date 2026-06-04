@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -137,13 +138,11 @@ func (c *HardcoverClient) GetBook(ctx context.Context, hcID int) (*HCBookResult,
 			pages audio_seconds release_date release_year
 			rating ratings_count users_count
 			image { url }
-			language { language }
 			default_physical_edition { isbn_13 isbn_10 asin publisher { name } }
 			default_ebook_edition { isbn_13 isbn_10 asin publisher { name } }
 			default_audio_edition { isbn_13 isbn_10 asin publisher { name } }
 			literary_type_id
 			cached_tags
-			book_mappings { source external_id }
 			contributions {
 				author { id name bio born_date death_date image { url } identifiers }
 			}
@@ -156,9 +155,7 @@ func (c *HardcoverClient) SearchBook(ctx context.Context, title, author string) 
 	// Use the Typesense search endpoint (text operators like _ilike are disabled on this server).
 	searchQuery := `query SearchBook($query: String!) {
 		search(query: $query, query_type: "Book", per_page: 5) {
-			results {
-				... on Book { id title }
-			}
+			results
 		}
 	}`
 
@@ -172,7 +169,7 @@ func (c *HardcoverClient) SearchBook(ctx context.Context, title, author string) 
 	var searchResp struct {
 		Data struct {
 			Search struct {
-				Results []json.RawMessage `json:"results"`
+				Results json.RawMessage `json:"results"`
 			} `json:"search"`
 		} `json:"data"`
 	}
@@ -184,19 +181,37 @@ func (c *HardcoverClient) SearchBook(ctx context.Context, title, author string) 
 		return nil, nil
 	}
 
-	var first struct {
-		ID    int    `json:"id"`
-		Title string `json:"title"`
+	var sr struct {
+		Hits []struct {
+			Document struct {
+				ID    string `json:"id"`
+				Title string `json:"title"`
+			} `json:"document"`
+		} `json:"hits"`
 	}
-	if err := json.Unmarshal(searchResp.Data.Search.Results[0], &first); err != nil {
-		return nil, fmt.Errorf("decode search result: %w", err)
+	if err := json.Unmarshal(searchResp.Data.Search.Results, &sr); err != nil {
+		return nil, fmt.Errorf("unmarshal results: %w", err)
 	}
 
-	if title != "" && !strings.Contains(strings.ToLower(first.Title), strings.ToLower(title)) {
+	if len(sr.Hits) == 0 {
 		return nil, nil
 	}
 
-	return c.GetBook(ctx, first.ID)
+	firstDoc := sr.Hits[0].Document
+	if firstDoc.ID == "" {
+		return nil, nil
+	}
+
+	if title != "" && !strings.Contains(strings.ToLower(firstDoc.Title), strings.ToLower(title)) {
+		return nil, nil
+	}
+
+	id, err := strconv.Atoi(firstDoc.ID)
+	if err != nil {
+		return nil, fmt.Errorf("parse hc id: %w", err)
+	}
+
+	return c.GetBook(ctx, id)
 }
 
 func (c *HardcoverClient) searchBooks(ctx context.Context, query string, vars map[string]any) (*HCBookResult, error) {
