@@ -56,7 +56,7 @@ func (c *OLClient) SearchBook(ctx context.Context, title, author string) (*OLBoo
 	q.Set("title", title)
 	q.Set("author", author)
 	q.Set("limit", "5")
-	q.Set("fields", "key,title,subtitle,first_publish_year,publish_year,author_name,author_key,subject,isbn,ia,cover_i")
+	q.Set("fields", "key,title,subtitle,first_publish_year,publish_year,publish_date,author_name,author_key,subject,isbn,ia,cover_i")
 
 	u := "https://openlibrary.org/search.json?" + q.Encode()
 
@@ -136,6 +136,7 @@ func (c *OLClient) decodeSearchResult(raw json.RawMessage) (*OLBookResult, error
 		Subtitle         string   `json:"subtitle"`
 		FirstPublishYear int      `json:"first_publish_year"`
 		PublishYear      []int    `json:"publish_year"`
+		PublishDate      []string `json:"publish_date"`
 		AuthorName       []string `json:"author_name"`
 		AuthorKey        []string `json:"author_key"`
 		ISBN             []string `json:"isbn"`
@@ -160,10 +161,16 @@ func (c *OLClient) decodeSearchResult(raw json.RawMessage) (*OLBookResult, error
 		}
 	}
 
+	releaseDate := ""
+	if len(d.PublishDate) > 0 {
+		releaseDate = d.PublishDate[len(d.PublishDate)-1]
+	}
+
 	res := &OLBookResult{
 		OLID:        d.Key,
 		Title:       d.Title,
 		Subtitle:    d.Subtitle,
+		ReleaseDate: releaseDate,
 		ReleaseYear: releaseYear,
 		Subjects:    d.Subject,
 	}

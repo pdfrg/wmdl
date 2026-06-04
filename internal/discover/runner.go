@@ -1324,28 +1324,21 @@ func (r *Runner) processMusicItem(ctx context.Context, item ScrapedItem, progYea
 func (r *Runner) processBookItem(ctx context.Context, item ScrapedItem, progYear, progWeek int) error {
 	r.log.Info().Str("title", item.Title).Str("author", item.ArtistName).Msg("processing book item")
 
-	// Give each enrichment provider its own timeout so one failure
-	// doesn't consume the budget for the fallback.
-	hcCtx, hcCancel := context.WithTimeout(ctx, 45*time.Second)
-	defer hcCancel()
-	olCtx, olCancel := context.WithTimeout(ctx, 45*time.Second)
-	defer olCancel()
-
 	// Step 1: Hardcover enrichment (best-effort, only if API key configured)
 	var hcResult *HCBookResult
 	if r.hc != nil {
 		var hcErr error
-		hcResult, hcErr = r.hc.SearchBook(hcCtx, item.Title, item.ArtistName)
+		hcResult, hcErr = r.hc.SearchBook(ctx, item.Title, item.ArtistName)
 		if hcErr != nil {
 			r.log.Warn().Err(hcErr).Str("book", item.Title).Msg("hardcover search failed, falling back to Open Library")
 		}
 	}
 
-	// Step 2: Open Library fallback
+	// Step 2: Open Library supplement (when HC is missing or lacks release date)
 	var olResult *OLBookResult
-	if hcResult == nil || hcResult.ISBN13 == "" {
+	if hcResult == nil || hcResult.ISBN13 == "" || (hcResult.ReleaseDate == "" && hcResult.ReleaseYear == 0) {
 		var olErr error
-		olResult, olErr = r.ol.SearchBook(olCtx, item.Title, item.ArtistName)
+		olResult, olErr = r.ol.SearchBook(ctx, item.Title, item.ArtistName)
 		if olErr != nil {
 			r.log.Warn().Err(olErr).Str("book", item.Title).Msg("openlibrary search failed, storing without enrichment")
 		}
@@ -1462,9 +1455,13 @@ func (r *Runner) processBookItem(ctx context.Context, item ScrapedItem, progYear
 		}
 		if hcResult.ReleaseDate != "" {
 			releaseDate = hcResult.ReleaseDate
+		} else if olResult != nil && olResult.ReleaseDate != "" {
+			releaseDate = olResult.ReleaseDate
 		}
 		if hcResult.ReleaseYear > 0 {
 			releaseYear = hcResult.ReleaseYear
+		} else if olResult != nil && olResult.ReleaseYear > 0 {
+			releaseYear = olResult.ReleaseYear
 		}
 	} else if olResult != nil {
 		olWorkID = olResult.OLID
@@ -1480,10 +1477,27 @@ func (r *Runner) processBookItem(ctx context.Context, item ScrapedItem, progYear
 		if olResult.ImageURL != "" {
 			imageURL = olResult.ImageURL
 		}
+		if olResult.ReleaseDate != "" {
+			releaseDate = olResult.ReleaseDate
+		}
 		if olResult.ReleaseYear > 0 {
 			releaseYear = olResult.ReleaseYear
 		}
 		tags = strings.Join(olResult.Subjects, ", ")
+	}
+
+	// Filter: only keep books whose release date falls in the target ISO week
+	if releaseDate != "" {
+		t, parseErr := time.Parse("2006-01-02", releaseDate)
+		if parseErr == nil {
+			bookYear, bookWeek := t.ISOWeek()
+			if bookYear != progYear || bookWeek != progWeek {
+				r.log.Info().Str("book", item.Title).Str("date", releaseDate).
+					Int("book_week", bookWeek).Int("target_week", progWeek).
+					Msg("not in target week, skipping")
+				return nil
+			}
+		}
 	}
 
 	err := r.db.Transaction(ctx, func(tx *sql.Tx) error {
