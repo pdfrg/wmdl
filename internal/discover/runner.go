@@ -984,6 +984,16 @@ func (r *Runner) animeTargetWeek() (int, int) {
 	return r.targetYear, r.targetWeek
 }
 
+func clampISOWeek(week int) int {
+	if week < 1 {
+		return 1
+	}
+	if week > 53 {
+		return 53
+	}
+	return week
+}
+
 // musicTargetWeek returns the release week to scrape for music.
 // Applies the configured InitialTimeshiftWeeks offset from the runner's
 // target week. Consistent with video/movie/TV physical media discovery.
@@ -993,7 +1003,7 @@ func (r *Runner) musicTargetWeek() (int, int) {
 		timeshiftWeeks = 1
 	}
 
-	return r.targetYear, r.targetWeek - timeshiftWeeks
+	return r.targetYear, clampISOWeek(r.targetWeek - timeshiftWeeks)
 }
 
 // bookTargetWeek returns the release week to scrape for books.
@@ -1003,7 +1013,7 @@ func (r *Runner) bookTargetWeek() (int, int) {
 	if timeshiftWeeks <= 0 {
 		timeshiftWeeks = 1
 	}
-	return r.targetYear, r.targetWeek - timeshiftWeeks
+	return r.targetYear, clampISOWeek(r.targetWeek - timeshiftWeeks)
 }
 
 // processMusicItem stores a scraped music item and enriches with MusicBrainz

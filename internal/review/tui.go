@@ -532,35 +532,55 @@ func (t *TUI) saveDecisions() error {
 				status = model.StatusRejected
 			}
 
-			if it.albumEvent != nil {
-				if err := t.database.UpdateAlbumReleaseEventStatusTx(ctx, tx, it.albumEvent.Event.ID, status); err != nil {
-					return err
-				}
-			} else {
-				if err := t.database.UpdateReleaseEventStatusTx(ctx, tx, it.event.Event.ID, status); err != nil {
-					return err
-				}
+		switch {
+		case it.bookEvent != nil:
+			if err := t.database.UpdateBookReleaseEventStatusTx(ctx, tx, it.bookEvent.Event.ID, status); err != nil {
+				return err
 			}
+		case it.albumEvent != nil:
+			if err := t.database.UpdateAlbumReleaseEventStatusTx(ctx, tx, it.albumEvent.Event.ID, status); err != nil {
+				return err
+			}
+		default:
+			if err := t.database.UpdateReleaseEventStatusTx(ctx, tx, it.event.Event.ID, status); err != nil {
+				return err
+			}
+		}
 
-			if it.decision == decisionApproved {
-				if it.albumEvent != nil {
-					t.approved = append(t.approved, db.EventWithTitle{
-						Event: &model.ReleaseEvent{
-							ID:      it.albumEvent.Event.ID,
-							Status:  model.StatusApproved,
-							ISOYear: it.albumEvent.Event.ISOYear,
-							ISOWeek: it.albumEvent.Event.ISOWeek,
-						},
-						Title: &model.Title{
-							Title:     it.albumEvent.Artist.Name + " - " + it.albumEvent.Album.Title,
-							Year:      it.albumEvent.Album.Year,
-							MediaType: model.MediaTypeMusic,
-						},
-					})
-				} else {
-					t.approved = append(t.approved, it.event)
-				}
+		if it.decision == decisionApproved {
+			switch {
+			case it.bookEvent != nil:
+				t.approved = append(t.approved, db.EventWithTitle{
+					Event: &model.ReleaseEvent{
+						ID:      it.bookEvent.Event.ID,
+						Status:  model.StatusApproved,
+						ISOYear: it.bookEvent.Event.ISOYear,
+						ISOWeek: it.bookEvent.Event.ISOWeek,
+					},
+					Title: &model.Title{
+						Title:     it.bookEvent.Author.Name + " — " + it.bookEvent.Book.Title,
+						Year:      it.bookEvent.Book.ReleaseYear,
+						MediaType: model.MediaTypeBook,
+					},
+				})
+			case it.albumEvent != nil:
+				t.approved = append(t.approved, db.EventWithTitle{
+					Event: &model.ReleaseEvent{
+						ID:      it.albumEvent.Event.ID,
+						Status:  model.StatusApproved,
+						ISOYear: it.albumEvent.Event.ISOYear,
+						ISOWeek: it.albumEvent.Event.ISOWeek,
+					},
+					Title: &model.Title{
+						Title:     it.albumEvent.Artist.Name + " - " + it.albumEvent.Album.Title,
+						Year:      it.albumEvent.Album.Year,
+						MediaType: model.MediaTypeMusic,
+					},
+				})
+			default:
+				t.approved = append(t.approved, it.event)
 			}
+		}
 		}
 		return nil
 	})

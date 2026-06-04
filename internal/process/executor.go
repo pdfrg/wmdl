@@ -1937,8 +1937,7 @@ type BookSearchResult struct {
 func (e *Executor) SearchBook(ctx context.Context, evt db.EventWithBook) *BookSearchResult {
 	e.log.Info().Str("book", evt.Book.Title).Str("author", evt.Author.Name).Msg("searching book")
 
-	isAudiobook := evt.Event.FormatPref == model.BookFormatAudiobook
-	formatPref := string(evt.Event.FormatPref)
+	wantBoth := evt.Event.FormatPref == model.BookFormatBoth
 
 	// Build search query: prefer ISBN, then ASIN, then title+author
 	query := evt.Book.Title
@@ -1952,26 +1951,33 @@ func (e *Executor) SearchBook(ctx context.Context, evt db.EventWithBook) *BookSe
 		query = fmt.Sprintf("%s %s", evt.Author.Name, evt.Book.Title)
 	}
 
-	var prowlReleases []quality.ParsedRelease
-	var err error
+	var allProwl []quality.ParsedRelease
 
-	// Try with format-specific category first
-	prowlReleases, err = e.prowl.SearchBooks(ctx, query, isAudiobook)
-	if err != nil {
-		e.log.Warn().Err(err).Str("book", evt.Book.Title).Msg("prowlarr book search failed")
-		return &BookSearchResult{Event: evt, Error: err}
+	// When format is "both", search ebook and audiobook categories separately
+	formatPrefs := []bool{wantBoth, false} // ebook only if not both
+	if wantBoth {
+		formatPrefs = []bool{false, true} // ebook + audiobook
 	}
 
-	if len(prowlReleases) == 0 && query != evt.Book.Title {
-		// Fall back to title-only search
-		prowlReleases, err = e.prowl.SearchBooks(ctx, evt.Book.Title, isAudiobook)
+	for _, isAudio := range formatPrefs {
+		prowlReleases, err := e.prowl.SearchBooks(ctx, query, isAudio)
 		if err != nil {
-			e.log.Warn().Err(err).Str("book", evt.Book.Title).Msg("prowlarr fallback search failed")
+			e.log.Warn().Err(err).Str("book", evt.Book.Title).Msg("prowlarr book search failed")
+			continue
 		}
+
+		if len(prowlReleases) == 0 && query != evt.Book.Title {
+			prowlReleases, err = e.prowl.SearchBooks(ctx, evt.Book.Title, isAudio)
+			if err != nil {
+				e.log.Warn().Err(err).Str("book", evt.Book.Title).Msg("prowlarr fallback search failed")
+			}
+		}
+
+		allProwl = append(allProwl, prowlReleases...)
 	}
 
 	var bookReleases []quality.ParsedBookRelease
-	for _, pr := range prowlReleases {
+	for _, pr := range allProwl {
 		br := quality.ParseBookRelease(pr.RawTitle)
 		br.ParsedRelease = pr
 		bookReleases = append(bookReleases, br)
@@ -1983,7 +1989,7 @@ func (e *Executor) SearchBook(ctx context.Context, evt db.EventWithBook) *BookSe
 	}
 
 	// Partition and score
-	prefs := buildBookQualityPrefs(e.cfg, formatPref)
+	prefs := buildBookQualityPrefs(e.cfg)
 	exact, _ := quality.PartitionBookReleases(bookReleases, evt.Author.Name, evt.Book.Title)
 
 	var top []quality.ParsedBookRelease
@@ -2065,17 +2071,19 @@ func (e *Executor) addBookToClient(ctx context.Context, evt db.EventWithBook, ch
 			continue
 		}
 
+		var tid string
+		var dlErr error
 		if strings.HasPrefix(url, "magnet:") {
-			tid, err := e.dl.AddMagnet(ctx, url, download.WithCategory(cat))
-			if err != nil {
-				e.log.Warn().Err(err).Str("title", r.RawTitle).Msg("adding book magnet")
+			tid, dlErr = e.dl.AddMagnet(ctx, url, download.WithCategory(cat))
+			if dlErr != nil {
+				e.log.Warn().Err(dlErr).Str("title", r.RawTitle).Msg("adding book magnet")
 				continue
 			}
 			e.log.Info().Str("title", r.RawTitle).Str("tid", tid).Str("category", cat).Msg("book magnet added")
 		} else {
-			tid, err := e.dl.AddTorrent(ctx, url, download.WithCategory(cat))
-			if err != nil {
-				e.log.Warn().Err(err).Str("title", r.RawTitle).Msg("adding book torrent")
+			tid, dlErr = e.dl.AddTorrent(ctx, url, download.WithCategory(cat))
+			if dlErr != nil {
+				e.log.Warn().Err(dlErr).Str("title", r.RawTitle).Msg("adding book torrent")
 				continue
 			}
 			e.log.Info().Str("title", r.RawTitle).Str("tid", tid).Str("category", cat).Msg("book torrent added")
@@ -2091,6 +2099,7 @@ func (e *Executor) addBookToClient(ctx context.Context, evt db.EventWithBook, ch
 			Codec:            r.Codec,
 			InfoHash:         r.InfoHash,
 			Category:         cat,
+			ClientTorrentID:  tid,
 			Status:           model.DownloadAdded,
 		}
 		if _, err := e.db.CreateBookDownload(ctx, dl); err != nil {
@@ -2154,7 +2163,7 @@ func (e *Executor) ProcessBooks(ctx context.Context, events []db.EventWithBook) 
 	}
 }
 
-func buildBookQualityPrefs(cfg *config.Config, formatPref string) quality.BookQualityPrefs {
+func buildBookQualityPrefs(cfg *config.Config) quality.BookQualityPrefs {
 	return quality.BookQualityPrefs{
 		EbookFormatPriority:     cfg.Quality.Books.Ebooks.FormatPriority,
 		AudiobookFormatPriority: cfg.Quality.Books.Audiobooks.FormatPriority,

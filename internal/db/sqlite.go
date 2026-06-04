@@ -1248,6 +1248,11 @@ func (d *DB) UpdateBookReleaseEventStatus(ctx context.Context, id int64, status 
 	return err
 }
 
+func (d *DB) UpdateBookReleaseEventStatusTx(ctx context.Context, tx *sql.Tx, id int64, status model.ReleaseStatus) error {
+	_, err := tx.ExecContext(ctx, `UPDATE book_release_events SET status = ? WHERE id = ?`, string(status), id)
+	return err
+}
+
 func (d *DB) RequeueBookReleaseEvent(ctx context.Context, id int64, source, notes string) error {
 	_, err := d.db.ExecContext(ctx,
 		`UPDATE book_release_events SET status = ?, previous_status = status, notes = ?, source = ? WHERE id = ?`,
@@ -1369,10 +1374,10 @@ func (d *DB) CountBookReleaseEventsByWeek(ctx context.Context, year, week int) (
 
 func (d *DB) CreateBookDownload(ctx context.Context, dl *model.BookDownload) (int64, error) {
 	res, err := d.db.ExecContext(ctx, `
-		INSERT INTO book_downloads (book_id, book_release_event, format, quality, source_type, codec, info_hash, category, status)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO book_downloads (book_id, book_release_event, format, quality, source_type, codec, info_hash, category, status, client_torrent_id)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`, dl.BookID, dl.BookReleaseEvent, string(dl.Format), dl.Quality, dl.SourceType,
-		dl.Codec, dl.InfoHash, dl.Category, string(dl.Status))
+		dl.Codec, dl.InfoHash, dl.Category, string(dl.Status), dl.ClientTorrentID)
 	if err != nil {
 		return 0, fmt.Errorf("creating book download: %w", err)
 	}

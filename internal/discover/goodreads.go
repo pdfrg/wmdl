@@ -158,9 +158,7 @@ func parseGRPage(html string) []grScrapedBook {
 		rating, _ := strconv.ParseFloat(ratingStr, 64)
 
 		ratingsStr := extractMatch(grRatings, block)
-		ratingsStr = strings.ReplaceAll(ratingsStr, ",", "")
-		ratingsStr = strings.ReplaceAll(ratingsStr, ".", "")
-		ratingsCount, _ := strconv.Atoi(ratingsStr)
+		ratingsCount := parseGRRatings(ratingsStr)
 
 		imageURL := extractMatch(grImage, block)
 
@@ -200,6 +198,39 @@ func htmlUnescape(s string) string {
 	s = strings.ReplaceAll(s, "&#39;", "'")
 	s = strings.ReplaceAll(s, "&#x27;", "'")
 	return s
+}
+
+func parseGRRatings(s string) int {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return 0
+	}
+
+	multiplier := 1
+	switch last := s[len(s)-1]; last {
+	case 'k', 'K':
+		multiplier = 1000
+		s = s[:len(s)-1]
+	case 'm', 'M':
+		multiplier = 1000000
+		s = s[:len(s)-1]
+	}
+
+	s = strings.ReplaceAll(s, ",", "")
+
+	if strings.Contains(s, ".") {
+		f, err := strconv.ParseFloat(s, 64)
+		if err != nil {
+			return 0
+		}
+		return int(f * float64(multiplier))
+	}
+
+	n, err := strconv.Atoi(s)
+	if err != nil {
+		return 0
+	}
+	return n * multiplier
 }
 
 var _ = url.QueryEscape // keep import
