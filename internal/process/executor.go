@@ -2173,12 +2173,21 @@ func (e *Executor) addBookToClient(ctx context.Context, evt db.EventWithBook, ch
 			e.log.Info().Str("title", r.RawTitle).Str("tid", tid).Str("category", cat).Msg("book torrent added")
 		}
 
+		// Determine quality from the parsed book format
+		quality := r.EbookFormat
+		if r.IsAudiobook && r.AudiobookFormat != "" {
+			quality = r.AudiobookFormat
+		}
+		if quality == "" {
+			quality = r.Codec
+		}
+
 		// Record the download
 		dl := &model.BookDownload{
 			BookID:           evt.Book.ID,
 			BookReleaseEvent: evt.Event.ID,
 			Format:           evt.Event.FormatPref,
-			Quality:          r.Source,
+			Quality:          quality,
 			SourceType:       r.Source,
 			Codec:            r.Codec,
 			InfoHash:         r.InfoHash,

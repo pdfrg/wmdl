@@ -89,6 +89,9 @@ func printReviewExport(events []db.EventWithTitle, albumEvents []db.EventWithAlb
 	}
 	for _, be := range bookEvents {
 		title := fmt.Sprintf("%s — %s", be.Author.Name, be.Book.Title)
+		if be.Book.ReleaseYear > 0 {
+			title = fmt.Sprintf("%s (%d)", title, be.Book.ReleaseYear)
+		}
 		switch be.Event.Status {
 		case model.StatusApproved:
 			approved = append(approved, title)

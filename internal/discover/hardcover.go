@@ -153,7 +153,7 @@ func (c *HardcoverClient) SearchBook(ctx context.Context, title, author string) 
 			}
 		}
 	}`
-	return c.searchBooks(ctx, q, map[string]any{"title": title, "author": author})
+	return c.searchBooks(ctx, q, map[string]any{"title": "%" + title + "%", "author": "%" + author + "%"})
 }
 
 func (c *HardcoverClient) searchBooks(ctx context.Context, query string, vars map[string]any) (*HCBookResult, error) {

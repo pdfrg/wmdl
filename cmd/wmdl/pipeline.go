@@ -239,6 +239,7 @@ func runProcessForWeek(ctx context.Context, database *db.DB, cfg *config.Config,
 	}
 
 	albumEventsForProcess, _ := database.ListApprovedAlbumEventsWithAlbums(ctx)
+	bookEventsForProcess, _ := database.ListApprovedBookEventsWithBooks(ctx)
 
 	var pending, downloaded []db.EventWithTitle
 	for _, ev := range allEvents {
@@ -253,7 +254,7 @@ func runProcessForWeek(ctx context.Context, database *db.DB, cfg *config.Config,
 	var events []db.EventWithTitle
 
 	switch {
-	case len(pending) == 0 && len(downloaded) == 0 && len(albumEventsForProcess) == 0:
+	case len(pending) == 0 && len(downloaded) == 0 && len(albumEventsForProcess) == 0 && len(bookEventsForProcess) == 0:
 		log.Info().Msgf("No processable releases for week %d-W%02d — all rejected.", year, week)
 		target.Processed = true
 		if err := database.UpsertWeekState(ctx, target); err != nil {
@@ -468,7 +469,6 @@ func runProcessForWeek(ctx context.Context, database *db.DB, cfg *config.Config,
 	}
 
 	// ─── Book processing ─────────────────────────────────────────────────
-	bookEventsForProcess, _ := database.ListApprovedBookEventsWithBooks(ctx)
 	if len(bookEventsForProcess) > 0 {
 		log.Info().Msgf("Processing %d book(s)...", len(bookEventsForProcess))
 		exec.ProcessBooks(ctx, bookEventsForProcess)

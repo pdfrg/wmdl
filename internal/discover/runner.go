@@ -503,13 +503,26 @@ func (r *Runner) Run(ctx context.Context) error {
 		uniqueMusic = append(uniqueMusic, item)
 	}
 
+	// Deduplicate book items by author+title
+	seenBooks := make(map[string]bool)
+	var uniqueBooks []ScrapedItem
+	for _, item := range bookItems {
+		key := fmt.Sprintf("%s|%s", item.ArtistName, item.Title)
+		if seenBooks[key] {
+			continue
+		}
+		seenBooks[key] = true
+		uniqueBooks = append(uniqueBooks, item)
+	}
+	bookItems = uniqueBooks
+
 	progYear, progWeek := r.targetYear, r.targetWeek
 	if !r.hasTargetWeek {
 		progYear, progWeek = programWeekFromItems(uniqueVideos)
 	}
 
 	var processed int
-	totalItems := len(uniqueVideos) + len(animeItems) + len(uniqueMusic) + len(bookItems)
+	totalItems := len(uniqueVideos) + len(animeItems) + len(uniqueMusic) + len(uniqueBooks)
 
 	// Process video items (only when type filter matches)
 	if wantVideo && len(uniqueVideos) > 0 {
@@ -1047,14 +1060,12 @@ func (r *Runner) animeTargetWeek() (int, int) {
 	return r.targetYear, r.targetWeek
 }
 
-func clampISOWeek(week int) int {
-	if week < 1 {
-		return 1
-	}
-	if week > 53 {
-		return 53
-	}
-	return week
+// addISOWeekOffset adds an offset (positive = past) to an ISO week/year pair,
+// properly wrapping across year boundaries.
+func addISOWeekOffset(year, week, offset int) (int, int) {
+	t := tuesdayOfISOWeek(year, week)
+	t = t.AddDate(0, 0, -7*offset)
+	return t.ISOWeek()
 }
 
 // musicTargetWeek returns the release week to scrape for music.
@@ -1066,7 +1077,7 @@ func (r *Runner) musicTargetWeek() (int, int) {
 		timeshiftWeeks = 1
 	}
 
-	return r.targetYear, clampISOWeek(r.targetWeek - timeshiftWeeks)
+	return addISOWeekOffset(r.targetYear, r.targetWeek, timeshiftWeeks)
 }
 
 // bookTargetWeek returns the release week to scrape for books.
@@ -1076,7 +1087,7 @@ func (r *Runner) bookTargetWeek() (int, int) {
 	if timeshiftWeeks <= 0 {
 		timeshiftWeeks = 1
 	}
-	return r.targetYear, clampISOWeek(r.targetWeek - timeshiftWeeks)
+	return addISOWeekOffset(r.targetYear, r.targetWeek, timeshiftWeeks)
 }
 
 // processMusicItem stores a scraped music item and enriches with MusicBrainz
@@ -1427,6 +1438,8 @@ func (r *Runner) processBookItem(ctx context.Context, item ScrapedItem, progYear
 	releaseYear := item.Year
 	hcRating := 0.0
 	hcRatingsCount := 0
+	title := item.Title
+	subtitle := ""
 
 	if hcResult != nil {
 		isbn10 = hcResult.ISBN10
@@ -1440,6 +1453,10 @@ func (r *Runner) processBookItem(ctx context.Context, item ScrapedItem, progYear
 		literaryType = hcResult.LiteraryType
 		hcBookID = hcResult.ID
 		olWorkID = hcResult.OLID
+		if hcResult.Title != "" {
+			title = hcResult.Title
+		}
+		subtitle = hcResult.Subtitle
 		if hcResult.Description != "" {
 			description = hcResult.Description
 		}
@@ -1458,6 +1475,10 @@ func (r *Runner) processBookItem(ctx context.Context, item ScrapedItem, progYear
 		olWorkID = olResult.OLID
 		isbn10 = olResult.ISBN10
 		isbn13 = olResult.ISBN13
+		if olResult.Title != "" {
+			title = olResult.Title
+		}
+		subtitle = olResult.Subtitle
 		if olResult.Description != "" {
 			description = olResult.Description
 		}
@@ -1472,7 +1493,8 @@ func (r *Runner) processBookItem(ctx context.Context, item ScrapedItem, progYear
 
 	book := &model.Book{
 		AuthorID:     authorID,
-		Title:        item.Title,
+		Title:        title,
+		Subtitle:     subtitle,
 		HardcoverID:  hcBookID,
 		OLID:         olWorkID,
 		ISBN10:       isbn10,
