@@ -411,10 +411,11 @@ func (r *Runner) Run(ctx context.Context) error {
 		// Goodreads requires chromedp/Brave
 		if r.allocCtx != nil {
 			gr := NewGoodreadsProvider(r.debugURL, r.allocCtx)
-			if r.hasTargetWeek {
-				bookYear, bookWeek := r.bookTargetWeek()
-				gr.SetWeekRange(bookYear, bookWeek)
+			bookYear, bookWeek := r.targetYear, r.targetWeek
+			if !r.hasTargetWeek {
+				bookYear, bookWeek = time.Now().ISOWeek()
 			}
+			gr.SetWeekRange(r.bookTargetWeekFrom(bookYear, bookWeek))
 			providers = append(providers, gr)
 		}
 	}
@@ -1080,14 +1081,19 @@ func (r *Runner) musicTargetWeek() (int, int) {
 	return addISOWeekOffset(r.targetYear, r.targetWeek, timeshiftWeeks)
 }
 
-// bookTargetWeek returns the release week to scrape for books.
-// Applies the configured InitialTimeshiftWeeks offset (configurable, like music).
+// bookTargetWeek returns the release week to scrape for books,
+// offset from the runner's target week by InitialTimeshiftWeeks.
 func (r *Runner) bookTargetWeek() (int, int) {
+	return r.bookTargetWeekFrom(r.targetYear, r.targetWeek)
+}
+
+// bookTargetWeekFrom applies the book timeshift to an arbitrary year/week.
+func (r *Runner) bookTargetWeekFrom(year, week int) (int, int) {
 	timeshiftWeeks := r.cfg.MediaTypes.Books.InitialTimeshiftWeeks
 	if timeshiftWeeks <= 0 {
 		timeshiftWeeks = 1
 	}
-	return addISOWeekOffset(r.targetYear, r.targetWeek, timeshiftWeeks)
+	return addISOWeekOffset(year, week, timeshiftWeeks)
 }
 
 // processMusicItem stores a scraped music item and enriches with MusicBrainz
@@ -1497,10 +1503,11 @@ func (r *Runner) processBookItem(ctx context.Context, item ScrapedItem, progYear
 			}
 		}
 		if parseErr == nil {
+			scrapeYear, scrapeWeek := r.bookTargetWeekFrom(progYear, progWeek)
 			bookYear, bookWeek := t.ISOWeek()
-			if bookYear != progYear || bookWeek != progWeek {
+			if bookYear != scrapeYear || bookWeek != scrapeWeek {
 				r.log.Info().Str("book", item.Title).Str("date", releaseDate).
-					Int("book_week", bookWeek).Int("target_week", progWeek).
+					Int("book_week", bookWeek).Int("target_week", scrapeWeek).
 					Msg("not in target week, skipping")
 				return nil
 			}
