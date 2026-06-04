@@ -234,12 +234,11 @@ func runProcessForWeek(ctx context.Context, database *db.DB, cfg *config.Config,
 		return fmt.Errorf("loading events: %w", err)
 	}
 	if len(allEvents) == 0 {
-		log.Info().Msgf("No releases found for week %d-W%02d.", year, week)
-		return nil
+		log.Info().Msgf("No video/anime releases found for week %d-W%02d.", year, week)
 	}
 
-	albumEventsForProcess, _ := database.ListApprovedAlbumEventsWithAlbums(ctx)
-	bookEventsForProcess, _ := database.ListApprovedBookEventsWithBooks(ctx)
+	albumEventsForProcess, _ := database.ListAlbumEventsByWeekAndStatus(ctx, year, week, model.StatusApproved)
+	bookEventsForProcess, _ := database.ListBookEventsByWeekAndStatus(ctx, year, week, model.StatusApproved)
 
 	var pending, downloaded []db.EventWithTitle
 	for _, ev := range allEvents {

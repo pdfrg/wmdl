@@ -1450,29 +1450,6 @@ func (d *DB) ListPendingBookEventsWithBooks(ctx context.Context) ([]EventWithBoo
 	return scanEventWithBookRows(rows)
 }
 
-func (d *DB) ListApprovedBookEventsWithBooks(ctx context.Context) ([]EventWithBook, error) {
-	rows, err := d.db.QueryContext(ctx, `
-		SELECT e.id, e.book_id, e.source, e.release_date, e.format_pref,
-		       e.status, e.previous_status, e.notes, e.created_at, e.iso_year, e.iso_week,
-		       e.ebook_processed, e.audiobook_processed,
-		       b.id, b.author_id, b.title, b.subtitle, b.hardcover_id, b.olid,
-		       b.isbn10, b.isbn13, b.asin,
-		       b.pages, b.audio_seconds, b.description, b.release_date, b.release_year,
-		       b.rating, b.ratings_count, b.image_url, b.language, b.publisher, b.tags, b.literary_type, b.created_at,
-		       a.id, a.hardcover_id, a.olid, a.name, a.bio, a.born_date, a.death_date, a.image_url, a.identifiers, a.links, a.created_at
-		FROM book_release_events e
-		JOIN books b ON b.id = e.book_id
-		JOIN authors a ON a.id = b.author_id
-		WHERE e.status = 'approved'
-		ORDER BY e.created_at DESC
-	`)
-	if err != nil {
-		return nil, fmt.Errorf("listing approved book events: %w", err)
-	}
-	defer rows.Close()
-	return scanEventWithBookRows(rows)
-}
-
 func (d *DB) ListBookEventsByWeek(ctx context.Context, year, week int) ([]EventWithBook, error) {
 	rows, err := d.db.QueryContext(ctx, `
 		SELECT e.id, e.book_id, e.source, e.release_date, e.format_pref,
@@ -1842,29 +1819,6 @@ func (d *DB) ListPendingAlbumEventsWithAlbums(ctx context.Context) ([]EventWithA
 	`)
 	if err != nil {
 		return nil, fmt.Errorf("listing pending album events: %w", err)
-	}
-	defer rows.Close()
-	return scanEventWithAlbumRows(rows)
-}
-
-func (d *DB) ListApprovedAlbumEventsWithAlbums(ctx context.Context) ([]EventWithAlbum, error) {
-	rows, err := d.db.QueryContext(ctx, `
-		SELECT e.id, e.album_id, e.source, e.release_date,
-		       e.status, e.previous_status, e.notes, e.created_at, e.iso_year, e.iso_week,
-		       a.id, a.artist_id, a.title, a.year, a.mbid, a.album_type,
-		       a.release_date, a.genres, a.overview, a.poster_path, a.aoty_url, a.allmusic_url,
-		       a.aoty_critic_score, a.aoty_critic_count, a.aoty_user_score, a.aoty_user_count,
-		       a.aoty_must_hear, a.allmusic_rating, a.mb_rating, a.created_at,
-		       ar.id, ar.mbid, ar.name, ar.lidarr_id,
-		       ar.country, ar.artist_type, ar.begin_date, ar.end_date, ar.begin_area, ar.area, ar.disambiguation, ar.tags, ar.genres, ar.mb_rating, ar.created_at
-		FROM album_release_events e
-		JOIN albums a ON a.id = e.album_id
-		JOIN artists ar ON ar.id = a.artist_id
-		WHERE e.status = 'approved'
-		ORDER BY e.created_at DESC
-	`)
-	if err != nil {
-		return nil, fmt.Errorf("listing approved album events: %w", err)
 	}
 	defer rows.Close()
 	return scanEventWithAlbumRows(rows)
