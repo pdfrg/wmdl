@@ -174,15 +174,17 @@ func (c *AudiobookshelfClient) UploadBook(ctx context.Context, files []string, a
 		if err != nil {
 			return nil, fmt.Errorf("open file %s: %w", filePath, err)
 		}
-		defer func() { _ = f.Close() }()
 
 		fw, err := w.CreateFormFile(fmt.Sprintf("%d", i), filepath.Base(filePath))
 		if err != nil {
+			_ = f.Close()
 			return nil, fmt.Errorf("create form file: %w", err)
 		}
 		if _, err := io.Copy(fw, f); err != nil {
+			_ = f.Close()
 			return nil, fmt.Errorf("copy file: %w", err)
 		}
+		_ = f.Close()
 	}
 	_ = w.Close()
 

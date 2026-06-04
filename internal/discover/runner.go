@@ -98,8 +98,10 @@ func NewRunner(logger zerolog.Logger, cfg *config.Config, database *db.DB, headl
 		notify = nil
 	}
 
-	hcClient := NewHardcoverClient(cfg.Hardcover.APIKey)
-	// If HC key is not set, still create the client (search will just return nil)
+	var hcClient *HardcoverClient
+	if cfg.Hardcover.APIKey != "" {
+		hcClient = NewHardcoverClient(cfg.Hardcover.APIKey)
+	}
 
 	r := &Runner{
 		log:      logger,
@@ -1253,10 +1255,14 @@ func (r *Runner) processBookItem(ctx context.Context, item ScrapedItem, progYear
 
 	r.log.Info().Str("title", item.Title).Str("author", item.ArtistName).Msg("processing book item")
 
-	// Step 1: Hardcover enrichment (best-effort)
-	hcResult, err := r.hc.SearchBook(apiCtx, item.Title, item.ArtistName)
-	if err != nil {
-		r.log.Warn().Err(err).Str("book", item.Title).Msg("hardcover search failed, falling back to Open Library")
+	// Step 1: Hardcover enrichment (best-effort, only if API key configured)
+	var hcResult *HCBookResult
+	if r.hc != nil {
+		var hcErr error
+		hcResult, hcErr = r.hc.SearchBook(apiCtx, item.Title, item.ArtistName)
+		if hcErr != nil {
+			r.log.Warn().Err(hcErr).Str("book", item.Title).Msg("hardcover search failed, falling back to Open Library")
+		}
 	}
 
 	// Step 2: Open Library fallback
@@ -1277,18 +1283,16 @@ func (r *Runner) processBookItem(ctx context.Context, item ScrapedItem, progYear
 	if hcResult != nil && hcResult.Rating > 0 {
 		rating = hcResult.Rating
 	}
-	ratingsCount := 0
-	if hcResult != nil {
+	ratingsCount := item.RatingsCount
+	if hcResult != nil && hcResult.RatingsCount > 0 {
 		ratingsCount = hcResult.RatingsCount
 	}
-	if item.Source == "goodreads" && minRatings > 0 {
-		if ratingsCount > 0 && ratingsCount < minRatings {
-			r.log.Info().Str("book", item.Title).Int("ratings", ratingsCount).Msg("below min_ratings filter, skipping")
-			return nil
-		}
+	if minRatings > 0 && ratingsCount > 0 && ratingsCount < minRatings {
+		r.log.Info().Str("book", item.Title).Int("ratings", ratingsCount).Int("min", minRatings).Msg("below min_ratings filter, skipping")
+		return nil
 	}
-	if item.Source == "goodreads" && minRating > 0 && rating > 0 && rating < minRating {
-		r.log.Info().Str("book", item.Title).Float64("rating", rating).Msg("below min_rating filter, skipping")
+	if minRating > 0 && rating > 0 && rating < minRating {
+		r.log.Info().Str("book", item.Title).Float64("rating", rating).Float64("min", minRating).Msg("below min_rating filter, skipping")
 		return nil
 	}
 

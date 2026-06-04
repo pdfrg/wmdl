@@ -45,6 +45,9 @@ type ScrapedItem struct {
 	Genres          string
 	MalID           int
 
+	// Book-specific fields (empty for non-book)
+	RatingsCount int
+
 	// Music-specific fields (empty for movie/TV/anime)
 	ArtistName      string
 	AlbumType       model.AlbumType

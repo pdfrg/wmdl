@@ -199,13 +199,6 @@ func (it *itemState) libraryInfo(dbCache map[string]*db.LibraryCache) libInfo {
 	return libInfo{status: libNone}
 }
 
-func (it *itemState) displayYear() int {
-	if it.albumEvent != nil {
-		return it.albumEvent.Album.Year
-	}
-	return it.event.Title.Year
-}
-
 type posterReadyMsg struct {
 	img image.Image
 	err error
@@ -532,55 +525,55 @@ func (t *TUI) saveDecisions() error {
 				status = model.StatusRejected
 			}
 
-		switch {
-		case it.bookEvent != nil:
-			if err := t.database.UpdateBookReleaseEventStatusTx(ctx, tx, it.bookEvent.Event.ID, status); err != nil {
-				return err
-			}
-		case it.albumEvent != nil:
-			if err := t.database.UpdateAlbumReleaseEventStatusTx(ctx, tx, it.albumEvent.Event.ID, status); err != nil {
-				return err
-			}
-		default:
-			if err := t.database.UpdateReleaseEventStatusTx(ctx, tx, it.event.Event.ID, status); err != nil {
-				return err
-			}
-		}
-
-		if it.decision == decisionApproved {
 			switch {
 			case it.bookEvent != nil:
-				t.approved = append(t.approved, db.EventWithTitle{
-					Event: &model.ReleaseEvent{
-						ID:      it.bookEvent.Event.ID,
-						Status:  model.StatusApproved,
-						ISOYear: it.bookEvent.Event.ISOYear,
-						ISOWeek: it.bookEvent.Event.ISOWeek,
-					},
-					Title: &model.Title{
-						Title:     it.bookEvent.Author.Name + " — " + it.bookEvent.Book.Title,
-						Year:      it.bookEvent.Book.ReleaseYear,
-						MediaType: model.MediaTypeBook,
-					},
-				})
+				if err := t.database.UpdateBookReleaseEventStatusTx(ctx, tx, it.bookEvent.Event.ID, status); err != nil {
+					return err
+				}
 			case it.albumEvent != nil:
-				t.approved = append(t.approved, db.EventWithTitle{
-					Event: &model.ReleaseEvent{
-						ID:      it.albumEvent.Event.ID,
-						Status:  model.StatusApproved,
-						ISOYear: it.albumEvent.Event.ISOYear,
-						ISOWeek: it.albumEvent.Event.ISOWeek,
-					},
-					Title: &model.Title{
-						Title:     it.albumEvent.Artist.Name + " - " + it.albumEvent.Album.Title,
-						Year:      it.albumEvent.Album.Year,
-						MediaType: model.MediaTypeMusic,
-					},
-				})
+				if err := t.database.UpdateAlbumReleaseEventStatusTx(ctx, tx, it.albumEvent.Event.ID, status); err != nil {
+					return err
+				}
 			default:
-				t.approved = append(t.approved, it.event)
+				if err := t.database.UpdateReleaseEventStatusTx(ctx, tx, it.event.Event.ID, status); err != nil {
+					return err
+				}
 			}
-		}
+
+			if it.decision == decisionApproved {
+				switch {
+				case it.bookEvent != nil:
+					t.approved = append(t.approved, db.EventWithTitle{
+						Event: &model.ReleaseEvent{
+							ID:      it.bookEvent.Event.ID,
+							Status:  model.StatusApproved,
+							ISOYear: it.bookEvent.Event.ISOYear,
+							ISOWeek: it.bookEvent.Event.ISOWeek,
+						},
+						Title: &model.Title{
+							Title:     it.bookEvent.Author.Name + " — " + it.bookEvent.Book.Title,
+							Year:      it.bookEvent.Book.ReleaseYear,
+							MediaType: model.MediaTypeBook,
+						},
+					})
+				case it.albumEvent != nil:
+					t.approved = append(t.approved, db.EventWithTitle{
+						Event: &model.ReleaseEvent{
+							ID:      it.albumEvent.Event.ID,
+							Status:  model.StatusApproved,
+							ISOYear: it.albumEvent.Event.ISOYear,
+							ISOWeek: it.albumEvent.Event.ISOWeek,
+						},
+						Title: &model.Title{
+							Title:     it.albumEvent.Artist.Name + " - " + it.albumEvent.Album.Title,
+							Year:      it.albumEvent.Album.Year,
+							MediaType: model.MediaTypeMusic,
+						},
+					})
+				default:
+					t.approved = append(t.approved, it.event)
+				}
+			}
 		}
 		return nil
 	})
@@ -994,6 +987,44 @@ func (t *TUI) buildReviewContent() string {
 		return b.String()
 	}
 
+	if it.bookEvent != nil {
+		if t.shouldPadForPoster() {
+			posterBlock := t.buildPosterBlock()
+			posterLines := strings.Split(posterBlock, "\n")
+			bookContent := t.buildBookContent(it.bookEvent, rw)
+			bookLines := strings.Split(bookContent, "\n")
+
+			maxLines := len(posterLines)
+			if len(bookLines) > maxLines {
+				maxLines = len(bookLines)
+			}
+
+			for i := 0; i < maxLines; i++ {
+				leftPart := ""
+				if i < len(posterLines) {
+					leftPart = posterLines[i] + " "
+				} else {
+					leftPart = strings.Repeat(" ", posterCols+1)
+				}
+
+				rightPart := ""
+				if i < len(bookLines) {
+					rightPart = bookLines[i]
+				}
+
+				b.WriteString(leftPart)
+				b.WriteString(" ")
+				b.WriteString(rightPart)
+				if i < maxLines-1 {
+					b.WriteString("\n")
+				}
+			}
+		} else {
+			b.WriteString(t.buildBookContent(it.bookEvent, rw))
+		}
+		return b.String()
+	}
+
 	tl := it.event.Title
 	ev := it.event.Event
 
@@ -1221,6 +1252,131 @@ func (t *TUI) buildMusicContent(ae *db.EventWithAlbum, rw int) string {
 			b.WriteString("\n")
 			b.WriteString(style.Render("  " + info.label))
 		}
+	}
+
+	return b.String()
+}
+
+func (t *TUI) buildBookContent(be *db.EventWithBook, rw int) string {
+	var b strings.Builder
+
+	book := be.Book
+	author := be.Author
+	ev := be.Event
+
+	decoration := " "
+	decorationStyle := emptyStyle
+	it := t.currentItem()
+	if it != nil {
+		switch it.decision {
+		case decisionApproved:
+			decoration = " "
+			decorationStyle = approvedStyle
+		case decisionRejected:
+			decoration = " "
+			decorationStyle = rejectedStyle
+		}
+	}
+
+	avail := rw - 1
+	if avail < 10 {
+		avail = 10
+	}
+
+	title := author.Name + " — " + book.Title
+	if book.ReleaseYear > 0 {
+		title = fmt.Sprintf("%s (%d)", title, book.ReleaseYear)
+	}
+
+	b.WriteString(" ")
+	b.WriteString(decorationStyle.Render(decoration))
+	b.WriteString(titleStyle.Width(avail - 2).Render(title))
+
+	b.WriteString("\n\n")
+
+	var tagParts []string
+	tagParts = append(tagParts, "[book]")
+	tagParts = append(tagParts, string(ev.FormatPref))
+	if ev.Source != "" {
+		tagParts = append(tagParts, ev.Source)
+	}
+	b.WriteString(tagStyle.Render(strings.Join(tagParts, " · ")))
+
+	if book.Rating > 0 {
+		b.WriteString("\n")
+		var scoreParts []string
+		scoreParts = append(scoreParts, fmt.Sprintf("Rating: %.1f", book.Rating))
+		if book.RatingsCount > 0 {
+			scoreParts = append(scoreParts, fmt.Sprintf("%d ratings", book.RatingsCount))
+		}
+		b.WriteString(ratingsLine.Render(strings.Join(scoreParts, " · ")))
+	}
+
+	var detailParts []string
+	if book.Publisher != "" {
+		detailParts = append(detailParts, book.Publisher)
+	}
+	if book.Language != "" {
+		detailParts = append(detailParts, book.Language)
+	}
+	if book.Pages > 0 {
+		detailParts = append(detailParts, fmt.Sprintf("%d pages", book.Pages))
+	}
+	if book.AudioSeconds > 0 {
+		h := book.AudioSeconds / 3600
+		m := (book.AudioSeconds % 3600) / 60
+		if h > 0 {
+			detailParts = append(detailParts, fmt.Sprintf("%dh %dm", h, m))
+		} else {
+			detailParts = append(detailParts, fmt.Sprintf("%dm", m))
+		}
+	}
+	if len(detailParts) > 0 {
+		b.WriteString("\n")
+		b.WriteString(strings.Join(detailParts, " · "))
+	}
+
+	var idParts []string
+	if book.ISBN13 != "" {
+		idParts = append(idParts, "ISBN: "+book.ISBN13)
+	}
+	if book.ASIN != "" {
+		idParts = append(idParts, "ASIN: "+book.ASIN)
+	}
+	if len(idParts) > 0 {
+		b.WriteString("\n")
+		b.WriteString(rtStyle.Render(strings.Join(idParts, " · ")))
+	}
+
+	var metaParts []string
+	if book.LiteraryType != "" {
+		metaParts = append(metaParts, book.LiteraryType)
+	}
+	if book.Tags != "" {
+		metaParts = append(metaParts, book.Tags)
+	}
+	if len(metaParts) > 0 {
+		b.WriteString("\n")
+		b.WriteString(strings.Join(metaParts, " · "))
+	}
+
+	it = t.currentItem()
+	if it != nil && it.bookEvent != nil {
+		if info := it.libraryInfo(t.libraryCache); info.status != libNone {
+			style := approvedStyle
+			if info.status == libPartial {
+				style = warnStyle
+			}
+			b.WriteString("\n\n")
+			b.WriteString(style.Render("Library:"))
+			b.WriteString("\n")
+			b.WriteString(style.Render("  " + info.label))
+		}
+	}
+
+	if book.Description != "" {
+		b.WriteString("\n\n")
+		b.WriteString(overviewStyle.Width(rw).Render(book.Description))
 	}
 
 	return b.String()
@@ -1510,7 +1666,7 @@ func (t *TUI) buildConfirmContent() string {
 	for _, it := range t.items {
 		if it.decision == decisionApproved {
 			title := it.displayTitle()
-			if it.albumEvent == nil && it.event.Title.Year > 0 {
+			if it.albumEvent == nil && it.bookEvent == nil && it.event.Title.Year > 0 {
 				title = fmt.Sprintf("%s (%d)", title, it.event.Title.Year)
 			}
 			b.WriteString(confirmApprovedStyle.Render("  ✓ " + title))
@@ -1530,7 +1686,7 @@ func (t *TUI) buildConfirmContent() string {
 	for _, it := range t.items {
 		if it.decision == decisionRejected {
 			title := it.displayTitle()
-			if it.albumEvent == nil && it.event.Title.Year > 0 {
+			if it.albumEvent == nil && it.bookEvent == nil && it.event.Title.Year > 0 {
 				title = fmt.Sprintf("%s (%d)", title, it.event.Title.Year)
 			}
 			b.WriteString(confirmRejectedStyle.Render("  ✗ " + title))

@@ -1937,8 +1937,6 @@ type BookSearchResult struct {
 func (e *Executor) SearchBook(ctx context.Context, evt db.EventWithBook) *BookSearchResult {
 	e.log.Info().Str("book", evt.Book.Title).Str("author", evt.Author.Name).Msg("searching book")
 
-	wantBoth := evt.Event.FormatPref == model.BookFormatBoth
-
 	// Build search query: prefer ISBN, then ASIN, then title+author
 	query := evt.Book.Title
 	if evt.Book.ISBN13 != "" {
@@ -1953,10 +1951,15 @@ func (e *Executor) SearchBook(ctx context.Context, evt db.EventWithBook) *BookSe
 
 	var allProwl []quality.ParsedRelease
 
-	// When format is "both", search ebook and audiobook categories separately
-	formatPrefs := []bool{wantBoth, false} // ebook only if not both
-	if wantBoth {
-		formatPrefs = []bool{false, true} // ebook + audiobook
+	// Search appropriate category(s) based on format preference
+	var formatPrefs []bool
+	switch evt.Event.FormatPref {
+	case model.BookFormatBoth:
+		formatPrefs = []bool{false, true} // ebook then audiobook
+	case model.BookFormatAudiobook:
+		formatPrefs = []bool{true}
+	default: // ebook or unknown
+		formatPrefs = []bool{false}
 	}
 
 	for _, isAudio := range formatPrefs {

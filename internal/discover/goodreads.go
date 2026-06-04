@@ -3,7 +3,6 @@ package discover
 import (
 	"context"
 	"fmt"
-	"net/url"
 	"regexp"
 	"strconv"
 	"strings"
@@ -77,15 +76,16 @@ func (p *GoodreadsProvider) Scrape() ([]ScrapedItem, error) {
 	var result []ScrapedItem
 	for _, b := range items {
 		result = append(result, ScrapedItem{
-			Title:       b.Title,
-			ArtistName:  b.Author, // reuse ArtistName field for author
-			MediaType:   model.MediaTypeBook,
-			ReleaseType: "",
-			Source:      "goodreads",
-			ImageURL:    b.ImageURL,
-			Notes:       b.URL,
-			Overview:    b.Description,
-			ImdbRating:  b.Rating, // Goodreads rating stored temporarily
+			Title:        b.Title,
+			ArtistName:   b.Author, // reuse ArtistName field for author
+			MediaType:    model.MediaTypeBook,
+			ReleaseType:  "",
+			Source:       "goodreads",
+			ImageURL:     b.ImageURL,
+			Notes:        b.URL,
+			Overview:     b.Description,
+			ImdbRating:   b.Rating, // Goodreads rating stored temporarily
+			RatingsCount: b.RatingsCount,
 		})
 	}
 
@@ -232,5 +232,3 @@ func parseGRRatings(s string) int {
 	}
 	return n * multiplier
 }
-
-var _ = url.QueryEscape // keep import
