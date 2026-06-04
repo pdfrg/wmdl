@@ -99,21 +99,6 @@ func (p *ProwlarrClient) SearchAnime(ctx context.Context, query string) ([]quali
 	})
 }
 
-func (p *ProwlarrClient) SearchBooks(ctx context.Context, query string, isAudiobook bool) ([]quality.ParsedRelease, error) {
-	var cats []int
-	if isAudiobook {
-		cats = []int{CatBookAudio}
-	} else {
-		cats = []int{CatBookEbook}
-	}
-	return p.Search(ctx, SearchParams{
-		Query:      query,
-		Type:       "search",
-		Limit:      50,
-		Categories: cats,
-	})
-}
-
 type SearchParams struct {
 	Query      string
 	Type       string // "search", "movie", "tvsearch"

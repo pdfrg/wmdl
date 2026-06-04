@@ -3,6 +3,7 @@ package discover
 import (
 	"context"
 	"fmt"
+	"html"
 	"regexp"
 	"strconv"
 	"strings"
@@ -125,17 +126,39 @@ func (p *GoodreadsProvider) scrapeMonth(year, month int) ([]grScrapedBook, error
 
 	pageURL := fmt.Sprintf("https://www.goodreads.com/book/popular_by_date/%d/%d", year, month)
 
-	var html string
+	// Navigate and wait for initial page load
 	if err := chromedp.Run(scrapeCtx,
 		chromedp.Navigate(pageURL),
 		chromedp.WaitReady("body"),
 		chromedp.Sleep(3*time.Second),
-		// Scroll to bottom to trigger lazy loading
-		chromedp.Evaluate(`window.scrollTo(0, document.body.scrollHeight)`, nil),
-		chromedp.Sleep(2*time.Second),
-		chromedp.OuterHTML("html", &html),
 	); err != nil {
 		return nil, fmt.Errorf("navigate: %w", err)
+	}
+
+	// Click "Show more books" up to 5 times to load enough books
+	for i := 0; i < 5; i++ {
+		var clicked bool
+		if err := chromedp.Run(scrapeCtx,
+			chromedp.Evaluate(`(function() {
+				const btn = Array.from(document.querySelectorAll('button'))
+					.find(b => b.textContent.includes('Show more books'));
+				if (btn) { btn.click(); return true; }
+				return false;
+			})()`, &clicked),
+			chromedp.Sleep(2*time.Second),
+		); err != nil {
+			break
+		}
+		if !clicked {
+			break
+		}
+	}
+
+	var html string
+	if err := chromedp.Run(scrapeCtx,
+		chromedp.OuterHTML("html", &html),
+	); err != nil {
+		return nil, fmt.Errorf("get html: %w", err)
 	}
 
 	return parseGRPage(html), nil
@@ -212,13 +235,7 @@ func extractMatch(re *regexp.Regexp, s string) string {
 }
 
 func htmlUnescape(s string) string {
-	s = strings.ReplaceAll(s, "&amp;", "&")
-	s = strings.ReplaceAll(s, "&lt;", "<")
-	s = strings.ReplaceAll(s, "&gt;", ">")
-	s = strings.ReplaceAll(s, "&quot;", "\"")
-	s = strings.ReplaceAll(s, "&#39;", "'")
-	s = strings.ReplaceAll(s, "&#x27;", "'")
-	return s
+	return html.UnescapeString(s)
 }
 
 func parseGRRatings(s string) int {

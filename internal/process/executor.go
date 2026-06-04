@@ -2157,12 +2157,13 @@ func (e *Executor) presentBookPicker(ctx context.Context, sr *BookSearchResult) 
 	return result, nil
 }
 
-func (e *Executor) addBookToClient(ctx context.Context, evt db.EventWithBook, chosen []quality.ParsedBookRelease, format model.BookFormat) {
+func (e *Executor) addBookToClient(ctx context.Context, evt db.EventWithBook, chosen []quality.ParsedBookRelease, format model.BookFormat) int {
 	cat := e.cfg.Downloader.Categories.Ebooks
 	if format == model.BookFormatAudiobook {
 		cat = e.cfg.Downloader.Categories.Audiobooks
 	}
 
+	var added int
 	for _, r := range chosen {
 		url := r.DownloadURL
 		if url == "" {
@@ -2216,7 +2217,9 @@ func (e *Executor) addBookToClient(ctx context.Context, evt db.EventWithBook, ch
 		if _, err := e.db.CreateBookDownload(ctx, dl); err != nil {
 			e.log.Warn().Err(err).Msg("saving book download record")
 		}
+		added++
 	}
+	return added
 }
 
 func (e *Executor) uploadToAudiobookshelf(ctx context.Context) {
@@ -2276,12 +2279,15 @@ func (e *Executor) ProcessBooks(ctx context.Context, events []db.EventWithBook) 
 				if err != nil {
 					e.log.Warn().Err(err).Str("book", title).Msg("ebook picker error")
 				} else if len(chosen) > 0 {
-					e.addBookToClient(ctx, evt, chosen, model.BookFormatEbook)
-					if err := e.db.MarkBookFormatProcessed(ctx, evt.Event.ID, model.BookFormatEbook); err != nil {
-						e.log.Warn().Err(err).Msg("marking ebook processed")
+					if n := e.addBookToClient(ctx, evt, chosen, model.BookFormatEbook); n > 0 {
+						if err := e.db.MarkBookFormatProcessed(ctx, evt.Event.ID, model.BookFormatEbook); err != nil {
+							e.log.Warn().Err(err).Msg("marking ebook processed")
+						}
+						downloaded = true
+						fmt.Fprintf(os.Stderr, "  ✓ %s by %s [ebook] (%d added)\n", title, author, n)
+					} else {
+						fmt.Fprintf(os.Stderr, "  %s by %s [ebook]: add failed\n", title, author)
 					}
-					downloaded = true
-					fmt.Fprintf(os.Stderr, "  ✓ %s by %s [ebook]\n", title, author)
 				} else {
 					fmt.Fprintf(os.Stderr, "  %s by %s [ebook]: skipped\n", title, author)
 				}
@@ -2303,12 +2309,15 @@ func (e *Executor) ProcessBooks(ctx context.Context, events []db.EventWithBook) 
 				if err != nil {
 					e.log.Warn().Err(err).Str("book", title).Msg("audiobook picker error")
 				} else if len(chosen) > 0 {
-					e.addBookToClient(ctx, evt, chosen, model.BookFormatAudiobook)
-					if err := e.db.MarkBookFormatProcessed(ctx, evt.Event.ID, model.BookFormatAudiobook); err != nil {
-						e.log.Warn().Err(err).Msg("marking audiobook processed")
+					if n := e.addBookToClient(ctx, evt, chosen, model.BookFormatAudiobook); n > 0 {
+						if err := e.db.MarkBookFormatProcessed(ctx, evt.Event.ID, model.BookFormatAudiobook); err != nil {
+							e.log.Warn().Err(err).Msg("marking audiobook processed")
+						}
+						downloaded = true
+						fmt.Fprintf(os.Stderr, "  ✓ %s by %s [audiobook] (%d added)\n", title, author, n)
+					} else {
+						fmt.Fprintf(os.Stderr, "  %s by %s [audiobook]: add failed\n", title, author)
 					}
-					downloaded = true
-					fmt.Fprintf(os.Stderr, "  ✓ %s by %s [audiobook]\n", title, author)
 				} else {
 					fmt.Fprintf(os.Stderr, "  %s by %s [audiobook]: skipped\n", title, author)
 				}

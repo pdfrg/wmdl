@@ -787,7 +787,7 @@ func (d *DB) UpdateReleaseEventStatusTx(ctx context.Context, tx *sql.Tx, id int6
 }
 
 func (d *DB) updateReleaseEventStatus(ctx context.Context, q querier, id int64, status model.ReleaseStatus) error {
-	_, err := q.ExecContext(ctx, `UPDATE release_events SET status = ? WHERE id = ?`, string(status), id)
+	_, err := q.ExecContext(ctx, `UPDATE release_events SET previous_status = status, status = ? WHERE id = ?`, string(status), id)
 	return err
 }
 
@@ -1396,12 +1396,12 @@ func (d *DB) getLatestBookReleaseEvent(ctx context.Context, q querier, bookID in
 }
 
 func (d *DB) UpdateBookReleaseEventStatus(ctx context.Context, id int64, status model.ReleaseStatus) error {
-	_, err := d.db.ExecContext(ctx, `UPDATE book_release_events SET status = ? WHERE id = ?`, string(status), id)
+	_, err := d.db.ExecContext(ctx, `UPDATE book_release_events SET previous_status = status, status = ? WHERE id = ?`, string(status), id)
 	return err
 }
 
 func (d *DB) UpdateBookReleaseEventStatusTx(ctx context.Context, tx *sql.Tx, id int64, status model.ReleaseStatus) error {
-	_, err := tx.ExecContext(ctx, `UPDATE book_release_events SET status = ? WHERE id = ?`, string(status), id)
+	_, err := tx.ExecContext(ctx, `UPDATE book_release_events SET previous_status = status, status = ? WHERE id = ?`, string(status), id)
 	return err
 }
 
@@ -1815,7 +1815,7 @@ func (d *DB) UpdateAlbumReleaseEventStatusTx(ctx context.Context, tx *sql.Tx, id
 }
 
 func (d *DB) updateAlbumReleaseEventStatus(ctx context.Context, q querier, id int64, status model.ReleaseStatus) error {
-	_, err := q.ExecContext(ctx, `UPDATE album_release_events SET status = ? WHERE id = ?`, string(status), id)
+	_, err := q.ExecContext(ctx, `UPDATE album_release_events SET previous_status = status, status = ? WHERE id = ?`, string(status), id)
 	return err
 }
 

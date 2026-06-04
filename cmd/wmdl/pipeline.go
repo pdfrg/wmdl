@@ -138,7 +138,7 @@ func runReviewForWeek(ctx context.Context, database *db.DB, cfg *config.Config, 
 				if err := tui.Run(); err != nil {
 					return 0, err
 				}
-				approved = len(tui.ApprovedTitles())
+				approved = tui.ApprovedCount()
 				if approved > 0 {
 					fmt.Fprintf(os.Stderr, "\nApproved %d titles for processing.\n", approved)
 				} else {
@@ -189,7 +189,7 @@ func runReviewForWeek(ctx context.Context, database *db.DB, cfg *config.Config, 
 		return 0, err
 	}
 
-	approved = len(tui.ApprovedTitles())
+	approved = tui.ApprovedCount()
 	if approved > 0 {
 		fmt.Fprintf(os.Stderr, "\nApproved %d titles for processing.\n", approved)
 	} else {

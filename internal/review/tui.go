@@ -212,6 +212,7 @@ type TUI struct {
 	width           int
 	height          int
 	approved        []db.EventWithTitle
+	approvedBooks   int
 	err             error
 	posterImg       image.Image
 	posterMode      PosterMode
@@ -367,6 +368,10 @@ func (t *TUI) Run() error {
 
 func (t *TUI) ApprovedTitles() []db.EventWithTitle {
 	return t.approved
+}
+
+func (t *TUI) ApprovedCount() int {
+	return len(t.approved) + t.approvedBooks
 }
 
 func (t *TUI) Init() tea.Cmd {
@@ -558,19 +563,7 @@ func (t *TUI) saveDecisions() error {
 			if it.decision == decisionApproved {
 				switch {
 				case it.bookEvent != nil:
-					t.approved = append(t.approved, db.EventWithTitle{
-						Event: &model.ReleaseEvent{
-							ID:      it.bookEvent.Event.ID,
-							Status:  model.StatusApproved,
-							ISOYear: it.bookEvent.Event.ISOYear,
-							ISOWeek: it.bookEvent.Event.ISOWeek,
-						},
-						Title: &model.Title{
-							Title:     it.bookEvent.Author.Name + " — " + it.bookEvent.Book.Title,
-							Year:      it.bookEvent.Book.ReleaseYear,
-							MediaType: model.MediaTypeBook,
-						},
-					})
+					t.approvedBooks++
 				case it.albumEvent != nil:
 					t.approved = append(t.approved, db.EventWithTitle{
 						Event: &model.ReleaseEvent{
