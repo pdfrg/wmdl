@@ -168,12 +168,12 @@ func (p *GoodreadsProvider) scrapeMonth(year, month int) ([]grScrapedBook, error
 var (
 	grBookBlock = regexp.MustCompile(`<article[^>]*class="[^"]*BookListItem[^"]*"[^>]*>(.*?)</article>`)
 
-	grTitle   = regexp.MustCompile(`class="[^"]*title[^"]*"[^>]*>\s*<a[^>]*>\s*([^<]+)`)
-	grAuthor  = regexp.MustCompile(`class="[^"]*author[^"]*"[^>]*>\s*<a[^>]*>\s*([^<]+)`)
-	grRating  = regexp.MustCompile(`class="[^"]*rating[^"]*"[^>]*>\s*([\d.]+)`)
-	grRatings = regexp.MustCompile(`class="[^"]*shelvings[^"]*"[^>]*>\s*([\d,.kK]+)`)
+	grTitle   = regexp.MustCompile(`data-testid="bookTitle"[^>]*>([^<]+)`)
+	grAuthor  = regexp.MustCompile(`class="ContributorLink__name"[^>]*>([^<]+)`)
+	grRating  = regexp.MustCompile(`data-testid="ratingValue"[^>]*>\s*<span[^>]*>([\d.]+)`)
+	grRatings = regexp.MustCompile(`data-testid="ratingsCount"[^>]*>.*?>([\d.]+(?:k|K|m|M)?).*ratings`)
 	grImage   = regexp.MustCompile(`<img[^>]*\bsrc="([^"]+)"`)
-	grDesc    = regexp.MustCompile(`class="[^"]*description[^"]*"[^>]*>\s*([^<]+)`)
+	grDesc    = regexp.MustCompile(`data-testid="contentContainer"[^>]*>\s*<span[^>]*>\s*([^<]+)`)
 	grLink    = regexp.MustCompile(`<a[^>]*\bhref="([^"]+)"`)
 )
 
