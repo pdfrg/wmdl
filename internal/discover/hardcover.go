@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -54,8 +55,11 @@ type HCAuthorResult struct {
 }
 
 func NewHardcoverClient(apiKey string) *HardcoverClient {
+	// Accept either "Bearer xxx" or bare token from config
+	token := strings.TrimPrefix(apiKey, "Bearer ")
+	token = strings.TrimSpace(token)
 	return &HardcoverClient{
-		apiKey: apiKey,
+		apiKey: token,
 		http: &http.Client{
 			Timeout: 30 * time.Second,
 			Transport: &http.Transport{
@@ -79,7 +83,7 @@ func (c *HardcoverClient) query(ctx context.Context, query string, vars map[stri
 	if err != nil {
 		return nil, fmt.Errorf("request: %w", err)
 	}
-	req.Header.Set("Authorization", c.apiKey)
+	req.Header.Set("Authorization", "Bearer "+c.apiKey)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("User-Agent", "wmdl/1.0")
 
