@@ -307,8 +307,8 @@ func (r *Runner) Run(ctx context.Context) error {
 	}
 
 	// Auto-launch Brave if not already running on the debug port
-	// Needed for video/TV/movie processing and AllMusic scraping.
-	if wantVideo || wantMusic {
+	// Needed for video/TV/movie processing, AllMusic, and Goodreads scraping.
+	if wantVideo || wantMusic || wantBooks {
 		killBrave, err := browser.EnsureRunning(r.cfg.Browser.Binary, r.cfg.Browser.DebugPort, r.cfg.Browser.Profile, r.headless)
 		if err != nil {
 			r.log.Warn().Err(err).Msg("browser unavailable, some features disabled")

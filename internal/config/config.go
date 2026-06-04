@@ -290,6 +290,11 @@ func (c *Config) Validate() error {
 		errs = append(errs, "library.sonarr.api_key is required when library.sonarr.url is set")
 	}
 
+	// Validate Audiobookshelf config if URL is set (partially configured)
+	if c.Library.Audiobookshelf.URL != "" && c.Library.Audiobookshelf.APIKey == "" {
+		errs = append(errs, "library.audiobookshelf.api_key is required when library.audiobookshelf.url is set")
+	}
+
 	// Validate log level
 	switch c.Log.Level {
 	case "debug", "info", "warn", "error", "":
