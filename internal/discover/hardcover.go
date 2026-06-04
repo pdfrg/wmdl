@@ -238,19 +238,19 @@ func (c *HardcoverClient) searchBooks(ctx context.Context, query string, vars ma
 
 func (c *HardcoverClient) decodeBook(raw json.RawMessage) (*HCBookResult, error) {
 	var rawBook struct {
-		ID             int      `json:"id"`
-		Title          string   `json:"title"`
-		Subtitle       string   `json:"subtitle"`
-		Description    string   `json:"description"`
-		Pages          *int     `json:"pages"`
-		AudioSeconds   *int     `json:"audio_seconds"`
-		ReleaseDate    string   `json:"release_date"`
-		ReleaseYear    *int     `json:"release_year"`
-		Rating         float64  `json:"rating"`
-		RatingsCount   int      `json:"ratings_count"`
-		UsersCount     int      `json:"users_count"`
-		LiteraryTypeID *int     `json:"literary_type_id"`
-		CachedTags     []string `json:"cached_tags"`
+		ID             int             `json:"id"`
+		Title          string          `json:"title"`
+		Subtitle       string          `json:"subtitle"`
+		Description    string          `json:"description"`
+		Pages          *int            `json:"pages"`
+		AudioSeconds   *int            `json:"audio_seconds"`
+		ReleaseDate    string          `json:"release_date"`
+		ReleaseYear    *int            `json:"release_year"`
+		Rating         float64         `json:"rating"`
+		RatingsCount   int             `json:"ratings_count"`
+		UsersCount     int             `json:"users_count"`
+		LiteraryTypeID *int            `json:"literary_type_id"`
+		CachedTags     json.RawMessage `json:"cached_tags"`
 
 		Image    json.RawMessage `json:"image"`
 		Language json.RawMessage `json:"language"`
@@ -274,7 +274,21 @@ func (c *HardcoverClient) decodeBook(raw json.RawMessage) (*HCBookResult, error)
 		Rating:       rawBook.Rating,
 		RatingsCount: rawBook.RatingsCount,
 		UsersCount:   rawBook.UsersCount,
-		Tags:         rawBook.CachedTags,
+	}
+
+	if rawBook.CachedTags != nil {
+		var tagMap map[string][]struct {
+			Tag string `json:"tag"`
+		}
+		if json.Unmarshal(rawBook.CachedTags, &tagMap) == nil {
+			for _, entries := range tagMap {
+				for _, entry := range entries {
+					if entry.Tag != "" {
+						res.Tags = append(res.Tags, entry.Tag)
+					}
+				}
+			}
+		}
 	}
 
 	if rawBook.Pages != nil {
