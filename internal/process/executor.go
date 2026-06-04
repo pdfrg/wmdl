@@ -1981,7 +1981,7 @@ func (e *Executor) SearchBook(ctx context.Context, evt db.EventWithBook, format 
 	if format == model.BookFormatAudiobook {
 		cat = search.CatBookAudio
 	}
-	bookCatSets := [][]int{{cat}}
+	bookCatSets := [][]int{{cat}, {search.CatBook}}
 
 	preferredID := e.prowl.PreferredIndexerID(search.CatBook)
 	numTiers := len(queries)

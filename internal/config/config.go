@@ -302,7 +302,7 @@ func (c *Config) Validate() error {
 	// Validate book config
 	if c.MediaTypes.Books.Enabled {
 		switch c.MediaTypes.Books.DefaultFormat {
-		case "ebook", "audiobook", "both", "":
+		case "ebook", "audiobook", "both":
 		default:
 			errs = append(errs, "media_types.books.default_format must be one of: ebook, audiobook, both")
 		}

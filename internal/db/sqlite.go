@@ -1406,9 +1406,14 @@ func (d *DB) UpdateBookReleaseEventStatusTx(ctx context.Context, tx *sql.Tx, id 
 }
 
 func (d *DB) MarkBookFormatProcessed(ctx context.Context, id int64, format model.BookFormat) error {
-	col := "ebook_processed"
-	if format == model.BookFormatAudiobook {
+	var col string
+	switch format {
+	case model.BookFormatEbook:
+		col = "ebook_processed"
+	case model.BookFormatAudiobook:
 		col = "audiobook_processed"
+	default:
+		return fmt.Errorf("unknown book format: %s", format)
 	}
 	_, err := d.db.ExecContext(ctx,
 		fmt.Sprintf(`UPDATE book_release_events SET %s = 1 WHERE id = ?`, col), id)

@@ -53,9 +53,10 @@ func NewOLClient() *OLClient {
 
 func (c *OLClient) SearchBook(ctx context.Context, title, author string) (*OLBookResult, error) {
 	q := url.Values{}
-	q.Set("q", fmt.Sprintf("title:%s AND author:%s", title, author))
+	q.Set("title", title)
+	q.Set("author", author)
 	q.Set("limit", "5")
-	q.Set("fields", "key,title,subtitle,first_publish_year,author_name,author_key,subject,isbn,ia")
+	q.Set("fields", "key,title,subtitle,first_publish_year,publish_year,author_name,author_key,subject,isbn,ia,cover_i")
 
 	u := "https://openlibrary.org/search.json?" + q.Encode()
 
@@ -134,6 +135,7 @@ func (c *OLClient) decodeSearchResult(raw json.RawMessage) (*OLBookResult, error
 		Title            string   `json:"title"`
 		Subtitle         string   `json:"subtitle"`
 		FirstPublishYear int      `json:"first_publish_year"`
+		PublishYear      []int    `json:"publish_year"`
 		AuthorName       []string `json:"author_name"`
 		AuthorKey        []string `json:"author_key"`
 		ISBN             []string `json:"isbn"`
@@ -145,11 +147,24 @@ func (c *OLClient) decodeSearchResult(raw json.RawMessage) (*OLBookResult, error
 		return nil, fmt.Errorf("decode doc: %w", err)
 	}
 
+	releaseYear := d.FirstPublishYear
+	if len(d.PublishYear) > 0 {
+		maxYear := 0
+		for _, y := range d.PublishYear {
+			if y > maxYear {
+				maxYear = y
+			}
+		}
+		if maxYear > 0 {
+			releaseYear = maxYear
+		}
+	}
+
 	res := &OLBookResult{
 		OLID:        d.Key,
 		Title:       d.Title,
 		Subtitle:    d.Subtitle,
-		ReleaseYear: d.FirstPublishYear,
+		ReleaseYear: releaseYear,
 		Subjects:    d.Subject,
 	}
 

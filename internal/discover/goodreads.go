@@ -172,9 +172,9 @@ var (
 	grAuthor  = regexp.MustCompile(`class="[^"]*author[^"]*"[^>]*>\s*<a[^>]*>\s*([^<]+)`)
 	grRating  = regexp.MustCompile(`class="[^"]*rating[^"]*"[^>]*>\s*([\d.]+)`)
 	grRatings = regexp.MustCompile(`class="[^"]*shelvings[^"]*"[^>]*>\s*([\d,.kK]+)`)
-	grImage   = regexp.MustCompile(`<img[^>]*src="([^"]+)"[^>]*class="[^"]*cover[^"]*"`)
+	grImage   = regexp.MustCompile(`<img[^>]*\bsrc="([^"]+)"`)
 	grDesc    = regexp.MustCompile(`class="[^"]*description[^"]*"[^>]*>\s*([^<]+)`)
-	grLink    = regexp.MustCompile(`<a[^>]*href="([^"]+)"[^>]*class="[^"]*title[^"]*"`)
+	grLink    = regexp.MustCompile(`<a[^>]*\bhref="([^"]+)"`)
 )
 
 func parseGRPage(html string) []grScrapedBook {

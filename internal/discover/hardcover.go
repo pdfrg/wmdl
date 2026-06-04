@@ -153,7 +153,20 @@ func (c *HardcoverClient) SearchBook(ctx context.Context, title, author string) 
 			}
 		}
 	}`
-	return c.searchBooks(ctx, q, map[string]any{"title": "%" + title + "%", "author": "%" + author + "%"})
+	result, err := c.searchBooks(ctx, q, map[string]any{"title": "%" + title + "%", "author": "%" + author + "%"})
+	if err != nil {
+		return nil, err
+	}
+	if result == nil {
+		return nil, nil
+	}
+	if title != "" && !strings.Contains(strings.ToLower(result.Title), strings.ToLower(title)) {
+		return nil, nil
+	}
+	if author != "" && result.Author != nil && !strings.Contains(strings.ToLower(result.Author.Name), strings.ToLower(author)) {
+		return nil, nil
+	}
+	return result, nil
 }
 
 func (c *HardcoverClient) searchBooks(ctx context.Context, query string, vars map[string]any) (*HCBookResult, error) {
