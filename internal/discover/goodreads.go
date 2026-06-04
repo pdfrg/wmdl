@@ -173,7 +173,7 @@ var (
 	grTitle     = regexp.MustCompile(`data-testid="bookTitle"[^>]*>([^<]+)`)
 	grAuthor    = regexp.MustCompile(`class="ContributorLink__name"[^>]*>([^<]+)`)
 	grRating    = regexp.MustCompile(`data-testid="ratingValue"[^>]*>\s*<span[^>]*>([\d.]+)`)
-	grRatings   = regexp.MustCompile(`data-testid="ratingsCount"[^>]*>.*?>([\d.]+(?:k|K|m|M)?).*ratings`)
+	grRatings   = regexp.MustCompile(`data-testid="ratingsCount"[^>]*>.*?>([\d,.]+(?:k|K|m|M)?).*ratings`)
 	grShelvings = regexp.MustCompile(`(\d[\d,.]*(?:k|K|m|M)?)\s*shelvings`)
 	grImage     = regexp.MustCompile(`<img[^>]*\bsrc="([^"]+)"`)
 	grDesc      = regexp.MustCompile(`data-testid="contentContainer"[^>]*>\s*<span[^>]*>\s*([^<]+)`)
