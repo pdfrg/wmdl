@@ -55,6 +55,7 @@ type Executor struct {
 	radarr *library.RadarrClient
 	sonarr *library.SonarrClient
 	lidarr *library.LidarrClient
+	abs    *library.AudiobookshelfClient
 
 	Unfound       []string
 	phase3Movies  []Phase3Movie
@@ -80,6 +81,16 @@ func NewExecutor(logger zerolog.Logger, cfg *config.Config, database *db.DB) *Ex
 		"anime":  cfg.Prowlarr.IndexerIDs.Anime,
 		"books":  cfg.Prowlarr.IndexerIDs.Books,
 	}
+	var abs *library.AudiobookshelfClient
+	if cfg.Library.Audiobookshelf.URL != "" && cfg.Library.Audiobookshelf.APIKey != "" {
+		abs = library.NewAudiobookshelfClient(
+			cfg.Library.Audiobookshelf.URL,
+			cfg.Library.Audiobookshelf.APIKey,
+			cfg.Library.Audiobookshelf.LibraryID,
+			cfg.Library.Audiobookshelf.Timeout,
+		)
+	}
+
 	return &Executor{
 		log:    logger,
 		cfg:    cfg,
@@ -89,6 +100,7 @@ func NewExecutor(logger zerolog.Logger, cfg *config.Config, database *db.DB) *Ex
 		radarr: radarr,
 		sonarr: sonarr,
 		lidarr: lidarr,
+		abs:    abs,
 	}
 }
 
@@ -1912,6 +1924,243 @@ func formatOverview(text string, maxWidth int) []string {
 		lines[4] += " ..."
 	}
 	return lines
+}
+
+// ─── Book Processing ──────────────────────────────────────────────────────
+
+type BookSearchResult struct {
+	Event db.EventWithBook
+	Top   []quality.ParsedBookRelease
+	Error error
+}
+
+func (e *Executor) SearchBook(ctx context.Context, evt db.EventWithBook) *BookSearchResult {
+	e.log.Info().Str("book", evt.Book.Title).Str("author", evt.Author.Name).Msg("searching book")
+
+	isAudiobook := evt.Event.FormatPref == model.BookFormatAudiobook
+	formatPref := string(evt.Event.FormatPref)
+
+	// Build search query: prefer ISBN, then ASIN, then title+author
+	query := evt.Book.Title
+	if evt.Book.ISBN13 != "" {
+		query = evt.Book.ISBN13
+	} else if evt.Book.ASIN != "" {
+		query = evt.Book.ASIN
+	} else if evt.Book.ISBN10 != "" {
+		query = evt.Book.ISBN10
+	} else if evt.Author.Name != "" {
+		query = fmt.Sprintf("%s %s", evt.Author.Name, evt.Book.Title)
+	}
+
+	var prowlReleases []quality.ParsedRelease
+	var err error
+
+	// Try with format-specific category first
+	prowlReleases, err = e.prowl.SearchBooks(ctx, query, isAudiobook)
+	if err != nil {
+		e.log.Warn().Err(err).Str("book", evt.Book.Title).Msg("prowlarr book search failed")
+		return &BookSearchResult{Event: evt, Error: err}
+	}
+
+	if len(prowlReleases) == 0 && query != evt.Book.Title {
+		// Fall back to title-only search
+		prowlReleases, err = e.prowl.SearchBooks(ctx, evt.Book.Title, isAudiobook)
+		if err != nil {
+			e.log.Warn().Err(err).Str("book", evt.Book.Title).Msg("prowlarr fallback search failed")
+		}
+	}
+
+	var bookReleases []quality.ParsedBookRelease
+	for _, pr := range prowlReleases {
+		br := quality.ParseBookRelease(pr.RawTitle)
+		br.ParsedRelease = pr
+		bookReleases = append(bookReleases, br)
+	}
+
+	if len(bookReleases) == 0 {
+		e.Unfound = append(e.Unfound, fmt.Sprintf("%s by %s", evt.Book.Title, evt.Author.Name))
+		return &BookSearchResult{Event: evt}
+	}
+
+	// Partition and score
+	prefs := buildBookQualityPrefs(e.cfg, formatPref)
+	exact, _ := quality.PartitionBookReleases(bookReleases, evt.Author.Name, evt.Book.Title)
+
+	var top []quality.ParsedBookRelease
+	if len(exact) > 0 {
+		top = quality.SortBookTop(exact, prefs, e.cfg.ShowTopN)
+	} else {
+		top = quality.SortBookTop(bookReleases, prefs, e.cfg.ShowTopN)
+	}
+
+	return &BookSearchResult{Event: evt, Top: top}
+}
+
+func (e *Executor) SearchAllBooks(ctx context.Context, events []db.EventWithBook) []*BookSearchResult {
+	e.log.Info().Msgf("Searching %d books...", len(events))
+	results := make([]*BookSearchResult, 0, len(events))
+	for i, ev := range events {
+		e.log.Info().Str("book", ev.Book.Title).Msgf("[%d/%d] searching", i+1, len(events))
+		sr := e.SearchBook(ctx, ev)
+		if sr.Error != nil {
+			e.log.Warn().Err(sr.Error).Str("book", ev.Book.Title).Msg("error searching")
+			sr.Error = nil
+		} else if len(sr.Top) == 0 {
+			e.log.Info().Str("book", ev.Book.Title).Msg("no book results")
+		} else {
+			e.log.Info().Int("count", len(sr.Top)).Str("book", ev.Book.Title).Msg("book results found")
+		}
+		results = append(results, sr)
+	}
+	return results
+}
+
+func (e *Executor) presentBookPicker(ctx context.Context, sr *BookSearchResult) ([]quality.ParsedBookRelease, error) {
+	if len(sr.Top) == 0 {
+		return nil, nil
+	}
+
+	// Convert book releases to ParsedRelease for the selector
+	parsed := make([]quality.ParsedRelease, len(sr.Top))
+	for i, br := range sr.Top {
+		parsed[i] = br.ParsedRelease
+	}
+
+	sel := NewSelector(sr.Event.Book.Title, parsed)
+	chosen, err := sel.Run()
+	if err != nil {
+		return nil, err
+	}
+	if len(chosen) == 0 {
+		return nil, nil
+	}
+
+	// Map back to book releases
+	var result []quality.ParsedBookRelease
+	for _, c := range chosen {
+		for _, br := range sr.Top {
+			if br.Guid == c.Guid {
+				result = append(result, br)
+				break
+			}
+		}
+	}
+	return result, nil
+}
+
+func (e *Executor) addBookToClient(ctx context.Context, evt db.EventWithBook, chosen []quality.ParsedBookRelease) {
+	for _, r := range chosen {
+		isAudiobook := r.IsAudiobook || evt.Event.FormatPref == model.BookFormatAudiobook
+		cat := e.cfg.Downloader.Categories.Ebooks
+		if isAudiobook {
+			cat = e.cfg.Downloader.Categories.Audiobooks
+		}
+
+		url := r.DownloadURL
+		if url == "" {
+			url = r.MagnetURL
+		}
+		if url == "" {
+			e.log.Warn().Str("title", r.RawTitle).Msg("book release has no download URL or magnet")
+			continue
+		}
+
+		if strings.HasPrefix(url, "magnet:") {
+			tid, err := e.dl.AddMagnet(ctx, url, download.WithCategory(cat))
+			if err != nil {
+				e.log.Warn().Err(err).Str("title", r.RawTitle).Msg("adding book magnet")
+				continue
+			}
+			e.log.Info().Str("title", r.RawTitle).Str("tid", tid).Str("category", cat).Msg("book magnet added")
+		} else {
+			tid, err := e.dl.AddTorrent(ctx, url, download.WithCategory(cat))
+			if err != nil {
+				e.log.Warn().Err(err).Str("title", r.RawTitle).Msg("adding book torrent")
+				continue
+			}
+			e.log.Info().Str("title", r.RawTitle).Str("tid", tid).Str("category", cat).Msg("book torrent added")
+		}
+
+		// Record the download
+		dl := &model.BookDownload{
+			BookID:           evt.Book.ID,
+			BookReleaseEvent: evt.Event.ID,
+			Format:           evt.Event.FormatPref,
+			Quality:          r.Source,
+			SourceType:       r.Source,
+			Codec:            r.Codec,
+			InfoHash:         r.InfoHash,
+			Category:         cat,
+			Status:           model.DownloadAdded,
+		}
+		if _, err := e.db.CreateBookDownload(ctx, dl); err != nil {
+			e.log.Warn().Err(err).Msg("saving book download record")
+		}
+	}
+}
+
+func (e *Executor) uploadToAudiobookshelf(ctx context.Context, evt db.EventWithBook) {
+	if e.abs == nil {
+		e.log.Info().Str("book", evt.Book.Title).Msg("Audiobookshelf not configured, skipping upload")
+		return
+	}
+
+	// For now, trigger a library scan so Audiobookshelf picks up files
+	// from the download category folders (which should be in ABS watched folders).
+	// In the future, this could use the Upload API with direct file paths.
+	if err := e.abs.TriggerScan(ctx); err != nil {
+		e.log.Warn().Err(err).Msg("triggering audiobookshelf scan")
+	} else {
+		e.log.Info().Msg("triggered audiobookshelf library scan")
+	}
+}
+
+func (e *Executor) markBookDownloaded(ctx context.Context, evt db.EventWithBook) {
+	if err := e.db.UpdateBookReleaseEventStatus(ctx, evt.Event.ID, model.StatusDownloaded); err != nil {
+		e.log.Warn().Err(err).Msg("marking book as downloaded")
+	}
+}
+
+func (e *Executor) ProcessBooks(ctx context.Context, events []db.EventWithBook) {
+	if len(events) == 0 {
+		return
+	}
+
+	fmt.Fprintln(os.Stderr, "\n── Book Processing ──")
+
+	results := e.SearchAllBooks(ctx, events)
+	for _, sr := range results {
+		if len(sr.Top) == 0 {
+			fmt.Fprintf(os.Stderr, "  %s by %s: no results\n", sr.Event.Book.Title, sr.Event.Author.Name)
+			continue
+		}
+		chosen, err := e.presentBookPicker(ctx, sr)
+		if errors.Is(err, ErrAbort) {
+			e.log.Info().Msg("pipeline aborted by user")
+			break
+		}
+		if err != nil {
+			e.log.Warn().Err(err).Str("book", sr.Event.Book.Title).Msg("book picker error")
+			continue
+		}
+		if len(chosen) == 0 {
+			fmt.Fprintf(os.Stderr, "  %s by %s: skipped\n", sr.Event.Book.Title, sr.Event.Author.Name)
+			continue
+		}
+		e.addBookToClient(ctx, sr.Event, chosen)
+		e.uploadToAudiobookshelf(ctx, sr.Event)
+		e.markBookDownloaded(ctx, sr.Event)
+		fmt.Fprintf(os.Stderr, "  ✓ %s by %s\n", sr.Event.Book.Title, sr.Event.Author.Name)
+	}
+}
+
+func buildBookQualityPrefs(cfg *config.Config, formatPref string) quality.BookQualityPrefs {
+	return quality.BookQualityPrefs{
+		EbookFormatPriority:     cfg.Quality.Books.Ebooks.FormatPriority,
+		AudiobookFormatPriority: cfg.Quality.Books.Audiobooks.FormatPriority,
+		MinSeeders:              cfg.MinSeeders,
+		PreferredGroups:         cfg.PreferredGroups,
+	}
 }
 
 func buildQualityPrefs(cfg *config.Config, mediaType model.MediaType) quality.QualityPrefs {

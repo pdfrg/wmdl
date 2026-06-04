@@ -215,6 +215,80 @@ func (d *DB) Migrate(ctx context.Context) error {
 		fetched_at TEXT NOT NULL DEFAULT (datetime('now')),
 		UNIQUE(source, ext_id)
 	);
+
+	CREATE TABLE IF NOT EXISTS authors (
+		id           INTEGER PRIMARY KEY AUTOINCREMENT,
+		hardcover_id INTEGER NOT NULL DEFAULT 0,
+		olid         TEXT NOT NULL DEFAULT '',
+		name         TEXT NOT NULL,
+		bio          TEXT NOT NULL DEFAULT '',
+		born_date    TEXT NOT NULL DEFAULT '',
+		death_date   TEXT NOT NULL DEFAULT '',
+		image_url    TEXT NOT NULL DEFAULT '',
+		identifiers  TEXT NOT NULL DEFAULT '{}',
+		links        TEXT NOT NULL DEFAULT '{}',
+		created_at   TEXT NOT NULL DEFAULT (datetime('now')),
+		UNIQUE(olid)
+	);
+
+	CREATE TABLE IF NOT EXISTS books (
+		id           INTEGER PRIMARY KEY AUTOINCREMENT,
+		author_id    INTEGER NOT NULL REFERENCES authors(id),
+		title        TEXT NOT NULL,
+		subtitle     TEXT NOT NULL DEFAULT '',
+		hardcover_id INTEGER NOT NULL DEFAULT 0,
+		olid         TEXT NOT NULL DEFAULT '',
+		isbn10       TEXT NOT NULL DEFAULT '',
+		isbn13       TEXT NOT NULL DEFAULT '',
+		asin         TEXT NOT NULL DEFAULT '',
+		pages        INTEGER DEFAULT 0,
+		audio_seconds INTEGER DEFAULT 0,
+		description  TEXT NOT NULL DEFAULT '',
+		release_date TEXT NOT NULL DEFAULT '',
+		release_year INTEGER DEFAULT 0,
+		rating       REAL DEFAULT 0,
+		ratings_count INTEGER DEFAULT 0,
+		image_url    TEXT NOT NULL DEFAULT '',
+		language     TEXT NOT NULL DEFAULT '',
+		publisher    TEXT NOT NULL DEFAULT '',
+		tags         TEXT NOT NULL DEFAULT '',
+		literary_type TEXT NOT NULL DEFAULT '',
+		created_at   TEXT NOT NULL DEFAULT (datetime('now')),
+		UNIQUE(author_id, title, release_year)
+	);
+
+	CREATE TABLE IF NOT EXISTS book_release_events (
+		id              INTEGER PRIMARY KEY AUTOINCREMENT,
+		book_id         INTEGER NOT NULL REFERENCES books(id),
+		source          TEXT NOT NULL,
+		release_date    TEXT NOT NULL DEFAULT '',
+		format_pref     TEXT NOT NULL DEFAULT 'both'
+		                CHECK(format_pref IN ('ebook','audiobook','both')),
+		status          TEXT NOT NULL DEFAULT 'pending'
+		                CHECK(status IN ('pending','approved','rejected','downloaded')),
+		previous_status TEXT DEFAULT '',
+		notes           TEXT DEFAULT '',
+		created_at      TEXT DEFAULT (datetime('now')),
+		iso_year        INTEGER DEFAULT 0,
+		iso_week        INTEGER DEFAULT 0
+	);
+
+	CREATE TABLE IF NOT EXISTS book_downloads (
+		id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+		book_id             INTEGER NOT NULL REFERENCES books(id),
+		book_release_event  INTEGER NOT NULL REFERENCES book_release_events(id),
+		format              TEXT NOT NULL DEFAULT 'both'
+		                    CHECK(format IN ('ebook','audiobook','both')),
+		quality             TEXT NOT NULL DEFAULT '',
+		source_type         TEXT NOT NULL DEFAULT '',
+		codec               TEXT NOT NULL DEFAULT '',
+		info_hash           TEXT NOT NULL DEFAULT '',
+		category            TEXT NOT NULL DEFAULT '',
+		status              TEXT NOT NULL DEFAULT 'added'
+		                    CHECK(status IN ('added','downloading','complete','upgraded')),
+		client_torrent_id   TEXT NOT NULL DEFAULT '',
+		created_at          TEXT NOT NULL DEFAULT (datetime('now'))
+	);
 	`
 	if _, err := d.db.ExecContext(ctx, schema); err != nil {
 		return fmt.Errorf("migrating schema: %w", err)
@@ -337,6 +411,15 @@ func (d *DB) Migrate(ctx context.Context) error {
 	d.db.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_album_release_events_status ON album_release_events(status)`)
 	d.db.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_album_release_events_week ON album_release_events(iso_year, iso_week)`)
 	d.db.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_library_cache_source_ext ON library_cache(source, ext_id)`)
+
+	d.db.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_authors_olid ON authors(olid)`)
+	d.db.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_books_author_id ON books(author_id)`)
+	d.db.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_books_isbn13 ON books(isbn13)`)
+	d.db.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_books_asin ON books(asin)`)
+	d.db.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_book_release_events_book_id ON book_release_events(book_id)`)
+	d.db.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_book_release_events_status ON book_release_events(status)`)
+	d.db.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_book_release_events_week ON book_release_events(iso_year, iso_week)`)
+	d.db.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_book_downloads_book_id ON book_downloads(book_id)`)
 
 	return nil
 }
@@ -953,7 +1036,7 @@ func (d *DB) GetWeekProcessCounts(ctx context.Context, year, week int) (download
 		return 0, 0, fmt.Errorf("counting approved events: %w", err)
 	}
 
-	var albumDL, albumApproved int
+	var albumDL, albumApproved, bookDL, bookApproved int
 	err = d.db.QueryRowContext(ctx, `
 		SELECT COUNT(*) FROM album_release_events
 		WHERE iso_year = ? AND iso_week = ? AND status = 'downloaded'
@@ -969,8 +1052,23 @@ func (d *DB) GetWeekProcessCounts(ctx context.Context, year, week int) (download
 		return 0, 0, fmt.Errorf("counting approved album events: %w", err)
 	}
 
-	downloaded += albumDL
-	approved += albumApproved
+	err = d.db.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM book_release_events
+		WHERE iso_year = ? AND iso_week = ? AND status = 'downloaded'
+	`, year, week).Scan(&bookDL)
+	if err != nil {
+		return 0, 0, fmt.Errorf("counting downloaded book events: %w", err)
+	}
+	err = d.db.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM book_release_events
+		WHERE iso_year = ? AND iso_week = ? AND status IN ('approved', 'downloaded')
+	`, year, week).Scan(&bookApproved)
+	if err != nil {
+		return 0, 0, fmt.Errorf("counting approved book events: %w", err)
+	}
+
+	downloaded += albumDL + bookDL
+	approved += albumApproved + bookApproved
 	return downloaded, approved, nil
 }
 
@@ -996,6 +1094,325 @@ func (d *DB) CountAlbumReleaseEventsByWeek(ctx context.Context, year, week int) 
 		return 0, fmt.Errorf("counting album release events: %w", err)
 	}
 	return count, nil
+}
+
+// ─── Book API ─────────────────────────────────────────────────────────────
+
+type EventWithBook struct {
+	Event  *model.BookReleaseEvent
+	Book   *model.Book
+	Author *model.Author
+}
+
+func (d *DB) UpsertAuthor(ctx context.Context, a *model.Author) (int64, error) {
+	olid := a.OLID
+	if olid == "" {
+		h := sha256.Sum256([]byte(a.Name))
+		olid = fmt.Sprintf("_nm_%x", h[:8])
+	}
+	res, err := d.db.ExecContext(ctx, `
+		INSERT INTO authors (hardcover_id, olid, name, bio, born_date, death_date, image_url, identifiers, links, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+		ON CONFLICT(olid) DO UPDATE SET
+			hardcover_id = excluded.hardcover_id,
+			name         = excluded.name,
+			bio          = excluded.bio,
+			born_date    = excluded.born_date,
+			death_date   = excluded.death_date,
+			image_url    = excluded.image_url,
+			identifiers  = excluded.identifiers,
+			links        = excluded.links
+	`, a.HardcoverID, olid, a.Name, a.Bio, a.BornDate, a.DeathDate, a.ImageURL, a.Identifiers, a.Links)
+	if err != nil {
+		return 0, fmt.Errorf("upserting author: %w", err)
+	}
+	id, err := res.LastInsertId()
+	if err != nil {
+		return 0, fmt.Errorf("getting last insert id: %w", err)
+	}
+	return id, nil
+}
+
+func (d *DB) GetAuthorByOLID(ctx context.Context, olid string) (*model.Author, error) {
+	var a model.Author
+	err := d.db.QueryRowContext(ctx, `
+		SELECT id, hardcover_id, olid, name, bio, born_date, death_date, image_url, identifiers, links, created_at
+		FROM authors WHERE olid = ?
+	`, olid).Scan(&a.ID, &a.HardcoverID, &a.OLID, &a.Name, &a.Bio, &a.BornDate, &a.DeathDate, &a.ImageURL, &a.Identifiers, &a.Links, &a.CreatedAt)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("querying author by olid: %w", err)
+	}
+	return &a, nil
+}
+
+func (d *DB) UpsertBook(ctx context.Context, b *model.Book) (int64, error) {
+	res, err := d.db.ExecContext(ctx, `
+		INSERT INTO books (author_id, title, subtitle, hardcover_id, olid, isbn10, isbn13, asin,
+		                   pages, audio_seconds, description, release_date, release_year,
+		                   rating, ratings_count, image_url, language, publisher, tags, literary_type, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+		ON CONFLICT(author_id, title, release_year) DO UPDATE SET
+			subtitle      = excluded.subtitle,
+			hardcover_id  = excluded.hardcover_id,
+			olid          = excluded.olid,
+			isbn10        = excluded.isbn10,
+			isbn13        = excluded.isbn13,
+			asin          = excluded.asin,
+			pages         = excluded.pages,
+			audio_seconds = excluded.audio_seconds,
+			description   = excluded.description,
+			release_date  = excluded.release_date,
+			rating        = excluded.rating,
+			ratings_count = excluded.ratings_count,
+			image_url     = excluded.image_url,
+			language      = excluded.language,
+			publisher     = excluded.publisher,
+			tags          = excluded.tags,
+			literary_type = excluded.literary_type
+	`, b.AuthorID, b.Title, b.Subtitle, b.HardcoverID, b.OLID, b.ISBN10, b.ISBN13, b.ASIN,
+		b.Pages, b.AudioSeconds, b.Description, b.ReleaseDate, b.ReleaseYear,
+		b.Rating, b.RatingsCount, b.ImageURL, b.Language, b.Publisher, b.Tags, b.LiteraryType)
+	if err != nil {
+		return 0, fmt.Errorf("upserting book: %w", err)
+	}
+	id, err := res.LastInsertId()
+	if err != nil {
+		return 0, fmt.Errorf("getting last insert id: %w", err)
+	}
+	return id, nil
+}
+
+func (d *DB) GetBookByISBN(ctx context.Context, isbn13 string) (*model.Book, error) {
+	if isbn13 == "" {
+		return nil, nil
+	}
+	var b model.Book
+	err := d.db.QueryRowContext(ctx, `
+		SELECT id, author_id, title, subtitle, hardcover_id, olid, isbn10, isbn13, asin,
+		       pages, audio_seconds, description, release_date, release_year,
+		       rating, ratings_count, image_url, language, publisher, tags, literary_type, created_at
+		FROM books WHERE isbn13 = ?
+	`, isbn13).Scan(
+		&b.ID, &b.AuthorID, &b.Title, &b.Subtitle, &b.HardcoverID, &b.OLID,
+		&b.ISBN10, &b.ISBN13, &b.ASIN,
+		&b.Pages, &b.AudioSeconds, &b.Description, &b.ReleaseDate, &b.ReleaseYear,
+		&b.Rating, &b.RatingsCount, &b.ImageURL, &b.Language, &b.Publisher, &b.Tags, &b.LiteraryType, &b.CreatedAt)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("querying book by isbn: %w", err)
+	}
+	return &b, nil
+}
+
+func (d *DB) CreateBookReleaseEvent(ctx context.Context, e *model.BookReleaseEvent) (int64, error) {
+	res, err := d.db.ExecContext(ctx, `
+		INSERT INTO book_release_events (book_id, source, release_date, format_pref, status, previous_status, notes, iso_year, iso_week)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, e.BookID, e.Source, e.ReleaseDate, string(e.FormatPref), string(e.Status), string(e.PreviousStatus), e.Notes, e.ISOYear, e.ISOWeek)
+	if err != nil {
+		return 0, fmt.Errorf("creating book release event: %w", err)
+	}
+	return res.LastInsertId()
+}
+
+func (d *DB) GetLatestBookReleaseEvent(ctx context.Context, bookID int64) (*model.BookReleaseEvent, error) {
+	var e model.BookReleaseEvent
+	var status, prevStatus, formatPref, createdAt string
+	err := d.db.QueryRowContext(ctx, `
+		SELECT id, book_id, source, release_date, format_pref, status, previous_status, notes, created_at, iso_year, iso_week
+		FROM book_release_events WHERE book_id = ?
+		ORDER BY id DESC LIMIT 1
+	`, bookID).Scan(
+		&e.ID, &e.BookID, &e.Source, &e.ReleaseDate, &formatPref,
+		&status, &prevStatus, &e.Notes, &createdAt, &e.ISOYear, &e.ISOWeek)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("querying latest book release event: %w", err)
+	}
+	e.FormatPref = model.BookFormat(formatPref)
+	e.Status = model.ReleaseStatus(status)
+	e.PreviousStatus = model.ReleaseStatus(prevStatus)
+	e.CreatedAt = createdAt
+	return &e, nil
+}
+
+func (d *DB) UpdateBookReleaseEventStatus(ctx context.Context, id int64, status model.ReleaseStatus) error {
+	_, err := d.db.ExecContext(ctx, `UPDATE book_release_events SET status = ? WHERE id = ?`, string(status), id)
+	return err
+}
+
+func (d *DB) RequeueBookReleaseEvent(ctx context.Context, id int64, source, notes string) error {
+	_, err := d.db.ExecContext(ctx,
+		`UPDATE book_release_events SET status = ?, previous_status = status, notes = ?, source = ? WHERE id = ?`,
+		string(model.StatusPending), notes, source, id)
+	return err
+}
+
+func (d *DB) ListPendingBookEventsWithBooks(ctx context.Context) ([]EventWithBook, error) {
+	rows, err := d.db.QueryContext(ctx, `
+		SELECT e.id, e.book_id, e.source, e.release_date, e.format_pref,
+		       e.status, e.previous_status, e.notes, e.created_at, e.iso_year, e.iso_week,
+		       b.id, b.author_id, b.title, b.subtitle, b.hardcover_id, b.olid,
+		       b.isbn10, b.isbn13, b.asin,
+		       b.pages, b.audio_seconds, b.description, b.release_date, b.release_year,
+		       b.rating, b.ratings_count, b.image_url, b.language, b.publisher, b.tags, b.literary_type, b.created_at,
+		       a.id, a.hardcover_id, a.olid, a.name, a.bio, a.born_date, a.death_date, a.image_url, a.identifiers, a.links, a.created_at
+		FROM book_release_events e
+		JOIN books b ON b.id = e.book_id
+		JOIN authors a ON a.id = b.author_id
+		WHERE e.status = 'pending'
+		ORDER BY e.created_at DESC
+	`)
+	if err != nil {
+		return nil, fmt.Errorf("listing pending book events: %w", err)
+	}
+	defer rows.Close()
+	return scanEventWithBookRows(rows)
+}
+
+func (d *DB) ListApprovedBookEventsWithBooks(ctx context.Context) ([]EventWithBook, error) {
+	rows, err := d.db.QueryContext(ctx, `
+		SELECT e.id, e.book_id, e.source, e.release_date, e.format_pref,
+		       e.status, e.previous_status, e.notes, e.created_at, e.iso_year, e.iso_week,
+		       b.id, b.author_id, b.title, b.subtitle, b.hardcover_id, b.olid,
+		       b.isbn10, b.isbn13, b.asin,
+		       b.pages, b.audio_seconds, b.description, b.release_date, b.release_year,
+		       b.rating, b.ratings_count, b.image_url, b.language, b.publisher, b.tags, b.literary_type, b.created_at,
+		       a.id, a.hardcover_id, a.olid, a.name, a.bio, a.born_date, a.death_date, a.image_url, a.identifiers, a.links, a.created_at
+		FROM book_release_events e
+		JOIN books b ON b.id = e.book_id
+		JOIN authors a ON a.id = b.author_id
+		WHERE e.status = 'approved'
+		ORDER BY e.created_at DESC
+	`)
+	if err != nil {
+		return nil, fmt.Errorf("listing approved book events: %w", err)
+	}
+	defer rows.Close()
+	return scanEventWithBookRows(rows)
+}
+
+func (d *DB) ListBookEventsByWeek(ctx context.Context, year, week int) ([]EventWithBook, error) {
+	rows, err := d.db.QueryContext(ctx, `
+		SELECT e.id, e.book_id, e.source, e.release_date, e.format_pref,
+		       e.status, e.previous_status, e.notes, e.created_at, e.iso_year, e.iso_week,
+		       b.id, b.author_id, b.title, b.subtitle, b.hardcover_id, b.olid,
+		       b.isbn10, b.isbn13, b.asin,
+		       b.pages, b.audio_seconds, b.description, b.release_date, b.release_year,
+		       b.rating, b.ratings_count, b.image_url, b.language, b.publisher, b.tags, b.literary_type, b.created_at,
+		       a.id, a.hardcover_id, a.olid, a.name, a.bio, a.born_date, a.death_date, a.image_url, a.identifiers, a.links, a.created_at
+		FROM book_release_events e
+		JOIN books b ON b.id = e.book_id
+		JOIN authors a ON a.id = b.author_id
+		WHERE e.iso_year = ? AND e.iso_week = ?
+		ORDER BY e.created_at DESC
+	`, year, week)
+	if err != nil {
+		return nil, fmt.Errorf("listing book events by week: %w", err)
+	}
+	defer rows.Close()
+	return scanEventWithBookRows(rows)
+}
+
+func (d *DB) ListBookEventsByWeekAndStatus(ctx context.Context, year, week int, statuses ...model.ReleaseStatus) ([]EventWithBook, error) {
+	if len(statuses) == 0 {
+		return d.ListBookEventsByWeek(ctx, year, week)
+	}
+	placeholders := make([]string, len(statuses))
+	args := make([]any, 0, len(statuses)+2)
+	args = append(args, year, week)
+	for i, s := range statuses {
+		placeholders[i] = "?"
+		args = append(args, string(s))
+	}
+	query := fmt.Sprintf(`
+		SELECT e.id, e.book_id, e.source, e.release_date, e.format_pref,
+		       e.status, e.previous_status, e.notes, e.created_at, e.iso_year, e.iso_week,
+		       b.id, b.author_id, b.title, b.subtitle, b.hardcover_id, b.olid,
+		       b.isbn10, b.isbn13, b.asin,
+		       b.pages, b.audio_seconds, b.description, b.release_date, b.release_year,
+		       b.rating, b.ratings_count, b.image_url, b.language, b.publisher, b.tags, b.literary_type, b.created_at,
+		       a.id, a.hardcover_id, a.olid, a.name, a.bio, a.born_date, a.death_date, a.image_url, a.identifiers, a.links, a.created_at
+		FROM book_release_events e
+		JOIN books b ON b.id = e.book_id
+		JOIN authors a ON a.id = b.author_id
+		WHERE e.iso_year = ? AND e.iso_week = ?
+		AND e.status IN (%s)
+		ORDER BY e.created_at DESC
+	`, strings.Join(placeholders, ","))
+	rows, err := d.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("listing book events by week and status: %w", err)
+	}
+	defer rows.Close()
+	return scanEventWithBookRows(rows)
+}
+
+func (d *DB) CountBookReleaseEventsByWeek(ctx context.Context, year, week int) (int, error) {
+	var count int
+	err := d.db.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM book_release_events
+		WHERE iso_year = ? AND iso_week = ?
+	`, year, week).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("counting book release events: %w", err)
+	}
+	return count, nil
+}
+
+func (d *DB) CreateBookDownload(ctx context.Context, dl *model.BookDownload) (int64, error) {
+	res, err := d.db.ExecContext(ctx, `
+		INSERT INTO book_downloads (book_id, book_release_event, format, quality, source_type, codec, info_hash, category, status)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, dl.BookID, dl.BookReleaseEvent, string(dl.Format), dl.Quality, dl.SourceType,
+		dl.Codec, dl.InfoHash, dl.Category, string(dl.Status))
+	if err != nil {
+		return 0, fmt.Errorf("creating book download: %w", err)
+	}
+	return res.LastInsertId()
+}
+
+func scanEventWithBookRows(rows *sql.Rows) ([]EventWithBook, error) {
+	var results []EventWithBook
+	for rows.Next() {
+		var ev model.BookReleaseEvent
+		var b model.Book
+		var a model.Author
+		var evStatus, evPrevStatus, evFormatPref, evCreated string
+		var bCreated string
+		var aCreated string
+
+		err := rows.Scan(
+			&ev.ID, &ev.BookID, &ev.Source, &ev.ReleaseDate, &evFormatPref,
+			&evStatus, &evPrevStatus, &ev.Notes, &evCreated, &ev.ISOYear, &ev.ISOWeek,
+			&b.ID, &b.AuthorID, &b.Title, &b.Subtitle, &b.HardcoverID, &b.OLID,
+			&b.ISBN10, &b.ISBN13, &b.ASIN,
+			&b.Pages, &b.AudioSeconds, &b.Description, &b.ReleaseDate, &b.ReleaseYear,
+			&b.Rating, &b.RatingsCount, &b.ImageURL, &b.Language, &b.Publisher, &b.Tags, &b.LiteraryType, &bCreated,
+			&a.ID, &a.HardcoverID, &a.OLID, &a.Name, &a.Bio, &a.BornDate, &a.DeathDate, &a.ImageURL, &a.Identifiers, &a.Links, &aCreated,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("scanning event with book: %w", err)
+		}
+
+		ev.FormatPref = model.BookFormat(evFormatPref)
+		ev.Status = model.ReleaseStatus(evStatus)
+		ev.PreviousStatus = model.ReleaseStatus(evPrevStatus)
+		ev.CreatedAt = evCreated
+
+		b.CreatedAt = bCreated
+		a.CreatedAt = aCreated
+
+		results = append(results, EventWithBook{Event: &ev, Book: &b, Author: &a})
+	}
+	return results, rows.Err()
 }
 
 // ─── Music API ────────────────────────────────────────────────────────────

@@ -54,10 +54,14 @@ const (
 type itemState struct {
 	event      db.EventWithTitle  // for movies/TV
 	albumEvent *db.EventWithAlbum // for music (nil for movies/TV)
+	bookEvent  *db.EventWithBook  // for books (nil for movies/TV/music)
 	decision   decision
 }
 
 func (it *itemState) mediaType() model.MediaType {
+	if it.bookEvent != nil {
+		return model.MediaTypeBook
+	}
 	if it.albumEvent != nil {
 		return model.MediaTypeMusic
 	}
@@ -65,6 +69,9 @@ func (it *itemState) mediaType() model.MediaType {
 }
 
 func (it *itemState) displayTitle() string {
+	if it.bookEvent != nil {
+		return fmt.Sprintf("%s — %s", it.bookEvent.Author.Name, it.bookEvent.Book.Title)
+	}
 	if it.albumEvent != nil {
 		return fmt.Sprintf("%s - %s", it.albumEvent.Artist.Name, it.albumEvent.Album.Title)
 	}
@@ -85,6 +92,23 @@ type libInfo struct {
 }
 
 func (it *itemState) libraryInfo(dbCache map[string]*db.LibraryCache) libInfo {
+	if it.bookEvent != nil {
+		isbnKey := "abs:" + it.bookEvent.Book.ISBN13
+		asinKey := "abs:" + it.bookEvent.Book.ASIN
+		if c := dbCache[isbnKey]; c != nil {
+			return libInfo{
+				label:  fmt.Sprintf("✓ Audiobookshelf — %s", c.ArrTitle),
+				status: libFull,
+			}
+		}
+		if c := dbCache[asinKey]; c != nil {
+			return libInfo{
+				label:  fmt.Sprintf("✓ Audiobookshelf — %s", c.ArrTitle),
+				status: libFull,
+			}
+		}
+		return libInfo{status: libNone}
+	}
 	if it.albumEvent != nil {
 		artistKey := "lidarr:" + it.albumEvent.Artist.MBID
 		albumKey := "lidarr-album:" + it.albumEvent.Album.MBID
@@ -210,19 +234,27 @@ type TUI struct {
 	libraryCache    map[string]*db.LibraryCache // key: "source:ext_id"
 }
 
-func NewReviewTUIWithEvents(events []db.EventWithTitle, albumEvents []db.EventWithAlbum, database *db.DB, posterMode string, year, week int, prevAnimeWeek string) (*TUI, error) {
-	totalItems := len(events) + len(albumEvents)
+func NewReviewTUIWithEvents(events []db.EventWithTitle, albumEvents []db.EventWithAlbum, bookEvents []db.EventWithBook, database *db.DB, posterMode string, year, week int, prevAnimeWeek string) (*TUI, error) {
+	totalItems := len(events) + len(albumEvents) + len(bookEvents)
 	if totalItems == 0 {
 		return nil, fmt.Errorf("no events to review")
 	}
 
 	items := make([]itemState, totalItems)
-	for i, e := range events {
-		items[i] = itemState{event: e, decision: decisionForStatus(e.Event.Status)}
+	idx := 0
+	for _, e := range events {
+		items[idx] = itemState{event: e, decision: decisionForStatus(e.Event.Status)}
+		idx++
 	}
-	for i, a := range albumEvents {
+	for _, a := range albumEvents {
 		ae := a
-		items[len(events)+i] = itemState{albumEvent: &ae, decision: decisionForStatus(ae.Event.Status)}
+		items[idx] = itemState{albumEvent: &ae, decision: decisionForStatus(ae.Event.Status)}
+		idx++
+	}
+	for _, b := range bookEvents {
+		be := b
+		items[idx] = itemState{bookEvent: &be, decision: decisionForStatus(be.Event.Status)}
+		idx++
 	}
 
 	detectTerminal()
@@ -240,14 +272,14 @@ func NewReviewTUIWithEvents(events []db.EventWithTitle, albumEvents []db.EventWi
 		year:          year,
 		week:          week,
 		prevAnimeWeek: prevAnimeWeek,
-		libraryCache:  buildLibraryCacheMap(database, events, albumEvents),
+		libraryCache:  buildLibraryCacheMap(database, events, albumEvents, bookEvents),
 	}
 
 	t.rebuildFiltered()
 	return t, nil
 }
 
-func buildLibraryCacheMap(database *db.DB, events []db.EventWithTitle, albumEvents []db.EventWithAlbum) map[string]*db.LibraryCache {
+func buildLibraryCacheMap(database *db.DB, events []db.EventWithTitle, albumEvents []db.EventWithAlbum, bookEvents []db.EventWithBook) map[string]*db.LibraryCache {
 	ctx := context.Background()
 	var lookups []struct{ Source, ExtID string }
 	seen := make(map[string]bool)
@@ -283,6 +315,22 @@ func buildLibraryCacheMap(database *db.DB, events []db.EventWithTitle, albumEven
 			}
 		}
 	}
+	for _, be := range bookEvents {
+		if be.Book.ISBN13 != "" {
+			key := "abs:" + be.Book.ISBN13
+			if !seen[key] {
+				lookups = append(lookups, struct{ Source, ExtID string }{"abs", be.Book.ISBN13})
+				seen[key] = true
+			}
+		}
+		if be.Book.ASIN != "" {
+			key := "abs:" + be.Book.ASIN
+			if !seen[key] {
+				lookups = append(lookups, struct{ Source, ExtID string }{"abs", be.Book.ASIN})
+				seen[key] = true
+			}
+		}
+	}
 	result, err := database.GetLibraryCacheMap(ctx, lookups)
 	if err != nil {
 		return nil
@@ -302,11 +350,16 @@ func NewReviewTUI(database *db.DB, posterMode string) (*TUI, error) {
 		return nil, fmt.Errorf("loading album events: %w", err)
 	}
 
-	if len(events) == 0 && len(albumEvents) == 0 {
+	bookEvents, err := database.ListPendingBookEventsWithBooks(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("loading book events: %w", err)
+	}
+
+	if len(events) == 0 && len(albumEvents) == 0 && len(bookEvents) == 0 {
 		return nil, fmt.Errorf("no pending releases to review")
 	}
 
-	return NewReviewTUIWithEvents(events, albumEvents, database, posterMode, 0, 0, "")
+	return NewReviewTUIWithEvents(events, albumEvents, bookEvents, database, posterMode, 0, 0, "")
 }
 
 func (t *TUI) Run() error {
@@ -634,6 +687,17 @@ func (t *TUI) updateReview(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 
 	case "b":
 		t.filterUndecided = false
+		if t.filter == model.MediaTypeBook {
+			t.filter = ""
+		} else {
+			t.filter = model.MediaTypeBook
+		}
+		t.rebuildFiltered()
+		t.posterImg = nil
+		return t, t.loadCurrentPosterCmd()
+
+	case "l":
+		t.filterUndecided = false
 		if t.filter == model.MediaTypeMusic {
 			t.filter = ""
 		} else {
@@ -770,7 +834,8 @@ func (t *TUI) View() tea.View {
 			keyStyle.Render("m") + helpStyle.Render(" movies  ") +
 			keyStyle.Render("t") + helpStyle.Render(" tv  ") +
 			keyStyle.Render("e") + helpStyle.Render(" anime  ") +
-			keyStyle.Render("b") + helpStyle.Render(" albums  ") +
+			keyStyle.Render("b") + helpStyle.Render(" books  ") +
+			keyStyle.Render("l") + helpStyle.Render(" albums  ") +
 			keyStyle.Render("enter") + helpStyle.Render(" confirm  ") +
 			keyStyle.Render("o") + helpStyle.Render(" open    ") +
 			keyStyle.Render("q") + helpStyle.Render(" quit")
@@ -788,6 +853,8 @@ func (t *TUI) View() tea.View {
 		filterLabel = "  [movies]"
 	case model.MediaTypeTV:
 		filterLabel = "  [tv]"
+	case model.MediaTypeBook:
+		filterLabel = "  [books]"
 	case model.MediaTypeMusic:
 		filterLabel = "  [albums]"
 	case model.MediaTypeAnime:

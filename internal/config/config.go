@@ -90,16 +90,26 @@ type DelugeConfig struct {
 }
 
 type CategoryConfig struct {
-	Movies string `mapstructure:"movies"`
-	TV     string `mapstructure:"tv"`
-	Music  string `mapstructure:"music"`
-	Anime  string `mapstructure:"anime"`
+	Movies     string `mapstructure:"movies"`
+	TV         string `mapstructure:"tv"`
+	Music      string `mapstructure:"music"`
+	Anime      string `mapstructure:"anime"`
+	Ebooks     string `mapstructure:"ebooks"`
+	Audiobooks string `mapstructure:"audiobooks"`
 }
 
 type LibraryConfig struct {
-	Radarr RadarrConfig `mapstructure:"radarr"`
-	Sonarr SonarrConfig `mapstructure:"sonarr"`
-	Lidarr LidarrConfig `mapstructure:"lidarr"`
+	Radarr         RadarrConfig         `mapstructure:"radarr"`
+	Sonarr         SonarrConfig         `mapstructure:"sonarr"`
+	Lidarr         LidarrConfig         `mapstructure:"lidarr"`
+	Audiobookshelf AudiobookshelfConfig `mapstructure:"audiobookshelf"`
+}
+
+type AudiobookshelfConfig struct {
+	URL       string `mapstructure:"url"`
+	APIKey    string `mapstructure:"api_key"`
+	LibraryID string `mapstructure:"library_id"`
+	Timeout   int    `mapstructure:"timeout"`
 }
 
 type LidarrConfig struct {
@@ -137,6 +147,7 @@ type QualityConfig struct {
 	TV     MediaQualityConfig `mapstructure:"tv"`
 	Music  MusicQualityConfig `mapstructure:"music"`
 	Anime  MediaQualityConfig `mapstructure:"anime"`
+	Books  BookQualityConfig  `mapstructure:"books"`
 }
 
 type MediaQualityConfig struct {
@@ -151,11 +162,21 @@ type MusicQualityConfig struct {
 	BitratePriority []string `mapstructure:"bitrate_priority"`
 }
 
+type BookQualityConfig struct {
+	Ebooks     BookFormatQualityConfig `mapstructure:"ebooks"`
+	Audiobooks BookFormatQualityConfig `mapstructure:"audiobooks"`
+}
+
+type BookFormatQualityConfig struct {
+	FormatPriority []string `mapstructure:"format_priority"`
+}
+
 type MediaTypesConfig struct {
 	Movies bool        `mapstructure:"movies"`
 	TV     bool        `mapstructure:"tv"`
 	Music  MusicConfig `mapstructure:"music"`
 	Anime  AnimeConfig `mapstructure:"anime"`
+	Books  BookConfig  `mapstructure:"books"`
 }
 
 type MusicConfig struct {
@@ -180,6 +201,18 @@ type AnimeConfig struct {
 	PhaseBMinScore   float64 `mapstructure:"phase_b_min_score"`
 	PhaseBMinMembers int     `mapstructure:"phase_b_min_members"`
 	MinPhaseBResults int     `mapstructure:"min_phase_b_results"`
+}
+
+type BookConfig struct {
+	Enabled               bool             `mapstructure:"enabled"`
+	InitialTimeshiftWeeks int              `mapstructure:"initial_timeshift_weeks"`
+	DefaultFormat         string           `mapstructure:"default_format"`
+	Filter                BookFilterConfig `mapstructure:"filter"`
+}
+
+type BookFilterConfig struct {
+	MinRating  float64 `mapstructure:"min_rating"`
+	MinRatings int     `mapstructure:"min_ratings"`
 }
 
 const configName = "config"
@@ -330,4 +363,18 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("quality.anime.codec_priority", []string{"h265", "h264", "av1"})
 
 	v.SetDefault("downloader.categories.anime", "Anime")
+
+	v.SetDefault("downloader.categories.ebooks", "Ebooks")
+	v.SetDefault("downloader.categories.audiobooks", "Audiobooks")
+
+	v.SetDefault("quality.books.ebooks.format_priority", []string{"epub", "mobi", "azw3", "pdf"})
+	v.SetDefault("quality.books.audiobooks.format_priority", []string{"m4b", "mp3", "flac", "aac", "opus"})
+
+	v.SetDefault("media_types.books.enabled", true)
+	v.SetDefault("media_types.books.initial_timeshift_weeks", 1)
+	v.SetDefault("media_types.books.default_format", "both")
+	v.SetDefault("media_types.books.filter.min_rating", 3.5)
+	v.SetDefault("media_types.books.filter.min_ratings", 100)
+
+	v.SetDefault("library.audiobookshelf.timeout", 60)
 }

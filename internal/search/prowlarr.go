@@ -59,10 +59,14 @@ type prowlarrRelease struct {
 
 // Newznab category IDs for narrowing search results.
 const (
-	CatMovie = 2000 // Movies (parent)
-	CatTV    = 5000 // TV (parent)
-	CatMusic = 3000 // Music (parent)
-	CatAnime = 5070 // TV/Anime (Newznab standard)
+	CatMovie     = 2000 // Movies (parent)
+	CatTV        = 5000 // TV (parent)
+	CatMusic     = 3000 // Music (parent)
+	CatAnime     = 5070 // TV/Anime (Newznab standard)
+	CatBook      = 7000 // Books (parent)
+	CatBookEbook = 7010 // Books/E-Books
+	CatBookAudio = 7020 // Books/Audiobooks
+	CatBookComic = 7030 // Books/Comics
 )
 
 func categoryKey(cat int) string {
@@ -73,6 +77,8 @@ func categoryKey(cat int) string {
 		return "anime"
 	case CatMusic:
 		return "music"
+	case CatBook, CatBookEbook, CatBookAudio, CatBookComic:
+		return "books"
 	}
 	return ""
 }
@@ -90,6 +96,21 @@ func (p *ProwlarrClient) SearchAnime(ctx context.Context, query string) ([]quali
 		Type:       "tvsearch",
 		Limit:      50,
 		Categories: []int{CatAnime},
+	})
+}
+
+func (p *ProwlarrClient) SearchBooks(ctx context.Context, query string, isAudiobook bool) ([]quality.ParsedRelease, error) {
+	var cats []int
+	if isAudiobook {
+		cats = []int{CatBookAudio}
+	} else {
+		cats = []int{CatBookEbook}
+	}
+	return p.Search(ctx, SearchParams{
+		Query:      query,
+		Type:       "search",
+		Limit:      50,
+		Categories: cats,
 	})
 }
 

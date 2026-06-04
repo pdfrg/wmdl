@@ -7,6 +7,7 @@ const (
 	MediaTypeTV    MediaType = "tv"
 	MediaTypeMusic MediaType = "music"
 	MediaTypeAnime MediaType = "anime"
+	MediaTypeBook  MediaType = "book"
 )
 
 type ReleaseStatus string
@@ -185,4 +186,80 @@ type AlbumReleaseEvent struct {
 	CreatedAt      string
 	ISOYear        int
 	ISOWeek        int
+}
+
+type BookFormat string
+
+const (
+	BookFormatEbook     BookFormat = "ebook"
+	BookFormatAudiobook BookFormat = "audiobook"
+	BookFormatBoth      BookFormat = "both"
+)
+
+type Author struct {
+	ID          int64
+	HardcoverID int
+	OLID        string // Open Library author ID
+	Name        string
+	Bio         string
+	BornDate    string
+	DeathDate   string
+	ImageURL    string
+	Identifiers string // JSON: VIAF, ISNI, etc.
+	Links       string // JSON: external links (Wikipedia, Goodreads, etc.)
+	CreatedAt   string
+}
+
+type Book struct {
+	ID           int64
+	AuthorID     int64
+	Title        string
+	Subtitle     string
+	HardcoverID  int
+	OLID         string // Open Library work ID
+	ISBN10       string
+	ISBN13       string
+	ASIN         string
+	Pages        int
+	AudioSeconds int
+	Description  string
+	ReleaseDate  string
+	ReleaseYear  int
+	Rating       float64
+	RatingsCount int
+	ImageURL     string
+	Language     string
+	Publisher    string
+	Tags         string // comma-separated
+	LiteraryType string // fiction / nonfiction
+	CreatedAt    string
+}
+
+type BookReleaseEvent struct {
+	ID             int64
+	BookID         int64
+	Source         string // "goodreads"
+	ReleaseDate    string
+	FormatPref     BookFormat // ebook, audiobook, both (from config default)
+	Status         ReleaseStatus
+	PreviousStatus ReleaseStatus
+	Notes          string
+	CreatedAt      string
+	ISOYear        int
+	ISOWeek        int
+}
+
+type BookDownload struct {
+	ID               int64
+	BookID           int64
+	BookReleaseEvent int64
+	Format           BookFormat
+	Quality          string
+	SourceType       string
+	Codec            string
+	InfoHash         string
+	Category         string
+	Status           DownloadStatus
+	ClientTorrentID  string
+	CreatedAt        string
 }

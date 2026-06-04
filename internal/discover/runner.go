@@ -57,6 +57,8 @@ type Runner struct {
 	rt              *RTFinder
 	imdb            *IMDbAPIClient
 	mb              *MBClient
+	hc              *HardcoverClient
+	ol              *OLClient
 	radarr          *library.RadarrClient
 	sonarr          *library.SonarrClient
 	lidarr          *library.LidarrClient
@@ -96,6 +98,9 @@ func NewRunner(logger zerolog.Logger, cfg *config.Config, database *db.DB, headl
 		notify = nil
 	}
 
+	hcClient := NewHardcoverClient(cfg.Library.Audiobookshelf.APIKey)
+	// If HC key is not set, still create the client (search will just return nil)
+
 	r := &Runner{
 		log:      logger,
 		cfg:      cfg,
@@ -104,6 +109,8 @@ func NewRunner(logger zerolog.Logger, cfg *config.Config, database *db.DB, headl
 		rt:       NewRTFinder(),
 		imdb:     NewIMDbAPIClient(),
 		mb:       NewMBClient(),
+		hc:       hcClient,
+		ol:       NewOLClient(),
 		notify:   notify,
 		debugURL: fmt.Sprintf("http://127.0.0.1:%d", cfg.Browser.DebugPort),
 		headless: headless,
@@ -260,6 +267,7 @@ func (r *Runner) Run(ctx context.Context) error {
 	wantVideo := r.mediaTypeFilter == "" || r.mediaTypeFilter == model.MediaTypeMovie || r.mediaTypeFilter == model.MediaTypeTV
 	wantAnime := r.mediaTypeFilter == "" || r.mediaTypeFilter == model.MediaTypeAnime
 	wantMusic := r.mediaTypeFilter == "" || r.mediaTypeFilter == model.MediaTypeMusic
+	wantBooks := r.mediaTypeFilter == "" || r.mediaTypeFilter == model.MediaTypeBook
 
 	// Kick off *arr library fetches in background so they run during scraping.
 	if r.sonarr != nil {
@@ -352,6 +360,19 @@ func (r *Runner) Run(ctx context.Context) error {
 		providers = append(providers, jikan)
 	}
 
+	// Book providers (gated on config and type filter)
+	if wantBooks && r.cfg.MediaTypes.Books.Enabled {
+		// Goodreads requires chromedp/Brave
+		if r.allocCtx != nil {
+			gr := NewGoodreadsProvider(r.debugURL)
+			if r.hasTargetWeek {
+				bookYear, bookWeek := r.bookTargetWeek()
+				gr.SetWeekRange(bookYear, bookWeek)
+			}
+			providers = append(providers, gr)
+		}
+	}
+
 	// Music providers (gated on config and type filter)
 	if wantMusic && r.cfg.MediaTypes.Music.Enabled {
 		aoty := NewAOTYProvider(r.cfg.MediaTypes.Music.Filter)
@@ -396,14 +417,16 @@ func (r *Runner) Run(ctx context.Context) error {
 		return nil
 	}
 
-	// Split video, anime, and music items
-	var videoItems, animeItems, musicItems []ScrapedItem
+	// Split video, anime, music, and book items
+	var videoItems, animeItems, musicItems, bookItems []ScrapedItem
 	for _, item := range allItems {
 		switch item.MediaType {
 		case model.MediaTypeMusic:
 			musicItems = append(musicItems, item)
 		case model.MediaTypeAnime:
 			animeItems = append(animeItems, item)
+		case model.MediaTypeBook:
+			bookItems = append(bookItems, item)
 		default:
 			videoItems = append(videoItems, item)
 		}
@@ -440,7 +463,7 @@ func (r *Runner) Run(ctx context.Context) error {
 	}
 
 	var processed int
-	totalItems := len(uniqueVideos) + len(animeItems) + len(uniqueMusic)
+	totalItems := len(uniqueVideos) + len(animeItems) + len(uniqueMusic) + len(bookItems)
 
 	// Process video items (only when type filter matches)
 	if wantVideo && len(uniqueVideos) > 0 {
@@ -558,9 +581,46 @@ func (r *Runner) Run(ctx context.Context) error {
 		processed += musicProcessed
 	}
 
+	// Process book items (with Hardcover + Open Library enrichment)
+	if wantBooks && len(bookItems) > 0 {
+		var muBooks sync.Mutex
+		var wgBooks sync.WaitGroup
+		var bookProcessed int
+		semBooks := make(chan struct{}, 2)
+		wgBooks.Add(len(bookItems))
+		for _, item := range bookItems {
+			go func(item ScrapedItem) {
+				defer wgBooks.Done()
+				select {
+				case semBooks <- struct{}{}:
+				case <-ctx.Done():
+					return
+				}
+				defer func() { <-semBooks }()
+				itemCtx, itemCancel := context.WithTimeout(ctx, 2*time.Minute)
+				defer itemCancel()
+				if err := r.processBookItem(itemCtx, item, progYear, progWeek); err != nil {
+					r.log.Warn().Err(err).Str("book", item.Title).Msg("error processing book item")
+				}
+				muBooks.Lock()
+				bookProcessed++
+				count := bookProcessed
+				muBooks.Unlock()
+				r.log.Info().Int("processed", count).Int("total", len(bookItems)).Msg("book processing progress")
+			}(item)
+		}
+		select {
+		case <-waitDone(ctx, &wgBooks):
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+		processed += bookProcessed
+	}
+
 	eventCount, _ := r.db.CountReleaseEventsByWeek(ctx, progYear, progWeek)
 	albumCount, _ := r.db.CountAlbumReleaseEventsByWeek(ctx, progYear, progWeek)
-	totalEvents := eventCount + albumCount
+	bookEventCount, _ := r.db.CountBookReleaseEventsByWeek(ctx, progYear, progWeek)
+	totalEvents := eventCount + albumCount + bookEventCount
 	skipped := processed - totalEvents
 	if skipped > 0 {
 		r.log.Info().Msgf("Processed %d/%d items (%d events created, %d duplicate%s skipped)",
@@ -936,6 +996,16 @@ func (r *Runner) musicTargetWeek() (int, int) {
 	return r.targetYear, r.targetWeek - timeshiftWeeks
 }
 
+// bookTargetWeek returns the release week to scrape for books.
+// Applies the configured InitialTimeshiftWeeks offset (configurable, like music).
+func (r *Runner) bookTargetWeek() (int, int) {
+	timeshiftWeeks := r.cfg.MediaTypes.Books.InitialTimeshiftWeeks
+	if timeshiftWeeks <= 0 {
+		timeshiftWeeks = 1
+	}
+	return r.targetYear, r.targetWeek - timeshiftWeeks
+}
+
 // processMusicItem stores a scraped music item and enriches with MusicBrainz
 // data when available. MB lookup is best-effort — items are always stored.
 func (r *Runner) processAnimeItem(ctx context.Context, item ScrapedItem, progYear, progWeek int) error {
@@ -1162,6 +1232,218 @@ func (r *Runner) processMusicItem(ctx context.Context, item ScrapedItem, progYea
 	}
 	if _, err := r.db.CreateAlbumReleaseEvent(ctx, evt); err != nil {
 		return fmt.Errorf("saving album release event: %w", err)
+	}
+
+	return nil
+}
+
+func (r *Runner) processBookItem(ctx context.Context, item ScrapedItem, progYear, progWeek int) error {
+	apiCtx, apiCancel := context.WithTimeout(ctx, 30*time.Second)
+	defer apiCancel()
+
+	r.log.Info().Str("title", item.Title).Str("author", item.ArtistName).Msg("processing book item")
+
+	// Step 1: Hardcover enrichment (best-effort)
+	hcResult, err := r.hc.SearchBook(apiCtx, item.Title, item.ArtistName)
+	if err != nil {
+		r.log.Warn().Err(err).Str("book", item.Title).Msg("hardcover search failed, falling back to Open Library")
+	}
+
+	// Step 2: Open Library fallback
+	var olResult *OLBookResult
+	if hcResult == nil || hcResult.ISBN13 == "" {
+		var olErr error
+		olResult, olErr = r.ol.SearchBook(apiCtx, item.Title, item.ArtistName)
+		if olErr != nil {
+			r.log.Warn().Err(olErr).Str("book", item.Title).Msg("openlibrary search failed, storing without enrichment")
+		}
+	}
+
+	// Step 3: Filter by score/rating
+	minRating := r.cfg.MediaTypes.Books.Filter.MinRating
+	minRatings := r.cfg.MediaTypes.Books.Filter.MinRatings
+
+	rating := item.ImdbRating // from Goodreads
+	if hcResult != nil && hcResult.Rating > 0 {
+		rating = hcResult.Rating
+	}
+	ratingsCount := 0
+	if hcResult != nil {
+		ratingsCount = hcResult.RatingsCount
+	}
+	if item.Source == "goodreads" && minRatings > 0 {
+		if ratingsCount > 0 && ratingsCount < minRatings {
+			r.log.Info().Str("book", item.Title).Int("ratings", ratingsCount).Msg("below min_ratings filter, skipping")
+			return nil
+		}
+	}
+	if item.Source == "goodreads" && minRating > 0 && rating > 0 && rating < minRating {
+		r.log.Info().Str("book", item.Title).Float64("rating", rating).Msg("below min_rating filter, skipping")
+		return nil
+	}
+
+	// Step 4: Build author from enrichment data
+	authorName := item.ArtistName
+	authorOLID := ""
+	authorBio := ""
+	authorBorn := ""
+	authorDied := ""
+	authorImage := ""
+	var hcAuthorID int
+
+	if hcResult != nil && hcResult.Author != nil {
+		authorName = hcResult.Author.Name
+		authorOLID = hcResult.Author.OLID
+		authorBio = hcResult.Author.Bio
+		authorBorn = hcResult.Author.BornDate
+		authorDied = hcResult.Author.DeathDate
+		authorImage = hcResult.Author.ImageURL
+		hcAuthorID = hcResult.Author.ID
+	} else if olResult != nil && olResult.Author != nil {
+		authorName = olResult.Author.Name
+		authorOLID = strings.TrimPrefix(olResult.Author.OLID, "/authors/")
+
+		// Fetch author detail for bio/image
+		if olResult.Author.OLID != "" {
+			olAuthor, olErr := r.ol.GetAuthor(apiCtx, olResult.Author.OLID)
+			if olErr == nil && olAuthor != nil {
+				authorBio = olAuthor.Bio
+				authorBorn = olAuthor.BornDate
+				authorDied = olAuthor.DeathDate
+				authorImage = olAuthor.ImageURL
+			}
+		}
+	}
+
+	author := &model.Author{
+		HardcoverID: hcAuthorID,
+		OLID:        authorOLID,
+		Name:        authorName,
+		Bio:         authorBio,
+		BornDate:    authorBorn,
+		DeathDate:   authorDied,
+		ImageURL:    authorImage,
+	}
+	authorID, err := r.db.UpsertAuthor(ctx, author)
+	if err != nil {
+		return fmt.Errorf("saving author: %w", err)
+	}
+
+	// Step 5: Build book from enrichment data
+	isbn10, isbn13, asin := "", "", ""
+	pages := 0
+	audioSeconds := 0
+	publisher := ""
+	language := ""
+	tags := ""
+	literaryType := ""
+	hcBookID := 0
+	olWorkID := ""
+	description := item.Overview
+	imageURL := item.ImageURL
+	releaseDate := item.ReleaseDate
+	releaseYear := item.Year
+	hcRating := 0.0
+	hcRatingsCount := 0
+
+	if hcResult != nil {
+		isbn10 = hcResult.ISBN10
+		isbn13 = hcResult.ISBN13
+		asin = hcResult.ASIN
+		pages = hcResult.Pages
+		audioSeconds = hcResult.AudioSeconds
+		publisher = hcResult.Publisher
+		language = hcResult.Language
+		tags = strings.Join(hcResult.Tags, ", ")
+		literaryType = hcResult.LiteraryType
+		hcBookID = hcResult.ID
+		olWorkID = hcResult.OLID
+		if hcResult.Description != "" {
+			description = hcResult.Description
+		}
+		if hcResult.ImageURL != "" {
+			imageURL = hcResult.ImageURL
+		}
+		if hcResult.ReleaseDate != "" {
+			releaseDate = hcResult.ReleaseDate
+		}
+		if hcResult.ReleaseYear > 0 {
+			releaseYear = hcResult.ReleaseYear
+		}
+		hcRating = hcResult.Rating
+		hcRatingsCount = hcResult.RatingsCount
+	} else if olResult != nil {
+		olWorkID = olResult.OLID
+		isbn10 = olResult.ISBN10
+		isbn13 = olResult.ISBN13
+		if olResult.Description != "" {
+			description = olResult.Description
+		}
+		if olResult.ImageURL != "" {
+			imageURL = olResult.ImageURL
+		}
+		if olResult.ReleaseYear > 0 {
+			releaseYear = olResult.ReleaseYear
+		}
+		tags = strings.Join(olResult.Subjects, ", ")
+	}
+
+	book := &model.Book{
+		AuthorID:     authorID,
+		Title:        item.Title,
+		HardcoverID:  hcBookID,
+		OLID:         olWorkID,
+		ISBN10:       isbn10,
+		ISBN13:       isbn13,
+		ASIN:         asin,
+		Pages:        pages,
+		AudioSeconds: audioSeconds,
+		Description:  description,
+		ReleaseDate:  releaseDate,
+		ReleaseYear:  releaseYear,
+		Rating:       hcRating,
+		RatingsCount: hcRatingsCount,
+		ImageURL:     imageURL,
+		Language:     language,
+		Publisher:    publisher,
+		Tags:         tags,
+		LiteraryType: literaryType,
+	}
+	bookID, err := r.db.UpsertBook(ctx, book)
+	if err != nil {
+		return fmt.Errorf("saving book: %w", err)
+	}
+
+	// Step 6: Create/reuse book release event
+	existing, err := r.db.GetLatestBookReleaseEvent(ctx, bookID)
+	if err != nil {
+		return fmt.Errorf("checking existing events: %w", err)
+	}
+
+	if existing != nil {
+		switch existing.Status {
+		case model.StatusPending:
+			return nil // already in review queue
+		case model.StatusApproved, model.StatusDownloaded:
+			return nil // already processed
+		case model.StatusRejected:
+			return nil // don't re-queue
+		}
+	}
+
+	formatPref := model.BookFormat(r.cfg.MediaTypes.Books.DefaultFormat)
+
+	evt := &model.BookReleaseEvent{
+		BookID:      bookID,
+		Source:      item.Source,
+		ReleaseDate: releaseDate,
+		FormatPref:  formatPref,
+		Status:      model.StatusPending,
+		ISOYear:     progYear,
+		ISOWeek:     progWeek,
+	}
+	if _, err := r.db.CreateBookReleaseEvent(ctx, evt); err != nil {
+		return fmt.Errorf("saving book release event: %w", err)
 	}
 
 	return nil

@@ -81,6 +81,11 @@ func runReviewForWeek(ctx context.Context, database *db.DB, cfg *config.Config, 
 		return 0, fmt.Errorf("loading album events: %w", err)
 	}
 
+	bookEvents, err := database.ListBookEventsByWeek(ctx, year, week)
+	if err != nil {
+		return 0, fmt.Errorf("loading book events: %w", err)
+	}
+
 	prevAnimeWeek := ""
 	prevYear, prevWeek, err := database.GetPreviousAnimeWeek(ctx, year, week)
 	if err == nil && prevYear > 0 {
@@ -96,6 +101,14 @@ func runReviewForWeek(ctx context.Context, database *db.DB, cfg *config.Config, 
 	}
 	if !hasPending {
 		for _, ev := range albumEvents {
+			if ev.Event.Status == model.StatusPending {
+				hasPending = true
+				break
+			}
+		}
+	}
+	if !hasPending {
+		for _, ev := range bookEvents {
 			if ev.Event.Status == model.StatusPending {
 				hasPending = true
 				break
@@ -118,7 +131,7 @@ func runReviewForWeek(ctx context.Context, database *db.DB, cfg *config.Config, 
 			}
 			switch choice {
 			case "r":
-				tui, err := review.NewReviewTUIWithEvents(events, albumEvents, database, cfg.PosterMode, year, week, prevAnimeWeek)
+				tui, err := review.NewReviewTUIWithEvents(events, albumEvents, bookEvents, database, cfg.PosterMode, year, week, prevAnimeWeek)
 				if err != nil {
 					return 0, err
 				}
@@ -137,7 +150,7 @@ func runReviewForWeek(ctx context.Context, database *db.DB, cfg *config.Config, 
 				}
 				return approved, nil
 			case "e":
-				printReviewExport(events, albumEvents)
+				printReviewExport(events, albumEvents, bookEvents)
 				return 0, nil
 			case "q":
 				return 0, nil
@@ -161,7 +174,14 @@ func runReviewForWeek(ctx context.Context, database *db.DB, cfg *config.Config, 
 		}
 	}
 
-	tui, err := review.NewReviewTUIWithEvents(pendingEvents, pendingAlbumEvents, database, cfg.PosterMode, year, week, prevAnimeWeek)
+	var pendingBookEvents []db.EventWithBook
+	for _, ev := range bookEvents {
+		if ev.Event.Status == model.StatusPending {
+			pendingBookEvents = append(pendingBookEvents, ev)
+		}
+	}
+
+	tui, err := review.NewReviewTUIWithEvents(pendingEvents, pendingAlbumEvents, pendingBookEvents, database, cfg.PosterMode, year, week, prevAnimeWeek)
 	if err != nil {
 		return 0, err
 	}
@@ -447,7 +467,14 @@ func runProcessForWeek(ctx context.Context, database *db.DB, cfg *config.Config,
 		exec.ProcessMusicAlbumDecisions(ctx, albumResults)
 	}
 
-	if len(events) > 0 || len(animeAiring) > 0 || len(albumEventsForProcess) > 0 {
+	// ─── Book processing ─────────────────────────────────────────────────
+	bookEventsForProcess, _ := database.ListApprovedBookEventsWithBooks(ctx)
+	if len(bookEventsForProcess) > 0 {
+		log.Info().Msgf("Processing %d book(s)...", len(bookEventsForProcess))
+		exec.ProcessBooks(ctx, bookEventsForProcess)
+	}
+
+	if len(events) > 0 || len(animeAiring) > 0 || len(albumEventsForProcess) > 0 || len(bookEventsForProcess) > 0 {
 		target.Processed = true
 		if err := database.UpsertWeekState(ctx, target); err != nil {
 			log.Warn().Err(err).Msg("tracking week state")
