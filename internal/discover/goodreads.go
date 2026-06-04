@@ -50,6 +50,7 @@ type grScrapedBook struct {
 	Author       string
 	Rating       float64
 	RatingsCount int
+	Shelvings    int
 	ImageURL     string
 	Description  string
 	URL          string
@@ -101,16 +102,17 @@ func (p *GoodreadsProvider) Scrape() ([]ScrapedItem, error) {
 	var result []ScrapedItem
 	for _, b := range allItems {
 		result = append(result, ScrapedItem{
-			Title:        b.Title,
-			ArtistName:   b.Author,
-			MediaType:    model.MediaTypeBook,
-			ReleaseType:  "",
-			Source:       "goodreads",
-			ImageURL:     b.ImageURL,
-			Notes:        b.URL,
-			Overview:     b.Description,
-			ImdbRating:   b.Rating,
-			RatingsCount: b.RatingsCount,
+			Title:          b.Title,
+			ArtistName:     b.Author,
+			MediaType:      model.MediaTypeBook,
+			ReleaseType:    "",
+			Source:         "goodreads",
+			ImageURL:       b.ImageURL,
+			Notes:          b.URL,
+			Overview:       b.Description,
+			ImdbRating:     b.Rating,
+			RatingsCount:   b.RatingsCount,
+			ShelvingsCount: b.Shelvings,
 		})
 	}
 
@@ -168,13 +170,14 @@ func (p *GoodreadsProvider) scrapeMonth(year, month int) ([]grScrapedBook, error
 var (
 	grBookBlock = regexp.MustCompile(`<article[^>]*class="[^"]*BookListItem[^"]*"[^>]*>(.*?)</article>`)
 
-	grTitle   = regexp.MustCompile(`data-testid="bookTitle"[^>]*>([^<]+)`)
-	grAuthor  = regexp.MustCompile(`class="ContributorLink__name"[^>]*>([^<]+)`)
-	grRating  = regexp.MustCompile(`data-testid="ratingValue"[^>]*>\s*<span[^>]*>([\d.]+)`)
-	grRatings = regexp.MustCompile(`data-testid="ratingsCount"[^>]*>.*?>([\d.]+(?:k|K|m|M)?).*ratings`)
-	grImage   = regexp.MustCompile(`<img[^>]*\bsrc="([^"]+)"`)
-	grDesc    = regexp.MustCompile(`data-testid="contentContainer"[^>]*>\s*<span[^>]*>\s*([^<]+)`)
-	grLink    = regexp.MustCompile(`<a[^>]*\bhref="([^"]+)"`)
+	grTitle     = regexp.MustCompile(`data-testid="bookTitle"[^>]*>([^<]+)`)
+	grAuthor    = regexp.MustCompile(`class="ContributorLink__name"[^>]*>([^<]+)`)
+	grRating    = regexp.MustCompile(`data-testid="ratingValue"[^>]*>\s*<span[^>]*>([\d.]+)`)
+	grRatings   = regexp.MustCompile(`data-testid="ratingsCount"[^>]*>.*?>([\d.]+(?:k|K|m|M)?).*ratings`)
+	grShelvings = regexp.MustCompile(`(\d[\d,.]*(?:k|K|m|M)?)\s*shelvings`)
+	grImage     = regexp.MustCompile(`<img[^>]*\bsrc="([^"]+)"`)
+	grDesc      = regexp.MustCompile(`data-testid="contentContainer"[^>]*>\s*<span[^>]*>\s*([^<]+)`)
+	grLink      = regexp.MustCompile(`<a[^>]*\bhref="([^"]+)"`)
 )
 
 func parseGRPage(html string) []grScrapedBook {
@@ -204,6 +207,9 @@ func parseGRPage(html string) []grScrapedBook {
 		ratingsStr := extractMatch(grRatings, block)
 		ratingsCount := parseGRRatings(ratingsStr)
 
+		shelvingsStr := extractMatch(grShelvings, block)
+		shelvings := parseGRRatings(shelvingsStr)
+
 		imageURL := extractMatch(grImage, block)
 
 		description := extractMatch(grDesc, block)
@@ -217,6 +223,7 @@ func parseGRPage(html string) []grScrapedBook {
 			Author:       author,
 			Rating:       rating,
 			RatingsCount: ratingsCount,
+			Shelvings:    shelvings,
 			ImageURL:     imageURL,
 			Description:  description,
 			URL:          bookURL,

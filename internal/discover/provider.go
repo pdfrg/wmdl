@@ -46,7 +46,8 @@ type ScrapedItem struct {
 	MalID           int
 
 	// Book-specific fields (empty for non-book)
-	RatingsCount int
+	RatingsCount   int
+	ShelvingsCount int
 
 	// Music-specific fields (empty for movie/TV/anime)
 	ArtistName      string

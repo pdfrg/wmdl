@@ -1355,14 +1355,8 @@ func (r *Runner) processBookItem(ctx context.Context, item ScrapedItem, progYear
 	minRating := r.cfg.MediaTypes.Books.Filter.MinRating
 	minRatings := r.cfg.MediaTypes.Books.Filter.MinRatings
 
-	rating := item.ImdbRating // from Goodreads
-	if hcResult != nil && hcResult.Rating > 0 {
-		rating = hcResult.Rating
-	}
-	ratingsCount := item.RatingsCount
-	if hcResult != nil && hcResult.RatingsCount > 0 {
-		ratingsCount = hcResult.RatingsCount
-	}
+	rating := item.ImdbRating         // from Goodreads
+	ratingsCount := item.RatingsCount // from Goodreads
 
 	if minRatings > 0 && ratingsCount == 0 {
 		r.log.Warn().Str("book", item.Title).Msg("no ratings data available, cannot verify min_ratings threshold, skipping")
@@ -1440,8 +1434,7 @@ func (r *Runner) processBookItem(ctx context.Context, item ScrapedItem, progYear
 	imageURL := item.ImageURL
 	releaseDate := item.ReleaseDate
 	releaseYear := item.Year
-	hcRating := 0.0
-	hcRatingsCount := 0
+	shelvingsCount := item.ShelvingsCount
 	title := item.Title
 	subtitle := ""
 
@@ -1473,8 +1466,6 @@ func (r *Runner) processBookItem(ctx context.Context, item ScrapedItem, progYear
 		if hcResult.ReleaseYear > 0 {
 			releaseYear = hcResult.ReleaseYear
 		}
-		hcRating = hcResult.Rating
-		hcRatingsCount = hcResult.RatingsCount
 	} else if olResult != nil {
 		olWorkID = olResult.OLID
 		isbn10 = olResult.ISBN10
@@ -1502,26 +1493,27 @@ func (r *Runner) processBookItem(ctx context.Context, item ScrapedItem, progYear
 		}
 
 		book := &model.Book{
-			AuthorID:     authorID,
-			Title:        title,
-			Subtitle:     subtitle,
-			HardcoverID:  hcBookID,
-			OLID:         olWorkID,
-			ISBN10:       isbn10,
-			ISBN13:       isbn13,
-			ASIN:         asin,
-			Pages:        pages,
-			AudioSeconds: audioSeconds,
-			Description:  description,
-			ReleaseDate:  releaseDate,
-			ReleaseYear:  releaseYear,
-			Rating:       hcRating,
-			RatingsCount: hcRatingsCount,
-			ImageURL:     imageURL,
-			Language:     language,
-			Publisher:    publisher,
-			Tags:         tags,
-			LiteraryType: literaryType,
+			AuthorID:       authorID,
+			Title:          title,
+			Subtitle:       subtitle,
+			HardcoverID:    hcBookID,
+			OLID:           olWorkID,
+			ISBN10:         isbn10,
+			ISBN13:         isbn13,
+			ASIN:           asin,
+			Pages:          pages,
+			AudioSeconds:   audioSeconds,
+			Description:    description,
+			ReleaseDate:    releaseDate,
+			ReleaseYear:    releaseYear,
+			Rating:         rating,
+			RatingsCount:   ratingsCount,
+			ShelvingsCount: shelvingsCount,
+			ImageURL:       imageURL,
+			Language:       language,
+			Publisher:      publisher,
+			Tags:           tags,
+			LiteraryType:   literaryType,
 		}
 		bookID, err := r.db.UpsertBookTx(ctx, tx, book)
 		if err != nil {

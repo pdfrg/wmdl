@@ -1317,6 +1317,9 @@ func (t *TUI) buildBookContent(be *db.EventWithBook, rw int) string {
 		if book.RatingsCount > 0 {
 			scoreParts = append(scoreParts, fmt.Sprintf("%d ratings", book.RatingsCount))
 		}
+		if book.ShelvingsCount > 0 {
+			scoreParts = append(scoreParts, fmtShelvings(book.ShelvingsCount)+" shelvings")
+		}
 		b.WriteString(ratingsLine.Render(strings.Join(scoreParts, " · ")))
 	}
 
@@ -1739,6 +1742,16 @@ func fmtRating(v float64) string {
 		return "—"
 	}
 	return fmt.Sprintf("%.1f", v)
+}
+
+func fmtShelvings(n int) string {
+	if n >= 1000000 {
+		return fmt.Sprintf("%.1fM", float64(n)/1000000)
+	}
+	if n >= 1000 {
+		return fmt.Sprintf("%.1fk", float64(n)/1000)
+	}
+	return strconv.Itoa(n)
 }
 
 func fmtPct(v float64) string {

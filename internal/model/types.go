@@ -211,28 +211,29 @@ type Author struct {
 }
 
 type Book struct {
-	ID           int64
-	AuthorID     int64
-	Title        string
-	Subtitle     string
-	HardcoverID  int
-	OLID         string // Open Library work ID
-	ISBN10       string
-	ISBN13       string
-	ASIN         string
-	Pages        int
-	AudioSeconds int
-	Description  string
-	ReleaseDate  string
-	ReleaseYear  int
-	Rating       float64
-	RatingsCount int
-	ImageURL     string
-	Language     string
-	Publisher    string
-	Tags         string // comma-separated
-	LiteraryType string // fiction / nonfiction
-	CreatedAt    string
+	ID             int64
+	AuthorID       int64
+	Title          string
+	Subtitle       string
+	HardcoverID    int
+	OLID           string // Open Library work ID
+	ISBN10         string
+	ISBN13         string
+	ASIN           string
+	Pages          int
+	AudioSeconds   int
+	Description    string
+	ReleaseDate    string
+	ReleaseYear    int
+	Rating         float64
+	RatingsCount   int
+	ShelvingsCount int
+	ImageURL       string
+	Language       string
+	Publisher      string
+	Tags           string // comma-separated
+	LiteraryType   string // fiction / nonfiction
+	CreatedAt      string
 }
 
 type BookReleaseEvent struct {

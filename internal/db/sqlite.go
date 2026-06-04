@@ -246,14 +246,15 @@ func (d *DB) Migrate(ctx context.Context) error {
 		description  TEXT NOT NULL DEFAULT '',
 		release_date TEXT NOT NULL DEFAULT '',
 		release_year INTEGER DEFAULT 0,
-		rating       REAL DEFAULT 0,
-		ratings_count INTEGER DEFAULT 0,
-		image_url    TEXT NOT NULL DEFAULT '',
-		language     TEXT NOT NULL DEFAULT '',
-		publisher    TEXT NOT NULL DEFAULT '',
-		tags         TEXT NOT NULL DEFAULT '',
-		literary_type TEXT NOT NULL DEFAULT '',
-		created_at   TEXT NOT NULL DEFAULT (datetime('now')),
+		rating         REAL DEFAULT 0,
+		ratings_count  INTEGER DEFAULT 0,
+		shelvings_count INTEGER DEFAULT 0,
+		image_url      TEXT NOT NULL DEFAULT '',
+		language       TEXT NOT NULL DEFAULT '',
+		publisher      TEXT NOT NULL DEFAULT '',
+		tags           TEXT NOT NULL DEFAULT '',
+		literary_type  TEXT NOT NULL DEFAULT '',
+		created_at     TEXT NOT NULL DEFAULT (datetime('now')),
 		UNIQUE(author_id, title, release_year)
 	);
 
@@ -311,6 +312,7 @@ func (d *DB) Migrate(ctx context.Context) error {
 	d.db.ExecContext(ctx, `ALTER TABLE titles ADD COLUMN mal_id INTEGER NOT NULL DEFAULT 0`)
 	d.db.ExecContext(ctx, `ALTER TABLE book_release_events ADD COLUMN ebook_processed INTEGER NOT NULL DEFAULT 0`)
 	d.db.ExecContext(ctx, `ALTER TABLE book_release_events ADD COLUMN audiobook_processed INTEGER NOT NULL DEFAULT 0`)
+	d.db.ExecContext(ctx, `ALTER TABLE books ADD COLUMN shelvings_count INTEGER DEFAULT 0`)
 
 	// Recreate titles table to update media_type CHECK constraint for anime support
 	// SQLite doesn't support ALTER TABLE to change constraints, so we recreate.
@@ -1257,14 +1259,14 @@ func (d *DB) upsertBook(ctx context.Context, q querier, b *model.Book) (int64, e
 					olid = ?, isbn10 = ?, asin = ?,
 					pages = ?, audio_seconds = ?, description = ?,
 					release_date = ?, release_year = ?,
-					rating = ?, ratings_count = ?, image_url = ?,
+					rating = ?, ratings_count = ?, shelvings_count = ?, image_url = ?,
 					language = ?, publisher = ?, tags = ?, literary_type = ?
 				WHERE id = ?
 			`, b.AuthorID, b.Title, b.Subtitle, b.HardcoverID,
 				b.OLID, b.ISBN10, b.ASIN,
 				b.Pages, b.AudioSeconds, b.Description,
 				b.ReleaseDate, b.ReleaseYear,
-				b.Rating, b.RatingsCount, b.ImageURL,
+				b.Rating, b.RatingsCount, b.ShelvingsCount, b.ImageURL,
 				b.Language, b.Publisher, b.Tags, b.LiteraryType, existing.ID)
 			if err != nil {
 				return 0, fmt.Errorf("updating existing book by isbn: %w", err)
@@ -1276,29 +1278,30 @@ func (d *DB) upsertBook(ctx context.Context, q querier, b *model.Book) (int64, e
 	res, err := q.ExecContext(ctx, `
 		INSERT INTO books (author_id, title, subtitle, hardcover_id, olid, isbn10, isbn13, asin,
 		                   pages, audio_seconds, description, release_date, release_year,
-		                   rating, ratings_count, image_url, language, publisher, tags, literary_type, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+		                   rating, ratings_count, shelvings_count, image_url, language, publisher, tags, literary_type, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
 		ON CONFLICT(author_id, title, release_year) DO UPDATE SET
-			subtitle      = excluded.subtitle,
-			hardcover_id  = excluded.hardcover_id,
-			olid          = excluded.olid,
-			isbn10        = excluded.isbn10,
-			isbn13        = excluded.isbn13,
-			asin          = excluded.asin,
-			pages         = excluded.pages,
-			audio_seconds = excluded.audio_seconds,
-			description   = excluded.description,
-			release_date  = excluded.release_date,
-			rating        = excluded.rating,
-			ratings_count = excluded.ratings_count,
-			image_url     = excluded.image_url,
-			language      = excluded.language,
-			publisher     = excluded.publisher,
-			tags          = excluded.tags,
-			literary_type = excluded.literary_type
+			subtitle       = excluded.subtitle,
+			hardcover_id   = excluded.hardcover_id,
+			olid           = excluded.olid,
+			isbn10         = excluded.isbn10,
+			isbn13         = excluded.isbn13,
+			asin           = excluded.asin,
+			pages          = excluded.pages,
+			audio_seconds  = excluded.audio_seconds,
+			description    = excluded.description,
+			release_date   = excluded.release_date,
+			rating         = excluded.rating,
+			ratings_count  = excluded.ratings_count,
+			shelvings_count = excluded.shelvings_count,
+			image_url      = excluded.image_url,
+			language       = excluded.language,
+			publisher      = excluded.publisher,
+			tags           = excluded.tags,
+			literary_type  = excluded.literary_type
 	`, b.AuthorID, b.Title, b.Subtitle, b.HardcoverID, b.OLID, b.ISBN10, b.ISBN13, b.ASIN,
 		b.Pages, b.AudioSeconds, b.Description, b.ReleaseDate, b.ReleaseYear,
-		b.Rating, b.RatingsCount, b.ImageURL, b.Language, b.Publisher, b.Tags, b.LiteraryType)
+		b.Rating, b.RatingsCount, b.ShelvingsCount, b.ImageURL, b.Language, b.Publisher, b.Tags, b.LiteraryType)
 	if err != nil {
 		return 0, fmt.Errorf("upserting book: %w", err)
 	}
@@ -1325,13 +1328,13 @@ func (d *DB) getBookByISBN(ctx context.Context, q querier, isbn13 string) (*mode
 	err := q.QueryRowContext(ctx, `
 		SELECT id, author_id, title, subtitle, hardcover_id, olid, isbn10, isbn13, asin,
 		       pages, audio_seconds, description, release_date, release_year,
-		       rating, ratings_count, image_url, language, publisher, tags, literary_type, created_at
+		       rating, ratings_count, shelvings_count, image_url, language, publisher, tags, literary_type, created_at
 		FROM books WHERE isbn13 = ?
 	`, isbn13).Scan(
 		&b.ID, &b.AuthorID, &b.Title, &b.Subtitle, &b.HardcoverID, &b.OLID,
 		&b.ISBN10, &b.ISBN13, &b.ASIN,
 		&b.Pages, &b.AudioSeconds, &b.Description, &b.ReleaseDate, &b.ReleaseYear,
-		&b.Rating, &b.RatingsCount, &b.ImageURL, &b.Language, &b.Publisher, &b.Tags, &b.LiteraryType, &b.CreatedAt)
+		&b.Rating, &b.RatingsCount, &b.ShelvingsCount, &b.ImageURL, &b.Language, &b.Publisher, &b.Tags, &b.LiteraryType, &b.CreatedAt)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil, nil
@@ -1439,7 +1442,7 @@ func (d *DB) ListPendingBookEventsWithBooks(ctx context.Context) ([]EventWithBoo
 		       b.id, b.author_id, b.title, b.subtitle, b.hardcover_id, b.olid,
 		       b.isbn10, b.isbn13, b.asin,
 		       b.pages, b.audio_seconds, b.description, b.release_date, b.release_year,
-		       b.rating, b.ratings_count, b.image_url, b.language, b.publisher, b.tags, b.literary_type, b.created_at,
+		       b.rating, b.ratings_count, b.shelvings_count, b.image_url, b.language, b.publisher, b.tags, b.literary_type, b.created_at,
 		       a.id, a.hardcover_id, a.olid, a.name, a.bio, a.born_date, a.death_date, a.image_url, a.identifiers, a.links, a.created_at
 		FROM book_release_events e
 		JOIN books b ON b.id = e.book_id
@@ -1462,7 +1465,7 @@ func (d *DB) ListBookEventsByWeek(ctx context.Context, year, week int) ([]EventW
 		       b.id, b.author_id, b.title, b.subtitle, b.hardcover_id, b.olid,
 		       b.isbn10, b.isbn13, b.asin,
 		       b.pages, b.audio_seconds, b.description, b.release_date, b.release_year,
-		       b.rating, b.ratings_count, b.image_url, b.language, b.publisher, b.tags, b.literary_type, b.created_at,
+		       b.rating, b.ratings_count, b.shelvings_count, b.image_url, b.language, b.publisher, b.tags, b.literary_type, b.created_at,
 		       a.id, a.hardcover_id, a.olid, a.name, a.bio, a.born_date, a.death_date, a.image_url, a.identifiers, a.links, a.created_at
 		FROM book_release_events e
 		JOIN books b ON b.id = e.book_id
@@ -1495,7 +1498,7 @@ func (d *DB) ListBookEventsByWeekAndStatus(ctx context.Context, year, week int, 
 		       b.id, b.author_id, b.title, b.subtitle, b.hardcover_id, b.olid,
 		       b.isbn10, b.isbn13, b.asin,
 		       b.pages, b.audio_seconds, b.description, b.release_date, b.release_year,
-		       b.rating, b.ratings_count, b.image_url, b.language, b.publisher, b.tags, b.literary_type, b.created_at,
+		       b.rating, b.ratings_count, b.shelvings_count, b.image_url, b.language, b.publisher, b.tags, b.literary_type, b.created_at,
 		       a.id, a.hardcover_id, a.olid, a.name, a.bio, a.born_date, a.death_date, a.image_url, a.identifiers, a.links, a.created_at
 		FROM book_release_events e
 		JOIN books b ON b.id = e.book_id
@@ -1554,7 +1557,7 @@ func scanEventWithBookRows(rows *sql.Rows) ([]EventWithBook, error) {
 			&b.ID, &b.AuthorID, &b.Title, &b.Subtitle, &b.HardcoverID, &b.OLID,
 			&b.ISBN10, &b.ISBN13, &b.ASIN,
 			&b.Pages, &b.AudioSeconds, &b.Description, &b.ReleaseDate, &b.ReleaseYear,
-			&b.Rating, &b.RatingsCount, &b.ImageURL, &b.Language, &b.Publisher, &b.Tags, &b.LiteraryType, &bCreated,
+			&b.Rating, &b.RatingsCount, &b.ShelvingsCount, &b.ImageURL, &b.Language, &b.Publisher, &b.Tags, &b.LiteraryType, &bCreated,
 			&a.ID, &a.HardcoverID, &a.OLID, &a.Name, &a.Bio, &a.BornDate, &a.DeathDate, &a.ImageURL, &a.Identifiers, &a.Links, &aCreated,
 		)
 		if err != nil {
