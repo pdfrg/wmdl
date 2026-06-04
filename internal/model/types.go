@@ -236,17 +236,19 @@ type Book struct {
 }
 
 type BookReleaseEvent struct {
-	ID             int64
-	BookID         int64
-	Source         string // "goodreads"
-	ReleaseDate    string
-	FormatPref     BookFormat // ebook, audiobook, both (from config default)
-	Status         ReleaseStatus
-	PreviousStatus ReleaseStatus
-	Notes          string
-	CreatedAt      string
-	ISOYear        int
-	ISOWeek        int
+	ID                 int64
+	BookID             int64
+	Source             string // "goodreads"
+	ReleaseDate        string
+	FormatPref         BookFormat // ebook, audiobook, both (from config default)
+	Status             ReleaseStatus
+	PreviousStatus     ReleaseStatus
+	Notes              string
+	CreatedAt          string
+	ISOYear            int
+	ISOWeek            int
+	EbookProcessed     bool
+	AudiobookProcessed bool
 }
 
 type BookDownload struct {

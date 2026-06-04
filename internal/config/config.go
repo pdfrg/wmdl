@@ -294,6 +294,9 @@ func (c *Config) Validate() error {
 	if c.Library.Audiobookshelf.URL != "" && c.Library.Audiobookshelf.APIKey == "" {
 		errs = append(errs, "library.audiobookshelf.api_key is required when library.audiobookshelf.url is set")
 	}
+	if c.Library.Audiobookshelf.URL != "" && c.Library.Audiobookshelf.LibraryID == "" {
+		errs = append(errs, "library.audiobookshelf.library_id is required when library.audiobookshelf.url is set")
+	}
 
 	// Validate log level
 	// Validate book config

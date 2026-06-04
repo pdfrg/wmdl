@@ -1322,16 +1322,20 @@ func (r *Runner) processMusicItem(ctx context.Context, item ScrapedItem, progYea
 }
 
 func (r *Runner) processBookItem(ctx context.Context, item ScrapedItem, progYear, progWeek int) error {
-	apiCtx, apiCancel := context.WithTimeout(ctx, 30*time.Second)
-	defer apiCancel()
-
 	r.log.Info().Str("title", item.Title).Str("author", item.ArtistName).Msg("processing book item")
+
+	// Give each enrichment provider its own timeout so one failure
+	// doesn't consume the budget for the fallback.
+	hcCtx, hcCancel := context.WithTimeout(ctx, 45*time.Second)
+	defer hcCancel()
+	olCtx, olCancel := context.WithTimeout(ctx, 45*time.Second)
+	defer olCancel()
 
 	// Step 1: Hardcover enrichment (best-effort, only if API key configured)
 	var hcResult *HCBookResult
 	if r.hc != nil {
 		var hcErr error
-		hcResult, hcErr = r.hc.SearchBook(apiCtx, item.Title, item.ArtistName)
+		hcResult, hcErr = r.hc.SearchBook(hcCtx, item.Title, item.ArtistName)
 		if hcErr != nil {
 			r.log.Warn().Err(hcErr).Str("book", item.Title).Msg("hardcover search failed, falling back to Open Library")
 		}
@@ -1341,7 +1345,7 @@ func (r *Runner) processBookItem(ctx context.Context, item ScrapedItem, progYear
 	var olResult *OLBookResult
 	if hcResult == nil || hcResult.ISBN13 == "" {
 		var olErr error
-		olResult, olErr = r.ol.SearchBook(apiCtx, item.Title, item.ArtistName)
+		olResult, olErr = r.ol.SearchBook(olCtx, item.Title, item.ArtistName)
 		if olErr != nil {
 			r.log.Warn().Err(olErr).Str("book", item.Title).Msg("openlibrary search failed, storing without enrichment")
 		}
@@ -1398,7 +1402,7 @@ func (r *Runner) processBookItem(ctx context.Context, item ScrapedItem, progYear
 
 		// Fetch author detail for bio/image
 		if olResult.Author.OLID != "" {
-			olAuthor, olErr := r.ol.GetAuthor(apiCtx, olResult.Author.OLID)
+			olAuthor, olErr := r.ol.GetAuthor(olCtx, olResult.Author.OLID)
 			if olErr == nil && olAuthor != nil {
 				authorBio = olAuthor.Bio
 				authorBorn = olAuthor.BornDate

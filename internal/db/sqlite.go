@@ -258,19 +258,21 @@ func (d *DB) Migrate(ctx context.Context) error {
 	);
 
 	CREATE TABLE IF NOT EXISTS book_release_events (
-		id              INTEGER PRIMARY KEY AUTOINCREMENT,
-		book_id         INTEGER NOT NULL REFERENCES books(id),
-		source          TEXT NOT NULL,
-		release_date    TEXT NOT NULL DEFAULT '',
-		format_pref     TEXT NOT NULL DEFAULT 'both'
-		                CHECK(format_pref IN ('ebook','audiobook','both')),
-		status          TEXT NOT NULL DEFAULT 'pending'
-		                CHECK(status IN ('pending','approved','rejected','downloaded')),
-		previous_status TEXT DEFAULT '',
-		notes           TEXT DEFAULT '',
-		created_at      TEXT DEFAULT (datetime('now')),
-		iso_year        INTEGER DEFAULT 0,
-		iso_week        INTEGER DEFAULT 0
+		id                INTEGER PRIMARY KEY AUTOINCREMENT,
+		book_id           INTEGER NOT NULL REFERENCES books(id),
+		source            TEXT NOT NULL,
+		release_date      TEXT NOT NULL DEFAULT '',
+		format_pref       TEXT NOT NULL DEFAULT 'both'
+		                  CHECK(format_pref IN ('ebook','audiobook','both')),
+		status            TEXT NOT NULL DEFAULT 'pending'
+		                  CHECK(status IN ('pending','approved','rejected','downloaded')),
+		previous_status   TEXT DEFAULT '',
+		notes             TEXT DEFAULT '',
+		created_at        TEXT DEFAULT (datetime('now')),
+		iso_year          INTEGER DEFAULT 0,
+		iso_week          INTEGER DEFAULT 0,
+		ebook_processed   INTEGER NOT NULL DEFAULT 0,
+		audiobook_processed INTEGER NOT NULL DEFAULT 0
 	);
 
 	CREATE TABLE IF NOT EXISTS book_downloads (
@@ -307,6 +309,8 @@ func (d *DB) Migrate(ctx context.Context) error {
 	d.db.ExecContext(ctx, `ALTER TABLE artists ADD COLUMN disambiguation TEXT NOT NULL DEFAULT ''`)
 	d.db.ExecContext(ctx, `ALTER TABLE titles ADD COLUMN tvdb_id INTEGER NOT NULL DEFAULT 0`)
 	d.db.ExecContext(ctx, `ALTER TABLE titles ADD COLUMN mal_id INTEGER NOT NULL DEFAULT 0`)
+	d.db.ExecContext(ctx, `ALTER TABLE book_release_events ADD COLUMN ebook_processed INTEGER NOT NULL DEFAULT 0`)
+	d.db.ExecContext(ctx, `ALTER TABLE book_release_events ADD COLUMN audiobook_processed INTEGER NOT NULL DEFAULT 0`)
 
 	// Recreate titles table to update media_type CHECK constraint for anime support
 	// SQLite doesn't support ALTER TABLE to change constraints, so we recreate.
@@ -1105,26 +1109,60 @@ type EventWithBook struct {
 }
 
 func (d *DB) upsertAuthor(ctx context.Context, q querier, a *model.Author) (int64, error) {
-	// Always check for existing author by name first to prevent duplicates
-	// when a synthetic OLID (name-hash) was used on a prior scrape and a
-	// real OLID is now available from Hardcover enrichment.
+	// When we have a real OLID, use it directly via the UNIQUE constraint.
+	// This avoids conflating same-named authors (e.g. two "John Smith"s).
+	if a.OLID != "" && !strings.HasPrefix(a.OLID, "_nm_") {
+		res, err := q.ExecContext(ctx, `
+			INSERT INTO authors (hardcover_id, olid, name, bio, born_date, death_date, image_url, identifiers, links, created_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+			ON CONFLICT(olid) DO UPDATE SET
+				hardcover_id = excluded.hardcover_id,
+				name         = excluded.name,
+				bio          = excluded.bio,
+				born_date    = excluded.born_date,
+				death_date   = excluded.death_date,
+				image_url    = excluded.image_url,
+				identifiers  = excluded.identifiers,
+				links        = excluded.links
+		`, a.HardcoverID, a.OLID, a.Name, a.Bio, a.BornDate, a.DeathDate, a.ImageURL, a.Identifiers, a.Links)
+		if err != nil {
+			return 0, fmt.Errorf("upserting author by olid: %w", err)
+		}
+		id, err := res.LastInsertId()
+		if err != nil {
+			return 0, fmt.Errorf("getting last insert id: %w", err)
+		}
+		return id, nil
+	}
+
+	// No real OLID — check by name to avoid creating duplicate synthetic
+	// entries. If found by name and the existing entry has a synthetic OLID,
+	// update it with any new data. If the existing entry already has a real
+	// OLID, it's a different author with the same name — create a new entry.
 	existing, err := d.getAuthorByName(ctx, q, a.Name)
 	if err != nil {
 		return 0, fmt.Errorf("checking existing author by name: %w", err)
 	}
 	if existing != nil {
-		_, err := q.ExecContext(ctx, `
-			UPDATE authors SET
-				hardcover_id = ?, olid = ?, bio = ?, born_date = ?, death_date = ?,
-				image_url = ?, identifiers = ?, links = ?
-			WHERE id = ?
-		`, a.HardcoverID, a.OLID, a.Bio, a.BornDate, a.DeathDate, a.ImageURL, a.Identifiers, a.Links, existing.ID)
-		if err != nil {
-			return 0, fmt.Errorf("updating existing author: %w", err)
+		// Only update if the existing entry has a synthetic OLID, meaning
+		// it was created without real enrichment. Otherwise keep both.
+		if strings.HasPrefix(existing.OLID, "_nm_") {
+			_, err := q.ExecContext(ctx, `
+				UPDATE authors SET
+					hardcover_id = ?, olid = ?, bio = ?, born_date = ?, death_date = ?,
+					image_url = ?, identifiers = ?, links = ?
+				WHERE id = ?
+			`, a.HardcoverID, a.OLID, a.Bio, a.BornDate, a.DeathDate, a.ImageURL, a.Identifiers, a.Links, existing.ID)
+			if err != nil {
+				return 0, fmt.Errorf("updating existing author: %w", err)
+			}
+			return existing.ID, nil
 		}
-		return existing.ID, nil
+		// Existing entry has a real OLID — likely a different author with
+		// the same name. Fall through to create a new entry.
 	}
 
+	// Generate a deterministic synthetic OLID from the name hash.
 	olid := a.OLID
 	if olid == "" {
 		h := sha256.Sum256([]byte(a.Name))
@@ -1305,9 +1343,9 @@ func (d *DB) GetBookByISBN(ctx context.Context, isbn13 string) (*model.Book, err
 
 func (d *DB) CreateBookReleaseEvent(ctx context.Context, e *model.BookReleaseEvent) (int64, error) {
 	res, err := d.db.ExecContext(ctx, `
-		INSERT INTO book_release_events (book_id, source, release_date, format_pref, status, previous_status, notes, iso_year, iso_week)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`, e.BookID, e.Source, e.ReleaseDate, string(e.FormatPref), string(e.Status), string(e.PreviousStatus), e.Notes, e.ISOYear, e.ISOWeek)
+		INSERT INTO book_release_events (book_id, source, release_date, format_pref, status, previous_status, notes, iso_year, iso_week, ebook_processed, audiobook_processed)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, e.BookID, e.Source, e.ReleaseDate, string(e.FormatPref), string(e.Status), string(e.PreviousStatus), e.Notes, e.ISOYear, e.ISOWeek, boolToInt(e.EbookProcessed), boolToInt(e.AudiobookProcessed))
 	if err != nil {
 		return 0, fmt.Errorf("creating book release event: %w", err)
 	}
@@ -1317,13 +1355,15 @@ func (d *DB) CreateBookReleaseEvent(ctx context.Context, e *model.BookReleaseEve
 func (d *DB) GetLatestBookReleaseEvent(ctx context.Context, bookID int64) (*model.BookReleaseEvent, error) {
 	var e model.BookReleaseEvent
 	var status, prevStatus, formatPref, createdAt string
+	var ebookProc, audiobookProc int
 	err := d.db.QueryRowContext(ctx, `
-		SELECT id, book_id, source, release_date, format_pref, status, previous_status, notes, created_at, iso_year, iso_week
+		SELECT id, book_id, source, release_date, format_pref, status, previous_status, notes, created_at, iso_year, iso_week, ebook_processed, audiobook_processed
 		FROM book_release_events WHERE book_id = ?
 		ORDER BY id DESC LIMIT 1
 	`, bookID).Scan(
 		&e.ID, &e.BookID, &e.Source, &e.ReleaseDate, &formatPref,
-		&status, &prevStatus, &e.Notes, &createdAt, &e.ISOYear, &e.ISOWeek)
+		&status, &prevStatus, &e.Notes, &createdAt, &e.ISOYear, &e.ISOWeek,
+		&ebookProc, &audiobookProc)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil, nil
@@ -1334,6 +1374,8 @@ func (d *DB) GetLatestBookReleaseEvent(ctx context.Context, bookID int64) (*mode
 	e.Status = model.ReleaseStatus(status)
 	e.PreviousStatus = model.ReleaseStatus(prevStatus)
 	e.CreatedAt = createdAt
+	e.EbookProcessed = ebookProc != 0
+	e.AudiobookProcessed = audiobookProc != 0
 	return &e, nil
 }
 
@@ -1344,6 +1386,16 @@ func (d *DB) UpdateBookReleaseEventStatus(ctx context.Context, id int64, status 
 
 func (d *DB) UpdateBookReleaseEventStatusTx(ctx context.Context, tx *sql.Tx, id int64, status model.ReleaseStatus) error {
 	_, err := tx.ExecContext(ctx, `UPDATE book_release_events SET status = ? WHERE id = ?`, string(status), id)
+	return err
+}
+
+func (d *DB) MarkBookFormatProcessed(ctx context.Context, id int64, format model.BookFormat) error {
+	col := "ebook_processed"
+	if format == model.BookFormatAudiobook {
+		col = "audiobook_processed"
+	}
+	_, err := d.db.ExecContext(ctx,
+		fmt.Sprintf(`UPDATE book_release_events SET %s = 1 WHERE id = ?`, col), id)
 	return err
 }
 
@@ -1358,6 +1410,7 @@ func (d *DB) ListPendingBookEventsWithBooks(ctx context.Context) ([]EventWithBoo
 	rows, err := d.db.QueryContext(ctx, `
 		SELECT e.id, e.book_id, e.source, e.release_date, e.format_pref,
 		       e.status, e.previous_status, e.notes, e.created_at, e.iso_year, e.iso_week,
+		       e.ebook_processed, e.audiobook_processed,
 		       b.id, b.author_id, b.title, b.subtitle, b.hardcover_id, b.olid,
 		       b.isbn10, b.isbn13, b.asin,
 		       b.pages, b.audio_seconds, b.description, b.release_date, b.release_year,
@@ -1380,6 +1433,7 @@ func (d *DB) ListApprovedBookEventsWithBooks(ctx context.Context) ([]EventWithBo
 	rows, err := d.db.QueryContext(ctx, `
 		SELECT e.id, e.book_id, e.source, e.release_date, e.format_pref,
 		       e.status, e.previous_status, e.notes, e.created_at, e.iso_year, e.iso_week,
+		       e.ebook_processed, e.audiobook_processed,
 		       b.id, b.author_id, b.title, b.subtitle, b.hardcover_id, b.olid,
 		       b.isbn10, b.isbn13, b.asin,
 		       b.pages, b.audio_seconds, b.description, b.release_date, b.release_year,
@@ -1402,6 +1456,7 @@ func (d *DB) ListBookEventsByWeek(ctx context.Context, year, week int) ([]EventW
 	rows, err := d.db.QueryContext(ctx, `
 		SELECT e.id, e.book_id, e.source, e.release_date, e.format_pref,
 		       e.status, e.previous_status, e.notes, e.created_at, e.iso_year, e.iso_week,
+		       e.ebook_processed, e.audiobook_processed,
 		       b.id, b.author_id, b.title, b.subtitle, b.hardcover_id, b.olid,
 		       b.isbn10, b.isbn13, b.asin,
 		       b.pages, b.audio_seconds, b.description, b.release_date, b.release_year,
@@ -1434,6 +1489,7 @@ func (d *DB) ListBookEventsByWeekAndStatus(ctx context.Context, year, week int, 
 	query := fmt.Sprintf(`
 		SELECT e.id, e.book_id, e.source, e.release_date, e.format_pref,
 		       e.status, e.previous_status, e.notes, e.created_at, e.iso_year, e.iso_week,
+		       e.ebook_processed, e.audiobook_processed,
 		       b.id, b.author_id, b.title, b.subtitle, b.hardcover_id, b.olid,
 		       b.isbn10, b.isbn13, b.asin,
 		       b.pages, b.audio_seconds, b.description, b.release_date, b.release_year,
@@ -1487,10 +1543,12 @@ func scanEventWithBookRows(rows *sql.Rows) ([]EventWithBook, error) {
 		var evStatus, evPrevStatus, evFormatPref, evCreated string
 		var bCreated string
 		var aCreated string
+		var ebookProc, audiobookProc int
 
 		err := rows.Scan(
 			&ev.ID, &ev.BookID, &ev.Source, &ev.ReleaseDate, &evFormatPref,
 			&evStatus, &evPrevStatus, &ev.Notes, &evCreated, &ev.ISOYear, &ev.ISOWeek,
+			&ebookProc, &audiobookProc,
 			&b.ID, &b.AuthorID, &b.Title, &b.Subtitle, &b.HardcoverID, &b.OLID,
 			&b.ISBN10, &b.ISBN13, &b.ASIN,
 			&b.Pages, &b.AudioSeconds, &b.Description, &b.ReleaseDate, &b.ReleaseYear,
@@ -1505,6 +1563,8 @@ func scanEventWithBookRows(rows *sql.Rows) ([]EventWithBook, error) {
 		ev.Status = model.ReleaseStatus(evStatus)
 		ev.PreviousStatus = model.ReleaseStatus(evPrevStatus)
 		ev.CreatedAt = evCreated
+		ev.EbookProcessed = ebookProc != 0
+		ev.AudiobookProcessed = audiobookProc != 0
 
 		b.CreatedAt = bCreated
 		a.CreatedAt = aCreated

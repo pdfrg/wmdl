@@ -55,38 +55,60 @@ type grScrapedBook struct {
 }
 
 // Scrape fetches the Goodreads popular_by_date page for the target month.
-// Since Goodreads only has monthly granularity, we scrape one month per call.
-// The target month is derived from the target ISO week.
+// Since Goodreads only has monthly granularity, we scrape the month(s)
+// that overlap with the target ISO week. If the week spans two months
+// (e.g. early April week includes late March days), both months are
+// scraped and merged.
 func (p *GoodreadsProvider) Scrape() ([]ScrapedItem, error) {
 	year, week := p.targetYear, p.targetWeek
 	if !p.hasTarget {
 		year, week = time.Now().ISOWeek()
 	}
 
-	// Map the ISO week to a month for the Goodreads URL
-	wed := tuesdayOfISOWeek(year, week)
-	month := int(wed.Month())
+	// ISO week runs Wednesday–Tuesday. Determine the months of both the
+	// start (Wednesday) and end (Tuesday) of the week.
+	monday := isoWeekToDate(year, week) // Monday of ISO week
+	wed := monday.AddDate(0, 0, 2)      // Wednesday = start of week
+	tue := tuesdayOfISOWeek(year, week) // Tuesday = end of week
 
-	items, err := p.scrapeMonth(year, month)
-	if err != nil {
-		return nil, fmt.Errorf("scraping goodreads: %w", err)
+	wedYear, wedMonth := wed.Year(), wed.Month()
+	tueYear, tueMonth := tue.Year(), tue.Month()
+
+	// Scrape the start and end months. Deduplicate when they're the same.
+	type ym struct{ y, m int }
+	seen := make(map[ym]bool)
+	var allItems []grScrapedBook
+	for _, ym := range []ym{{wedYear, int(wedMonth)}, {tueYear, int(tueMonth)}} {
+		if seen[ym] {
+			continue
+		}
+		seen[ym] = true
+		items, err := p.scrapeMonth(ym.y, ym.m)
+		if err != nil {
+			log.Warn().Err(err).Int("year", ym.y).Int("month", ym.m).Msg("goodreads month scrape failed")
+			continue
+		}
+		allItems = append(allItems, items...)
 	}
 
-	log.Info().Int("count", len(items)).Int("year", year).Int("month", month).Msg("goodreads: found books")
+	if len(allItems) == 0 {
+		return nil, fmt.Errorf("goodreads: no books found for %d-W%02d", year, week)
+	}
 
-	// Convert to ScrapedItems
+	log.Info().Int("count", len(allItems)).Int("year", year).Int("week", week).Msg("goodreads: found books")
+
 	var result []ScrapedItem
-	for _, b := range items {
+	for _, b := range allItems {
 		result = append(result, ScrapedItem{
 			Title:        b.Title,
-			ArtistName:   b.Author, // reuse ArtistName field for author
+			ArtistName:   b.Author,
 			MediaType:    model.MediaTypeBook,
 			ReleaseType:  "",
 			Source:       "goodreads",
 			ImageURL:     b.ImageURL,
 			Notes:        b.URL,
 			Overview:     b.Description,
-			ImdbRating:   b.Rating, // Goodreads rating stored temporarily
+			ImdbRating:   b.Rating,
 			RatingsCount: b.RatingsCount,
 		})
 	}

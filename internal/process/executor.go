@@ -1929,9 +1929,10 @@ func formatOverview(text string, maxWidth int) []string {
 // ─── Book Processing ──────────────────────────────────────────────────────
 
 type BookSearchResult struct {
-	Event db.EventWithBook
-	Top   []quality.ParsedBookRelease
-	Error error
+	Event  db.EventWithBook
+	Format model.BookFormat
+	Top    []quality.ParsedBookRelease
+	Error  error
 }
 
 func bookSearchQueries(evt db.EventWithBook) []string {
@@ -1966,25 +1967,21 @@ func bookSearchQueries(evt db.EventWithBook) []string {
 	return queries
 }
 
-func (e *Executor) SearchBook(ctx context.Context, evt db.EventWithBook) *BookSearchResult {
-	e.log.Info().Str("book", evt.Book.Title).Str("author", evt.Author.Name).Msg("searching book")
+func (e *Executor) SearchBook(ctx context.Context, evt db.EventWithBook, format model.BookFormat) *BookSearchResult {
+	label := string(format)
+	e.log.Info().Str("book", evt.Book.Title).Str("author", evt.Author.Name).Str("format", label).Msg("searching book")
 
 	queries := bookSearchQueries(evt)
 	if len(queries) == 0 {
-		e.Unfound = append(e.Unfound, fmt.Sprintf("%s by %s", evt.Book.Title, evt.Author.Name))
-		return &BookSearchResult{Event: evt}
+		e.Unfound = append(e.Unfound, fmt.Sprintf("%s by %s [%s]", evt.Book.Title, evt.Author.Name, label))
+		return &BookSearchResult{Event: evt, Format: format}
 	}
 
-	// Determine categories to search based on format preference
-	var bookCatSets [][]int
-	switch evt.Event.FormatPref {
-	case model.BookFormatAudiobook:
-		bookCatSets = [][]int{{search.CatBookAudio}}
-	case model.BookFormatBoth:
-		bookCatSets = [][]int{{search.CatBookEbook}, {search.CatBookAudio}}
-	default: // ebook or unknown
-		bookCatSets = [][]int{{search.CatBookEbook}}
+	cat := search.CatBookEbook
+	if format == model.BookFormatAudiobook {
+		cat = search.CatBookAudio
 	}
+	bookCatSets := [][]int{{cat}}
 
 	preferredID := e.prowl.PreferredIndexerID(search.CatBook)
 	numTiers := len(queries)
@@ -2014,7 +2011,7 @@ func (e *Executor) SearchBook(ctx context.Context, evt db.EventWithBook) *BookSe
 				fuzzyPool = mergeReleases(fuzzyPool, fuzzy)
 				e.log.Debug().Msgf("→ %d exact, %d fuzzy (exact total: %d)", len(exact), len(fuzzy), len(exactPool))
 				if len(exactPool) >= e.cfg.ShowTopN {
-					return e.buildBookSearchResult(evt, exactPool, fuzzyPool, e.cfg)
+					return e.buildBookSearchResult(evt, exactPool, fuzzyPool, e.cfg, format)
 				}
 			}
 		}
@@ -2041,18 +2038,19 @@ func (e *Executor) SearchBook(ctx context.Context, evt db.EventWithBook) *BookSe
 			fuzzyPool = mergeReleases(fuzzyPool, fuzzy)
 			e.log.Debug().Msgf("→ %d exact, %d fuzzy (exact total: %d)", len(exact), len(fuzzy), len(exactPool))
 			if len(exactPool) >= e.cfg.ShowTopN {
-				return e.buildBookSearchResult(evt, exactPool, fuzzyPool, e.cfg)
+				return e.buildBookSearchResult(evt, exactPool, fuzzyPool, e.cfg, format)
 			}
 		}
 	}
 
-	return e.buildBookSearchResult(evt, exactPool, fuzzyPool, e.cfg)
+	return e.buildBookSearchResult(evt, exactPool, fuzzyPool, e.cfg, format)
 }
 
-func (e *Executor) buildBookSearchResult(evt db.EventWithBook, exactPool, fuzzyPool []quality.ParsedRelease, cfg *config.Config) *BookSearchResult {
+func (e *Executor) buildBookSearchResult(evt db.EventWithBook, exactPool, fuzzyPool []quality.ParsedRelease, cfg *config.Config, format model.BookFormat) *BookSearchResult {
+	label := string(format)
 	if len(exactPool) == 0 && len(fuzzyPool) == 0 {
-		e.Unfound = append(e.Unfound, fmt.Sprintf("%s by %s", evt.Book.Title, evt.Author.Name))
-		return &BookSearchResult{Event: evt}
+		e.Unfound = append(e.Unfound, fmt.Sprintf("%s by %s [%s]", evt.Book.Title, evt.Author.Name, label))
+		return &BookSearchResult{Event: evt, Format: format}
 	}
 
 	// Convert to ParsedBookRelease and parse format info
@@ -2083,26 +2081,7 @@ func (e *Executor) buildBookSearchResult(evt db.EventWithBook, exactPool, fuzzyP
 		top = quality.SortBookTop(fuzzyBooks, prefs, showTopN)
 	}
 
-	return &BookSearchResult{Event: evt, Top: top}
-}
-
-func (e *Executor) SearchAllBooks(ctx context.Context, events []db.EventWithBook) []*BookSearchResult {
-	e.log.Info().Msgf("Searching %d books...", len(events))
-	results := make([]*BookSearchResult, 0, len(events))
-	for i, ev := range events {
-		e.log.Info().Str("book", ev.Book.Title).Msgf("[%d/%d] searching", i+1, len(events))
-		sr := e.SearchBook(ctx, ev)
-		if sr.Error != nil {
-			e.log.Warn().Err(sr.Error).Str("book", ev.Book.Title).Msg("error searching")
-			sr.Error = nil
-		} else if len(sr.Top) == 0 {
-			e.log.Info().Str("book", ev.Book.Title).Msg("no book results")
-		} else {
-			e.log.Info().Int("count", len(sr.Top)).Str("book", ev.Book.Title).Msg("book results found")
-		}
-		results = append(results, sr)
-	}
-	return results
+	return &BookSearchResult{Event: evt, Format: format, Top: top}
 }
 
 func (e *Executor) presentBookPicker(ctx context.Context, sr *BookSearchResult) ([]quality.ParsedBookRelease, error) {
@@ -2116,7 +2095,11 @@ func (e *Executor) presentBookPicker(ctx context.Context, sr *BookSearchResult) 
 		parsed[i] = br.ParsedRelease
 	}
 
-	sel := NewSelector(sr.Event.Book.Title, parsed)
+	pickerTitle := sr.Event.Book.Title
+	if sr.Format != "" {
+		pickerTitle = fmt.Sprintf("%s [%s]", sr.Event.Book.Title, sr.Format)
+	}
+	sel := NewSelector(pickerTitle, parsed)
 	chosen, err := sel.Run()
 	if err != nil {
 		return nil, err
@@ -2138,14 +2121,13 @@ func (e *Executor) presentBookPicker(ctx context.Context, sr *BookSearchResult) 
 	return result, nil
 }
 
-func (e *Executor) addBookToClient(ctx context.Context, evt db.EventWithBook, chosen []quality.ParsedBookRelease) {
-	for _, r := range chosen {
-		isAudiobook := r.IsAudiobook || evt.Event.FormatPref == model.BookFormatAudiobook
-		cat := e.cfg.Downloader.Categories.Ebooks
-		if isAudiobook {
-			cat = e.cfg.Downloader.Categories.Audiobooks
-		}
+func (e *Executor) addBookToClient(ctx context.Context, evt db.EventWithBook, chosen []quality.ParsedBookRelease, format model.BookFormat) {
+	cat := e.cfg.Downloader.Categories.Ebooks
+	if format == model.BookFormatAudiobook {
+		cat = e.cfg.Downloader.Categories.Audiobooks
+	}
 
+	for _, r := range chosen {
 		url := r.DownloadURL
 		if url == "" {
 			url = r.MagnetURL
@@ -2182,16 +2164,11 @@ func (e *Executor) addBookToClient(ctx context.Context, evt db.EventWithBook, ch
 			quality = r.Codec
 		}
 
-		actualFormat := model.BookFormatEbook
-		if r.IsAudiobook {
-			actualFormat = model.BookFormatAudiobook
-		}
-
 		// Record the download
 		dl := &model.BookDownload{
 			BookID:           evt.Book.ID,
 			BookReleaseEvent: evt.Event.ID,
-			Format:           actualFormat,
+			Format:           format,
 			Quality:          quality,
 			SourceType:       r.Source,
 			Codec:            r.Codec,
@@ -2235,31 +2212,92 @@ func (e *Executor) ProcessBooks(ctx context.Context, events []db.EventWithBook) 
 
 	fmt.Fprintln(os.Stderr, "\n── Book Processing ──")
 
-	results := e.SearchAllBooks(ctx, events)
 	downloaded := false
-	for _, sr := range results {
-		if len(sr.Top) == 0 {
-			fmt.Fprintf(os.Stderr, "  %s by %s: no results\n", sr.Event.Book.Title, sr.Event.Author.Name)
+	for _, evt := range events {
+		title := evt.Book.Title
+		author := evt.Author.Name
+		pref := evt.Event.FormatPref
+		ebookDone := evt.Event.EbookProcessed
+		audiobookDone := evt.Event.AudiobookProcessed
+
+		needsEbook := (pref == model.BookFormatEbook || pref == model.BookFormatBoth) && !ebookDone
+		needsAudiobook := (pref == model.BookFormatAudiobook || pref == model.BookFormatBoth) && !audiobookDone
+
+		if !needsEbook && !needsAudiobook {
 			continue
 		}
-		chosen, err := e.presentBookPicker(ctx, sr)
-		if errors.Is(err, ErrAbort) {
-			e.log.Info().Msg("pipeline aborted by user")
-			break
+
+		// Process ebook format
+		if needsEbook {
+			fmt.Fprintf(os.Stderr, "\n  Searching %s by %s [ebook]\n", title, author)
+			sr := e.SearchBook(ctx, evt, model.BookFormatEbook)
+			if len(sr.Top) > 0 {
+				chosen, err := e.presentBookPicker(ctx, sr)
+				if errors.Is(err, ErrAbort) {
+					e.log.Info().Msg("pipeline aborted by user")
+					return
+				}
+				if err != nil {
+					e.log.Warn().Err(err).Str("book", title).Msg("ebook picker error")
+				} else if len(chosen) > 0 {
+					e.addBookToClient(ctx, evt, chosen, model.BookFormatEbook)
+					if err := e.db.MarkBookFormatProcessed(ctx, evt.Event.ID, model.BookFormatEbook); err != nil {
+						e.log.Warn().Err(err).Msg("marking ebook processed")
+					}
+					downloaded = true
+					fmt.Fprintf(os.Stderr, "  ✓ %s by %s [ebook]\n", title, author)
+				} else {
+					fmt.Fprintf(os.Stderr, "  %s by %s [ebook]: skipped\n", title, author)
+				}
+			} else {
+				fmt.Fprintf(os.Stderr, "  %s by %s [ebook]: no results\n", title, author)
+			}
 		}
-		if err != nil {
-			e.log.Warn().Err(err).Str("book", sr.Event.Book.Title).Msg("book picker error")
-			continue
+
+		// Process audiobook format
+		if needsAudiobook {
+			fmt.Fprintf(os.Stderr, "\n  Searching %s by %s [audiobook]\n", title, author)
+			sr := e.SearchBook(ctx, evt, model.BookFormatAudiobook)
+			if len(sr.Top) > 0 {
+				chosen, err := e.presentBookPicker(ctx, sr)
+				if errors.Is(err, ErrAbort) {
+					e.log.Info().Msg("pipeline aborted by user")
+					return
+				}
+				if err != nil {
+					e.log.Warn().Err(err).Str("book", title).Msg("audiobook picker error")
+				} else if len(chosen) > 0 {
+					e.addBookToClient(ctx, evt, chosen, model.BookFormatAudiobook)
+					if err := e.db.MarkBookFormatProcessed(ctx, evt.Event.ID, model.BookFormatAudiobook); err != nil {
+						e.log.Warn().Err(err).Msg("marking audiobook processed")
+					}
+					downloaded = true
+					fmt.Fprintf(os.Stderr, "  ✓ %s by %s [audiobook]\n", title, author)
+				} else {
+					fmt.Fprintf(os.Stderr, "  %s by %s [audiobook]: skipped\n", title, author)
+				}
+			} else {
+				fmt.Fprintf(os.Stderr, "  %s by %s [audiobook]: no results\n", title, author)
+			}
 		}
-		if len(chosen) == 0 {
-			fmt.Fprintf(os.Stderr, "  %s by %s: skipped\n", sr.Event.Book.Title, sr.Event.Author.Name)
-			continue
+
+		// Mark fully downloaded once all required formats are processed
+		ebookDoneAfter := ebookDone || !needsEbook
+		audiobookDoneAfter := audiobookDone || !needsAudiobook
+		allDone := false
+		switch pref {
+		case model.BookFormatEbook:
+			allDone = ebookDoneAfter
+		case model.BookFormatAudiobook:
+			allDone = audiobookDoneAfter
+		case model.BookFormatBoth:
+			allDone = ebookDoneAfter && audiobookDoneAfter
 		}
-		e.addBookToClient(ctx, sr.Event, chosen)
-		e.markBookDownloaded(ctx, sr.Event)
-		downloaded = true
-		fmt.Fprintf(os.Stderr, "  ✓ %s by %s\n", sr.Event.Book.Title, sr.Event.Author.Name)
+		if allDone {
+			e.markBookDownloaded(ctx, evt)
+		}
 	}
+
 	if downloaded {
 		e.uploadToAudiobookshelf(ctx)
 	}
