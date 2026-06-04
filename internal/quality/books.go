@@ -51,13 +51,11 @@ func ParseBookRelease(rawTitle string) ParsedBookRelease {
 		// Prefer ebook format detection unless it's clearly an audiobook
 		r.IsEbook = true
 		r.EbookFormat = strings.ToLower(ebookFmt)
-		r.Source = r.EbookFormat
 	}
 
 	if audioFmt != "" {
 		r.IsAudiobook = true
 		r.AudiobookFormat = strings.ToLower(audioFmt)
-		r.Source = r.AudiobookFormat
 	}
 
 	// If no format detected but title contains common audiobook terms
@@ -154,9 +152,6 @@ func PartitionBookReleasesRaw(releases []ParsedRelease, author, title string) (e
 func wordsMatchBook(clean string, authorWords, titleWords []string) bool {
 	allMatch := true
 	for _, w := range authorWords {
-		if len(w) < 3 {
-			continue
-		}
 		if !strings.Contains(clean, w) {
 			allMatch = false
 			break
@@ -166,9 +161,6 @@ func wordsMatchBook(clean string, authorWords, titleWords []string) bool {
 		return false
 	}
 	for _, w := range titleWords {
-		if len(w) < 3 {
-			continue
-		}
 		if !strings.Contains(clean, w) {
 			return false
 		}

@@ -1341,7 +1341,7 @@ func (t *TUI) buildBookContent(be *db.EventWithBook, rw int) string {
 	}
 	if len(detailParts) > 0 {
 		b.WriteString("\n")
-		b.WriteString(strings.Join(detailParts, " · "))
+		b.WriteString(rtStyle.Render(strings.Join(detailParts, " · ")))
 	}
 
 	var idParts []string
@@ -1365,7 +1365,7 @@ func (t *TUI) buildBookContent(be *db.EventWithBook, rw int) string {
 	}
 	if len(metaParts) > 0 {
 		b.WriteString("\n")
-		b.WriteString(strings.Join(metaParts, " · "))
+		b.WriteString(rtStyle.Render(strings.Join(metaParts, " · ")))
 	}
 
 	it = t.currentItem()

@@ -1403,9 +1403,11 @@ func (r *Runner) processBookItem(ctx context.Context, item ScrapedItem, progYear
 		authorName = olResult.Author.Name
 		authorOLID = strings.TrimPrefix(olResult.Author.OLID, "/authors/")
 
-		// Fetch author detail for bio/image
+		// Fetch author detail for bio/image (its own timeout so the OL search doesn't eat the budget)
 		if olResult.Author.OLID != "" {
-			olAuthor, olErr := r.ol.GetAuthor(olCtx, olResult.Author.OLID)
+			authorCtx, authorCancel := context.WithTimeout(ctx, 15*time.Second)
+			defer authorCancel()
+			olAuthor, olErr := r.ol.GetAuthor(authorCtx, olResult.Author.OLID)
 			if olErr == nil && olAuthor != nil {
 				authorBio = olAuthor.Bio
 				authorBorn = olAuthor.BornDate

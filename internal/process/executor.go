@@ -2283,6 +2283,7 @@ func (e *Executor) ProcessBooks(ctx context.Context, events []db.EventWithBook) 
 						if err := e.db.MarkBookFormatProcessed(ctx, evt.Event.ID, model.BookFormatEbook); err != nil {
 							e.log.Warn().Err(err).Msg("marking ebook processed")
 						}
+						ebookDone = true
 						downloaded = true
 						fmt.Fprintf(os.Stderr, "  ✓ %s by %s [ebook] (%d added)\n", title, author, n)
 					} else {
@@ -2313,6 +2314,7 @@ func (e *Executor) ProcessBooks(ctx context.Context, events []db.EventWithBook) 
 						if err := e.db.MarkBookFormatProcessed(ctx, evt.Event.ID, model.BookFormatAudiobook); err != nil {
 							e.log.Warn().Err(err).Msg("marking audiobook processed")
 						}
+						audiobookDone = true
 						downloaded = true
 						fmt.Fprintf(os.Stderr, "  ✓ %s by %s [audiobook] (%d added)\n", title, author, n)
 					} else {
