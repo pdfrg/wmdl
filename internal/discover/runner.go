@@ -1504,10 +1504,13 @@ func (r *Runner) processBookItem(ctx context.Context, item ScrapedItem, progYear
 		}
 		if parseErr == nil {
 			scrapeYear, scrapeWeek := r.bookTargetWeekFrom(progYear, progWeek)
-			bookYear, bookWeek := t.ISOWeek()
-			if bookYear != scrapeYear || bookWeek != scrapeWeek {
+			// WMDL week runs Wednesday–Tuesday. Compute the Wed–Tue range
+			// from the scrape target's Tuesday boundary.
+			scrapeEnd := tuesdayOfISOWeek(scrapeYear, scrapeWeek)
+			scrapeStart := scrapeEnd.AddDate(0, 0, -6)
+			if t.Before(scrapeStart) || t.After(scrapeEnd) {
 				r.log.Info().Str("book", item.Title).Str("date", releaseDate).
-					Int("book_week", bookWeek).Int("target_week", scrapeWeek).
+					Str("window", fmt.Sprintf("%s – %s", scrapeStart.Format("Jan 2"), scrapeEnd.Format("Jan 2"))).
 					Msg("not in target week, skipping")
 				return nil
 			}

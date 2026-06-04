@@ -37,6 +37,18 @@ internal/db/        — SQLite state
 internal/config/    — viper config loader
 ```
 
+## WMDL Atomic Week
+
+All discovery, review, and processing is scoped to a single **WMDL atomic week** — a fixed Wednesday–Tuesday window. This model originates from physical media (DVD/BluRay) which typically releases on Tuesday. The first opportunity to process a given week is Wednesday morning.
+
+- The **reference Tuesday** is the most recently completed Tuesday (i.e. yesterday if today is Wednesday).
+- A WMDL week runs from that reference Tuesday **back 6 days to the prior Wednesday**.
+- All media types (movies, TV, music, books, anime) use the same Wed–Tue window, with optional `initial_timeshift_weeks` to look back N atomic weeks.
+- `addISOWeekOffset` and `bookTargetWeekFrom`/`musicTargetWeek` apply the timeshift. The underlying ISO week math uses `tuesdayOfISOWeek` to anchor the week boundaries.
+- Timeshifted weeks still respect Wed–Tue boundaries — the shift just picks an earlier reference Tuesday.
+
+**Example:** On Thursday June 4, the most recent Tuesday is June 2, so the current atomic week is **Wed May 27 – Tue June 2**. Timeshifting 1 week for books targets **Wed May 20 – Tue May 26**.
+
 ## Key Dependencies
 
 - `spf13/cobra` + `spf13/viper` — CLI + config
@@ -65,6 +77,7 @@ SQLite at `~/.local/share/wmdl/wmdl.db`. Key tables: `titles`, `release_events`,
 
 - **No file editing with bash commands** — never use sed, awk, echo >, or cat <<EOF to modify files. Use dedicated write/edit tools only.
 - **Verify after edit** — after writing or editing a file, always re-read it to confirm the change is correct. Edits can silently go wrong.
+- **Test integrations/API responses before and after coding** — Always run cli test commands (e.g. curl) to see if API response is as expected before writing new code. Then test API again with exact code pattern used before committing. 
 - **Self-debug first** — debug by running bash commands (curl, jq, test programs) directly. Only ask the user to run/report back when absolutely unavoidable.
 - **Tests** — write tests alongside implementation, especially for quality/filter logic, API clients, and parsing code.
 - **Context for API calls** — use `http.NewRequestWithContext` with timeouts for all external HTTP calls.
