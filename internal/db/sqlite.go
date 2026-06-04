@@ -1342,7 +1342,15 @@ func (d *DB) GetBookByISBN(ctx context.Context, isbn13 string) (*model.Book, err
 }
 
 func (d *DB) CreateBookReleaseEvent(ctx context.Context, e *model.BookReleaseEvent) (int64, error) {
-	res, err := d.db.ExecContext(ctx, `
+	return d.createBookReleaseEvent(ctx, d.db, e)
+}
+
+func (d *DB) CreateBookReleaseEventTx(ctx context.Context, tx *sql.Tx, e *model.BookReleaseEvent) (int64, error) {
+	return d.createBookReleaseEvent(ctx, tx, e)
+}
+
+func (d *DB) createBookReleaseEvent(ctx context.Context, q querier, e *model.BookReleaseEvent) (int64, error) {
+	res, err := q.ExecContext(ctx, `
 		INSERT INTO book_release_events (book_id, source, release_date, format_pref, status, previous_status, notes, iso_year, iso_week, ebook_processed, audiobook_processed)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`, e.BookID, e.Source, e.ReleaseDate, string(e.FormatPref), string(e.Status), string(e.PreviousStatus), e.Notes, e.ISOYear, e.ISOWeek, boolToInt(e.EbookProcessed), boolToInt(e.AudiobookProcessed))
@@ -1353,10 +1361,18 @@ func (d *DB) CreateBookReleaseEvent(ctx context.Context, e *model.BookReleaseEve
 }
 
 func (d *DB) GetLatestBookReleaseEvent(ctx context.Context, bookID int64) (*model.BookReleaseEvent, error) {
+	return d.getLatestBookReleaseEvent(ctx, d.db, bookID)
+}
+
+func (d *DB) GetLatestBookReleaseEventTx(ctx context.Context, tx *sql.Tx, bookID int64) (*model.BookReleaseEvent, error) {
+	return d.getLatestBookReleaseEvent(ctx, tx, bookID)
+}
+
+func (d *DB) getLatestBookReleaseEvent(ctx context.Context, q querier, bookID int64) (*model.BookReleaseEvent, error) {
 	var e model.BookReleaseEvent
 	var status, prevStatus, formatPref, createdAt string
 	var ebookProc, audiobookProc int
-	err := d.db.QueryRowContext(ctx, `
+	err := q.QueryRowContext(ctx, `
 		SELECT id, book_id, source, release_date, format_pref, status, previous_status, notes, created_at, iso_year, iso_week, ebook_processed, audiobook_processed
 		FROM book_release_events WHERE book_id = ?
 		ORDER BY id DESC LIMIT 1

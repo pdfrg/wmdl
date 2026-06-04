@@ -2011,7 +2011,7 @@ func (e *Executor) SearchBook(ctx context.Context, evt db.EventWithBook, format 
 				fuzzyPool = mergeReleases(fuzzyPool, fuzzy)
 				e.log.Debug().Msgf("→ %d exact, %d fuzzy (exact total: %d)", len(exact), len(fuzzy), len(exactPool))
 				if len(exactPool) >= e.cfg.ShowTopN {
-					return e.buildBookSearchResult(evt, exactPool, fuzzyPool, e.cfg, format)
+					return e.buildBookSearchResult(evt, exactPool, fuzzyPool, format)
 				}
 			}
 		}
@@ -2038,15 +2038,15 @@ func (e *Executor) SearchBook(ctx context.Context, evt db.EventWithBook, format 
 			fuzzyPool = mergeReleases(fuzzyPool, fuzzy)
 			e.log.Debug().Msgf("→ %d exact, %d fuzzy (exact total: %d)", len(exact), len(fuzzy), len(exactPool))
 			if len(exactPool) >= e.cfg.ShowTopN {
-				return e.buildBookSearchResult(evt, exactPool, fuzzyPool, e.cfg, format)
+				return e.buildBookSearchResult(evt, exactPool, fuzzyPool, format)
 			}
 		}
 	}
 
-	return e.buildBookSearchResult(evt, exactPool, fuzzyPool, e.cfg, format)
+	return e.buildBookSearchResult(evt, exactPool, fuzzyPool, format)
 }
 
-func (e *Executor) buildBookSearchResult(evt db.EventWithBook, exactPool, fuzzyPool []quality.ParsedRelease, cfg *config.Config, format model.BookFormat) *BookSearchResult {
+func (e *Executor) buildBookSearchResult(evt db.EventWithBook, exactPool, fuzzyPool []quality.ParsedRelease, format model.BookFormat) *BookSearchResult {
 	label := string(format)
 	if len(exactPool) == 0 && len(fuzzyPool) == 0 {
 		e.Unfound = append(e.Unfound, fmt.Sprintf("%s by %s [%s]", evt.Book.Title, evt.Author.Name, label))
@@ -2067,8 +2067,24 @@ func (e *Executor) buildBookSearchResult(evt db.EventWithBook, exactPool, fuzzyP
 	exactBooks := parseBookResults(exactPool)
 	fuzzyBooks := parseBookResults(fuzzyPool)
 
-	prefs := buildBookQualityPrefs(cfg)
-	showTopN := cfg.ShowTopN
+	// Filter by the requested format — ensure results match what we're searching for
+	switch format {
+	case model.BookFormatEbook:
+		exactBooks = filterEbookResults(exactBooks)
+		fuzzyBooks = filterEbookResults(fuzzyBooks)
+	case model.BookFormatAudiobook:
+		exactBooks = filterAudiobookResults(exactBooks)
+		fuzzyBooks = filterAudiobookResults(fuzzyBooks)
+	}
+
+	if len(exactBooks) == 0 && len(fuzzyBooks) == 0 {
+		e.log.Info().Str("book", evt.Book.Title).Str("format", label).Msg("no results match format filter")
+		e.Unfound = append(e.Unfound, fmt.Sprintf("%s by %s [%s]", evt.Book.Title, evt.Author.Name, label))
+		return &BookSearchResult{Event: evt, Format: format}
+	}
+
+	prefs := buildBookQualityPrefs(e.cfg)
+	showTopN := e.cfg.ShowTopN
 
 	var top []quality.ParsedBookRelease
 	if len(exactBooks) > 0 {
@@ -2082,6 +2098,26 @@ func (e *Executor) buildBookSearchResult(evt db.EventWithBook, exactPool, fuzzyP
 	}
 
 	return &BookSearchResult{Event: evt, Format: format, Top: top}
+}
+
+func filterEbookResults(books []quality.ParsedBookRelease) []quality.ParsedBookRelease {
+	var out []quality.ParsedBookRelease
+	for _, b := range books {
+		if b.IsEbook && b.EbookFormat != "" {
+			out = append(out, b)
+		}
+	}
+	return out
+}
+
+func filterAudiobookResults(books []quality.ParsedBookRelease) []quality.ParsedBookRelease {
+	var out []quality.ParsedBookRelease
+	for _, b := range books {
+		if b.IsAudiobook && b.AudiobookFormat != "" {
+			out = append(out, b)
+		}
+	}
+	return out
 }
 
 func (e *Executor) presentBookPicker(ctx context.Context, sr *BookSearchResult) ([]quality.ParsedBookRelease, error) {

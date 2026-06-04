@@ -1364,17 +1364,20 @@ func (r *Runner) processBookItem(ctx context.Context, item ScrapedItem, progYear
 		ratingsCount = hcResult.RatingsCount
 	}
 
-	// Warn when filters are configured but enrichment data is unavailable
-	enrichmentFailed := hcResult == nil && r.hc != nil
-	if enrichmentFailed && (minRating > 0 || minRatings > 0) {
-		r.log.Warn().Str("book", item.Title).Msg("enrichment unavailable, filter thresholds may not be applied")
+	if minRatings > 0 && ratingsCount == 0 {
+		r.log.Warn().Str("book", item.Title).Msg("no ratings data available, cannot verify min_ratings threshold, skipping")
+		return nil
+	}
+	if minRating > 0 && rating == 0 {
+		r.log.Warn().Str("book", item.Title).Msg("no rating data available, cannot verify min_rating threshold, skipping")
+		return nil
 	}
 
-	if minRatings > 0 && ratingsCount > 0 && ratingsCount < minRatings {
+	if minRatings > 0 && ratingsCount < minRatings {
 		r.log.Info().Str("book", item.Title).Int("ratings", ratingsCount).Int("min", minRatings).Msg("below min_ratings filter, skipping")
 		return nil
 	}
-	if minRating > 0 && rating > 0 && rating < minRating {
+	if minRating > 0 && rating < minRating {
 		r.log.Info().Str("book", item.Title).Float64("rating", rating).Float64("min", minRating).Msg("below min_rating filter, skipping")
 		return nil
 	}
@@ -1523,7 +1526,7 @@ func (r *Runner) processBookItem(ctx context.Context, item ScrapedItem, progYear
 			return fmt.Errorf("saving book: %w", err)
 		}
 
-		existing, err := r.db.GetLatestBookReleaseEvent(ctx, bookID)
+		existing, err := r.db.GetLatestBookReleaseEventTx(ctx, tx, bookID)
 		if err != nil {
 			return fmt.Errorf("checking existing events: %w", err)
 		}
@@ -1550,7 +1553,7 @@ func (r *Runner) processBookItem(ctx context.Context, item ScrapedItem, progYear
 			ISOYear:     progYear,
 			ISOWeek:     progWeek,
 		}
-		if _, err := r.db.CreateBookReleaseEvent(ctx, evt); err != nil {
+		if _, err := r.db.CreateBookReleaseEventTx(ctx, tx, evt); err != nil {
 			return fmt.Errorf("saving book release event: %w", err)
 		}
 
