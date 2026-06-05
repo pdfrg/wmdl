@@ -51,6 +51,7 @@ type flixItem struct {
 	IMDbRating     float64
 	RTCriticsScore float64
 	YoutubeView    int64
+	hasAnimeGenre  bool
 }
 
 var (
@@ -63,6 +64,7 @@ var (
 	flixMoviePat    = regexp.MustCompile(`Movie`)
 	flixTitleYear   = regexp.MustCompile(`\((\d{4})\)`)
 	flixPremierePat = regexp.MustCompile(`title="Premiere">\s*<div>\s*<span[^>]*>\d{2}/\d{2}/</span>(\d{4})`)
+	flixAnimePat    = regexp.MustCompile(`<span>Anime</span>`)
 )
 
 func (f *FlixPatrolProvider) Scrape() ([]ScrapedItem, error) {
@@ -126,7 +128,7 @@ pageLoop:
 		if !d.IsZero() {
 			dateStr = d.Format("2006-01-02")
 		}
-		results = append(results, ScrapedItem{
+		scraped := ScrapedItem{
 			Title:          cleanFlixTitle(item.Title),
 			Year:           item.Year,
 			MediaType:      item.MediaType,
@@ -136,7 +138,11 @@ pageLoop:
 			RTCriticsScore: item.RTCriticsScore,
 			YoutubeViews:   item.YoutubeView,
 			Source:         "flixpatrol",
-		})
+		}
+		if item.hasAnimeGenre {
+			scraped.Genres = "Anime"
+		}
+		results = append(results, scraped)
 	}
 
 	return results, nil
@@ -194,6 +200,9 @@ func parseFlixRow(row string) flixItem {
 		item.MediaType = model.MediaTypeTV
 	} else if flixMoviePat.MatchString(row) {
 		item.MediaType = model.MediaTypeMovie
+	}
+	if flixAnimePat.MatchString(row) {
+		item.hasAnimeGenre = true
 	}
 	if m := flixTitleYear.FindStringSubmatch(item.Title); len(m) > 1 {
 		if y, err := strconv.Atoi(m[1]); err == nil && y >= 1900 && y <= 2100 {

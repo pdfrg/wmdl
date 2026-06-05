@@ -199,13 +199,14 @@ type MusicFilterConfig struct {
 }
 
 type AnimeConfig struct {
-	Enabled          bool    `mapstructure:"enabled"`
-	MinScore         float64 `mapstructure:"min_score"`
-	MinMembers       int     `mapstructure:"min_members"`
-	PhaseBEnabled    bool    `mapstructure:"phase_b_enabled"`
-	PhaseBMinScore   float64 `mapstructure:"phase_b_min_score"`
-	PhaseBMinMembers int     `mapstructure:"phase_b_min_members"`
-	MinPhaseBResults int     `mapstructure:"min_phase_b_results"`
+	Enabled               bool    `mapstructure:"enabled"`
+	MinScore              float64 `mapstructure:"min_score"`
+	MinMembers            int     `mapstructure:"min_members"`
+	PhaseBEnabled         bool    `mapstructure:"phase_b_enabled"`
+	PhaseBMinScore        float64 `mapstructure:"phase_b_min_score"`
+	PhaseBMinMembers      int     `mapstructure:"phase_b_min_members"`
+	MinPhaseBResults      int     `mapstructure:"min_phase_b_results"`
+	FilterFlixPatrolAnime bool    `mapstructure:"filter_flixpatrol_anime"`
 }
 
 type BookConfig struct {
@@ -381,6 +382,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("media_types.anime.phase_b_min_score", 7.5)
 	v.SetDefault("media_types.anime.phase_b_min_members", 100000)
 	v.SetDefault("media_types.anime.min_phase_b_results", 3)
+	v.SetDefault("media_types.anime.filter_flixpatrol_anime", false)
 
 	v.SetDefault("quality.anime.resolution", "1080p")
 	v.SetDefault("quality.anime.prefer_hdr", false)

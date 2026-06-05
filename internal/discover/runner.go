@@ -542,6 +542,28 @@ func (r *Runner) Run(ctx context.Context) error {
 	}
 	bookItems = uniqueBooks
 
+	// Filter out FlixPatrol items tagged as "Anime" genre when Jikan already
+	// tracks them. Items unknown to Jikan stay in the video pipeline as a
+	// second-chance fallback (e.g. shows below Jikan member thresholds).
+	if r.cfg.MediaTypes.Anime.FilterFlixPatrolAnime {
+		var filtered []ScrapedItem
+		for _, item := range uniqueVideos {
+			if item.Source == "flixpatrol" && item.Genres == "Anime" {
+				found, err := jikanAnimeExists(ctx, item.Title)
+				if err != nil {
+					r.log.Warn().Err(err).Str("title", item.Title).
+						Msg("jikan search failed, keeping flixpatrol item")
+				} else if found {
+					r.log.Debug().Str("title", item.Title).
+						Msg("flixpatrol: skipping anime-genre item already tracked by jikan")
+					continue
+				}
+			}
+			filtered = append(filtered, item)
+		}
+		uniqueVideos = filtered
+	}
+
 	progYear, progWeek := r.targetYear, r.targetWeek
 	if !r.hasTargetWeek {
 		progYear, progWeek = programWeekFromItems(uniqueVideos)
