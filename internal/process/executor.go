@@ -265,6 +265,93 @@ func (e *Executor) updateSonarrCache(ctx context.Context, series []library.Sonar
 	}
 }
 
+func (e *Executor) PreWarmLidarr(ctx context.Context) {
+	if e.lidarr == nil {
+		return
+	}
+	if e.tryLoadLidarrCache(ctx) {
+		return
+	}
+	artists, err := e.lidarr.GetAllArtists(ctx)
+	if err != nil {
+		e.log.Warn().Err(err).Msg("pre-warm Lidarr artists")
+		return
+	}
+	albums, err := e.lidarr.GetAllAlbums(ctx)
+	if err != nil {
+		e.log.Warn().Err(err).Msg("pre-warm Lidarr albums")
+		return
+	}
+	e.updateLidarrCache(ctx, artists, albums)
+}
+
+func (e *Executor) tryLoadLidarrCache(ctx context.Context) bool {
+	fetchedAt, err := e.db.GetLibraryCacheFetchedAt(ctx, "lidarr")
+	if err != nil || fetchedAt == "" {
+		return false
+	}
+	fetched, err := time.Parse("2006-01-02 15:04:05", fetchedAt)
+	if err != nil {
+		return false
+	}
+	ttl := time.Duration(e.cfg.CacheTTLHours) * time.Hour
+	if ttl <= 0 {
+		ttl = 48 * time.Hour
+	}
+	if time.Since(fetched) > ttl {
+		return false
+	}
+	caches, err := e.db.GetAllLibraryCache(ctx)
+	if err != nil {
+		return false
+	}
+	var artists []library.LidarrArtist
+	var albums []library.LidarrAlbum
+	for _, c := range caches {
+		switch c.Source {
+		case "lidarr":
+			var a library.LidarrArtist
+			if err := json.Unmarshal([]byte(c.Details), &a); err != nil {
+				continue
+			}
+			artists = append(artists, a)
+		case "lidarr-album":
+			var a library.LidarrAlbum
+			if err := json.Unmarshal([]byte(c.Details), &a); err != nil {
+				continue
+			}
+			albums = append(albums, a)
+		}
+	}
+	if len(artists) == 0 {
+		return false
+	}
+	e.lidarr.SetAllArtists(artists)
+	e.lidarr.SetAllAlbums(albums)
+	return true
+}
+
+func (e *Executor) updateLidarrCache(ctx context.Context, artists []library.LidarrArtist, albums []library.LidarrAlbum) {
+	var entries []db.LibraryCache
+	for _, a := range artists {
+		details, _ := json.Marshal(a)
+		entries = append(entries, db.LibraryCache{
+			Source: "lidarr", ExtID: a.MBID,
+			ArrID: int64(a.ID), ArrTitle: a.ArtistName, Details: string(details),
+		})
+	}
+	for _, a := range albums {
+		details, _ := json.Marshal(a)
+		entries = append(entries, db.LibraryCache{
+			Source: "lidarr-album", ExtID: a.ForeignAlbumID,
+			ArrID: int64(a.ID), ArrTitle: a.Title, Details: string(details),
+		})
+	}
+	if err := e.db.BulkUpsertLibraryCache(ctx, entries); err != nil {
+		e.log.Warn().Err(err).Msg("saving Lidarr cache")
+	}
+}
+
 func (e *Executor) HealthCheck(ctx context.Context) HealthCheckResult {
 	var result HealthCheckResult
 
@@ -1621,6 +1708,8 @@ type MusicAlbumResult struct {
 }
 
 func musicSearchQueries(artist, album string, year int) []string {
+	artist = quality.StripAccents(artist)
+	album = quality.StripAccents(album)
 	cleanArtist := quality.CleanArtist(artist)
 	cleanAlbum := quality.CleanAlbum(album)
 
@@ -1745,9 +1834,14 @@ func (e *Executor) ProcessMusicAlbum(ctx context.Context, ae db.EventWithAlbum) 
 	if err != nil {
 		return nil, err
 	}
+	return e.PickMusicAlbum(ctx, sr), nil
+}
+
+func (e *Executor) PickMusicAlbum(ctx context.Context, sr *MusicSearchResult) *MusicAlbumResult {
+	ae := sr.Event
 	if len(sr.Top) == 0 {
 		e.log.Info().Str("artist", ae.Artist.Name).Str("album", ae.Album.Title).Msg("no music results found")
-		return &MusicAlbumResult{Event: ae}, nil
+		return &MusicAlbumResult{Event: ae}
 	}
 
 	// Show picker
@@ -1755,10 +1849,10 @@ func (e *Executor) ProcessMusicAlbum(ctx context.Context, ae db.EventWithAlbum) 
 	sel := NewSelector(selLabel, sr.Top)
 	chosen, err := sel.Run()
 	if err != nil {
-		return nil, err
+		return &MusicAlbumResult{Event: ae}
 	}
 	if len(chosen) == 0 {
-		return &MusicAlbumResult{Event: ae}, nil
+		return &MusicAlbumResult{Event: ae}
 	}
 
 	// Download
@@ -1806,7 +1900,7 @@ func (e *Executor) ProcessMusicAlbum(ctx context.Context, ae db.EventWithAlbum) 
 		_ = e.db.UpdateAlbumReleaseEventStatus(ctx, releaseEventID, model.StatusDownloaded)
 	}
 
-	return &MusicAlbumResult{Event: ae, Downloaded: true}, nil
+	return &MusicAlbumResult{Event: ae, Downloaded: true}
 }
 
 func (e *Executor) ProcessMusicAlbumDecisions(ctx context.Context, results []MusicAlbumResult) {
@@ -1878,7 +1972,7 @@ func (e *Executor) ProcessMusicAlbumDecisions(ctx context.Context, results []Mus
 		}
 
 		e.log.Info().Msgf("Add to Lidarr? %s — %s (%d)", ae.Artist.Name, ae.Album.Title, ae.Album.Year)
-		if promptYesNo(ctx, "  Add to Lidarr?") {
+		if promptYesNo(ctx, "  Add artist to Lidarr?") {
 			decisions = append(decisions, albumDecision{
 				evt:        ae,
 				artistMbid: artistMbid,

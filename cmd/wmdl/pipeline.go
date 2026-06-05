@@ -467,22 +467,51 @@ func runProcessForWeek(ctx context.Context, database *db.DB, cfg *config.Config,
 	// ─── Music album processing ──────────────────────────────────────────
 	if len(albumEventsForProcess) > 0 {
 		log.Info().Msgf("Processing %d music album(s)...", len(albumEventsForProcess))
+		lidarrWarm := make(chan struct{}, 1)
+		go func() { exec.PreWarmLidarr(ctx); lidarrWarm <- struct{}{} }()
+
 		var albumResults []process.MusicAlbumResult
-		for _, ae := range albumEventsForProcess {
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			default:
+
+		if cfg.ProcessMode == "batch" {
+			var musicSearchResults []*process.MusicSearchResult
+			for _, ae := range albumEventsForProcess {
+				select {
+				case <-ctx.Done():
+					return ctx.Err()
+				default:
+				}
+				sr, err := exec.SearchMusicRelease(ctx, ae)
+				if err != nil {
+					log.Warn().Err(err).Str("album", ae.Album.Title).Str("artist", ae.Artist.Name).Msg("error searching music")
+					continue
+				}
+				musicSearchResults = append(musicSearchResults, sr)
 			}
-			result, err := exec.ProcessMusicAlbum(ctx, ae)
-			if err != nil {
-				log.Warn().Err(err).Str("album", ae.Album.Title).Str("artist", ae.Artist.Name).Msg("error processing album")
-				continue
+			for _, sr := range musicSearchResults {
+				result := exec.PickMusicAlbum(ctx, sr)
+				if result != nil {
+					albumResults = append(albumResults, *result)
+				}
 			}
-			if result != nil {
-				albumResults = append(albumResults, *result)
+		} else {
+			for _, ae := range albumEventsForProcess {
+				select {
+				case <-ctx.Done():
+					return ctx.Err()
+				default:
+				}
+				result, err := exec.ProcessMusicAlbum(ctx, ae)
+				if err != nil {
+					log.Warn().Err(err).Str("album", ae.Album.Title).Str("artist", ae.Artist.Name).Msg("error processing album")
+					continue
+				}
+				if result != nil {
+					albumResults = append(albumResults, *result)
+				}
 			}
 		}
+
+		<-lidarrWarm
 		exec.ProcessMusicAlbumDecisions(ctx, albumResults)
 	}
 

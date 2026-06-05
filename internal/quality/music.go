@@ -3,6 +3,9 @@ package quality
 import (
 	"regexp"
 	"strings"
+	"unicode"
+
+	"golang.org/x/text/unicode/norm"
 )
 
 type MusicQualityPrefs struct {
@@ -96,7 +99,23 @@ func BestMusic(releases []ParsedRelease, prefs MusicQualityPrefs) *ParsedRelease
 	return best
 }
 
+// StripAccents replaces accented characters with their ASCII equivalents
+// using NFKD decomposition and stripping combining marks.
+func StripAccents(s string) string {
+	t := norm.NFKD.String(s)
+	var out strings.Builder
+	out.Grow(len(t))
+	for _, r := range t {
+		if unicode.Is(unicode.Mn, r) {
+			continue
+		}
+		out.WriteRune(r)
+	}
+	return out.String()
+}
+
 func normalizeMusic(s string) string {
+	s = StripAccents(s)
 	s = strings.ToLower(s)
 	s = strings.NewReplacer(
 		".", " ", "-", " ", "_", " ",

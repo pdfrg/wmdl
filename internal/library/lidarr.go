@@ -15,6 +15,7 @@ type LidarrClient struct {
 	apiKey          string
 	http            *http.Client
 	artistCache     []LidarrArtist
+	albumCache      []LidarrAlbum
 	profileCache    []LidarrQualityProfile
 	metadataCache   []LidarrMetadataProfile
 	rootFolderCache []LidarrRootFolder
@@ -99,6 +100,14 @@ type lidarrCommand struct {
 	ArtistIDs []int  `json:"artistIds,omitempty"`
 }
 
+func (c *LidarrClient) SetAllArtists(artists []LidarrArtist) {
+	c.artistCache = artists
+}
+
+func (c *LidarrClient) SetAllAlbums(albums []LidarrAlbum) {
+	c.albumCache = albums
+}
+
 func (c *LidarrClient) Ping(ctx context.Context) error {
 	var health []map[string]interface{}
 	return c.retry(ctx, func() error {
@@ -140,6 +149,9 @@ func (c *LidarrClient) GetAllArtists(ctx context.Context) ([]LidarrArtist, error
 }
 
 func (c *LidarrClient) GetAllAlbums(ctx context.Context) ([]LidarrAlbum, error) {
+	if c.albumCache != nil {
+		return c.albumCache, nil
+	}
 	var albums []LidarrAlbum
 	err := c.retry(ctx, func() error {
 		return c.get(ctx, "/api/v1/album", &albums)
@@ -147,6 +159,7 @@ func (c *LidarrClient) GetAllAlbums(ctx context.Context) ([]LidarrAlbum, error) 
 	if err != nil {
 		return nil, err
 	}
+	c.albumCache = albums
 	return albums, nil
 }
 
