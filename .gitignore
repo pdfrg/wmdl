@@ -1,5 +1,6 @@
 /wmd
 /wmdl
+*.html
 /wmd.exe
 /.vscode
 /.idea
