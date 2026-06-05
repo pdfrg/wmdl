@@ -65,8 +65,8 @@ const (
 	CatAudioAudiobook = 3030 // Audio/Audiobook
 	CatAnime          = 5070 // TV/Anime (Newznab standard)
 	CatBook           = 7000 // Books (parent)
-	CatBookEbook      = 7010 // Books/E-Books
-	CatBookAudio      = 7020 // Books/Audiobooks
+	CatBookMags       = 7010 // Books/Magazines
+	CatBookEbook      = 7020 // Books/E-Books
 	CatBookComic      = 7030 // Books/Comics
 )
 
@@ -78,7 +78,7 @@ func categoryKey(cat int) string {
 		return "anime"
 	case CatMusic:
 		return "music"
-	case CatBook, CatBookEbook, CatBookAudio, CatBookComic, CatAudioAudiobook:
+	case CatBook, CatBookMags, CatBookEbook, CatBookComic, CatAudioAudiobook:
 		return "books"
 	}
 	return ""

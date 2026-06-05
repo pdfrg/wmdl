@@ -2118,7 +2118,7 @@ func (e *Executor) SearchBook(ctx context.Context, evt db.EventWithBook, format 
 		return &BookSearchResult{Event: evt, Format: format}
 	}
 
-	cat := search.CatBookAudio
+	cat := search.CatBookEbook
 	if format == model.BookFormatAudiobook {
 		cat = search.CatAudioAudiobook
 	}
