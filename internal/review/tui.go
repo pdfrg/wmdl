@@ -1352,9 +1352,9 @@ func (t *TUI) buildBookContent(be *db.EventWithBook, rw int) string {
 			decorationStyle = approvedStyle
 			switch ev.FormatPref {
 			case model.BookFormatEbook:
-				decoration = "\U000f0bf8"
+				decoration = "\U0000f10a"
 			case model.BookFormatAudiobook:
-				decoration = "\U000f0bec"
+				decoration = "\U0000f025"
 			default:
 				decoration = " "
 			}
