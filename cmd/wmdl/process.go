@@ -12,6 +12,7 @@ import (
 
 	"github.com/pdfrg/wmdl/internal/config"
 	"github.com/pdfrg/wmdl/internal/db"
+	"github.com/pdfrg/wmdl/internal/model"
 )
 
 func newProcessCmd() *cobra.Command {
@@ -47,16 +48,28 @@ and send it to the download client.`,
 				fmt.Fprintf(os.Stderr, "  Library cache purged, will re-fetch from *arr services\n")
 			}
 
+			var typeFilter model.MediaType
+			typeFilterStr, _ := cmd.Flags().GetString("type")
+			if typeFilterStr != "" {
+				switch model.MediaType(typeFilterStr) {
+				case model.MediaTypeAnime, model.MediaTypeMusic, model.MediaTypeMovie, model.MediaTypeTV, model.MediaTypeBook:
+					typeFilter = model.MediaType(typeFilterStr)
+				default:
+					return fmt.Errorf("invalid type %q: must be anime, movie, tv, music, or book", typeFilterStr)
+				}
+			}
+
 			targetYear, targetWeek, err := resolveWeek(cmd)
 			if err != nil {
 				return err
 			}
 
 			ctx := cmd.Context()
-			return runProcessForWeek(ctx, database, cfg, targetYear, targetWeek)
+			return runProcessForWeek(ctx, database, cfg, targetYear, targetWeek, typeFilter)
 		},
 	}
 	addWeekFlag(cmd)
+	cmd.Flags().String("type", "", "Media type to process (anime, movie, tv, music, book)")
 	cmd.Flags().Bool("refresh-cache", false, "Force re-fetch of library cache from *arr services")
 	return cmd
 }

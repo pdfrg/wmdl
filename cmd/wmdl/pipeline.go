@@ -215,7 +215,7 @@ func runReviewForWeek(ctx context.Context, database *db.DB, cfg *config.Config, 
 	return approved, nil
 }
 
-func runProcessForWeek(ctx context.Context, database *db.DB, cfg *config.Config, year, week int) error {
+func runProcessForWeek(ctx context.Context, database *db.DB, cfg *config.Config, year, week int, typeFilter model.MediaType) error {
 	var target *model.WeekState
 	var err error
 
@@ -255,6 +255,27 @@ func runProcessForWeek(ctx context.Context, database *db.DB, cfg *config.Config,
 
 	albumEventsForProcess, _ := database.ListAlbumEventsByWeekAndStatus(ctx, year, week, model.StatusApproved)
 	bookEventsForProcess, _ := database.ListBookEventsByWeekAndStatus(ctx, year, week, model.StatusApproved)
+
+	if typeFilter != "" {
+		switch typeFilter {
+		case model.MediaTypeMusic:
+			allEvents = nil
+			bookEventsForProcess = nil
+		case model.MediaTypeBook:
+			allEvents = nil
+			albumEventsForProcess = nil
+		default:
+			var filtered []db.EventWithTitle
+			for _, ev := range allEvents {
+				if ev.Title.MediaType == typeFilter {
+					filtered = append(filtered, ev)
+				}
+			}
+			allEvents = filtered
+			albumEventsForProcess = nil
+			bookEventsForProcess = nil
+		}
+	}
 
 	var pending, downloaded []db.EventWithTitle
 	for _, ev := range allEvents {
