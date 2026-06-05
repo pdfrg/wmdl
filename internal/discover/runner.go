@@ -1224,13 +1224,34 @@ func (r *Runner) processMusicItem(ctx context.Context, item ScrapedItem, progYea
 	var mbGenres []string
 	mbRating := 0.0
 
-	rgResult, err := r.mb.SearchReleaseGroup(apiCtx, item.Title, item.ArtistName)
+	// Split on " / " (AllMusic multi-artist format) and try each artist
+	artists := strings.Split(item.ArtistName, " / ")
+	for i, a := range artists {
+		artists[i] = strings.TrimSpace(a)
+	}
+
+	var rgResult *MBReleaseGroupResult
+	var err error
+	for _, a := range artists {
+		rgResult, err = r.mb.SearchReleaseGroup(apiCtx, item.Title, a)
+		if err == nil && rgResult != nil {
+			break
+		}
+	}
+
 	if err != nil {
 		r.log.Warn().Err(err).Str("album", item.Title).Msg("MusicBrainz search failed, storing without MB data")
 	} else if rgResult == nil {
 		blindResult, blindErr := r.mb.SearchReleaseGroupByAlbum(apiCtx, item.Title)
 		if blindErr == nil && blindResult != nil {
-			if !artistNamesMatch(item.ArtistName, blindResult.ArtistName) {
+			match := false
+			for _, a := range artists {
+				if artistNamesMatch(a, blindResult.ArtistName) {
+					match = true
+					break
+				}
+			}
+			if !match {
 				r.log.Warn().Str("scraped_artist", item.ArtistName).
 					Str("mb_artist", blindResult.ArtistName).
 					Str("album", item.Title).

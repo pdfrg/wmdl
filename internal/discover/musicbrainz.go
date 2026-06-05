@@ -370,7 +370,7 @@ func stripTitleParens(title string) string {
 // firstArtistName returns the artist name before the first conjunction separator.
 // "Jeff Parker & ETA IVtet" → "Jeff Parker"
 func firstArtistName(name string) string {
-	re := regexp.MustCompile(`\s*(&|feat\.|ft\.|with|vs\.|\+)\s*.*$`)
+	re := regexp.MustCompile(`\s*(&|feat\.|ft\.|with|vs\.|\+|/)\s*.*$`)
 	return strings.TrimSpace(re.ReplaceAllString(name, ""))
 }
 

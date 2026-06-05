@@ -159,7 +159,9 @@ func (c *HardcoverClient) SearchBook(ctx context.Context, title, author string) 
 		}
 	}`
 
-	q := strings.TrimSpace(title + " " + author)
+	// Strip trailing parenthetical series info like "(Emerald Lake, #1)"
+	cleanTitle := stripTitleParens(title)
+	q := strings.TrimSpace(cleanTitle + " " + author)
 
 	respBody, err := c.query(ctx, searchQuery, map[string]any{"query": q})
 	if err != nil {
@@ -202,7 +204,7 @@ func (c *HardcoverClient) SearchBook(ctx context.Context, title, author string) 
 		return nil, nil
 	}
 
-	if title != "" && !strings.Contains(strings.ToLower(firstDoc.Title), strings.ToLower(title)) {
+	if cleanTitle != "" && !strings.Contains(strings.ToLower(firstDoc.Title), strings.ToLower(cleanTitle)) {
 		return nil, nil
 	}
 

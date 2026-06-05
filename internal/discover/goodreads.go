@@ -200,6 +200,7 @@ func parseGRPage(html string) []grScrapedBook {
 		author := extractMatch(grAuthor, block)
 		author = htmlUnescape(author)
 		author = strings.TrimSpace(author)
+		author = regexp.MustCompile(`\s+`).ReplaceAllString(author, " ")
 
 		ratingStr := extractMatch(grRating, block)
 		rating, _ := strconv.ParseFloat(ratingStr, 64)
