@@ -216,6 +216,7 @@ type Book struct {
 	Title          string
 	Subtitle       string
 	HardcoverID    int
+	HardcoverSlug  string
 	OLID           string // Open Library work ID
 	ISBN10         string
 	ISBN13         string

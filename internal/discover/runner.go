@@ -1485,6 +1485,7 @@ func (r *Runner) processBookItem(ctx context.Context, item ScrapedItem, progYear
 	tags := ""
 	literaryType := ""
 	hcBookID := 0
+	hcSlug := ""
 	olWorkID := ""
 	description := item.Overview
 	imageURL := item.ImageURL
@@ -1505,6 +1506,7 @@ func (r *Runner) processBookItem(ctx context.Context, item ScrapedItem, progYear
 		tags = strings.Join(hcResult.Tags, ", ")
 		literaryType = hcResult.LiteraryType
 		hcBookID = hcResult.ID
+		hcSlug = hcResult.Slug
 		olWorkID = hcResult.OLID
 		if hcResult.Title != "" {
 			title = hcResult.Title
@@ -1594,6 +1596,7 @@ func (r *Runner) processBookItem(ctx context.Context, item ScrapedItem, progYear
 			Title:          title,
 			Subtitle:       subtitle,
 			HardcoverID:    hcBookID,
+			HardcoverSlug:  hcSlug,
 			OLID:           olWorkID,
 			ISBN10:         isbn10,
 			ISBN13:         isbn13,

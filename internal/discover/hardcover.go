@@ -41,6 +41,7 @@ type HCBookResult struct {
 	Tags         []string
 	LiteraryType string // "fiction" or "nonfiction"
 
+	Slug   string // for hardcover.app/books/{slug}
 	Author *HCAuthorResult
 	OLID   string // Open Library ID
 }
@@ -134,7 +135,7 @@ func (c *HardcoverClient) query(ctx context.Context, query string, vars map[stri
 func (c *HardcoverClient) GetBook(ctx context.Context, hcID int) (*HCBookResult, error) {
 	q := `query GetBook($id: Int!) {
 		books(where: {id: {_eq: $id}}, limit: 1) {
-			id title subtitle description
+			id title subtitle slug description
 			pages audio_seconds release_date release_year
 			rating ratings_count users_count
 			image { url }
@@ -243,6 +244,7 @@ func (c *HardcoverClient) decodeBook(raw json.RawMessage) (*HCBookResult, error)
 		ID             int             `json:"id"`
 		Title          string          `json:"title"`
 		Subtitle       string          `json:"subtitle"`
+		Slug           string          `json:"slug"`
 		Description    string          `json:"description"`
 		Pages          *int            `json:"pages"`
 		AudioSeconds   *int            `json:"audio_seconds"`
@@ -272,6 +274,7 @@ func (c *HardcoverClient) decodeBook(raw json.RawMessage) (*HCBookResult, error)
 		ID:           rawBook.ID,
 		Title:        rawBook.Title,
 		Subtitle:     rawBook.Subtitle,
+		Slug:         rawBook.Slug,
 		Description:  rawBook.Description,
 		Rating:       rawBook.Rating,
 		RatingsCount: rawBook.RatingsCount,

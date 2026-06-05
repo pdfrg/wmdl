@@ -796,8 +796,8 @@ func (t *TUI) updateReview(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 		if it.bookEvent != nil {
 			u := it.bookEvent.Event.Notes // Goodreads URL
-			if u == "" && it.bookEvent.Book.HardcoverID > 0 {
-				u = fmt.Sprintf("https://hardcover.app/books/%d", it.bookEvent.Book.HardcoverID)
+			if u == "" && it.bookEvent.Book.HardcoverSlug != "" {
+				u = fmt.Sprintf("https://hardcover.app/books/%s", it.bookEvent.Book.HardcoverSlug)
 			}
 			if u == "" && it.bookEvent.Book.OLID != "" {
 				u = fmt.Sprintf("https://openlibrary.org/works/%s", it.bookEvent.Book.OLID)
