@@ -780,7 +780,21 @@ func (t *TUI) updateReview(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		if it == nil {
 			return t, nil
 		}
-		if it.albumEvent != nil {
+		if it.bookEvent != nil {
+			u := it.bookEvent.Event.Notes // Goodreads URL
+			if u == "" && it.bookEvent.Book.HardcoverID > 0 {
+				u = fmt.Sprintf("https://hardcover.app/books/%d", it.bookEvent.Book.HardcoverID)
+			}
+			if u == "" && it.bookEvent.Book.OLID != "" {
+				u = fmt.Sprintf("https://openlibrary.org/works/%s", it.bookEvent.Book.OLID)
+			}
+			if u == "" {
+				u = "https://www.goodreads.com/search?q=" + url.QueryEscape(it.bookEvent.Book.Title)
+			}
+			if err := exec.Command("xdg-open", u).Start(); err != nil {
+				t.flashMsg = fmt.Sprintf("Failed to open browser: %v", err)
+			}
+		} else if it.albumEvent != nil {
 			u := it.albumEvent.Album.AOTYURL
 			if u == "" {
 				u = "https://www.albumoftheyear.org/search/?q=" + url.QueryEscape(it.albumEvent.Album.Title)
@@ -788,12 +802,12 @@ func (t *TUI) updateReview(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			if err := exec.Command("xdg-open", u).Start(); err != nil {
 				t.flashMsg = fmt.Sprintf("Failed to open browser: %v", err)
 			}
-		} else if it.event.Title.MediaType == model.MediaTypeAnime && it.event.Title.MalID > 0 {
+		} else if it.event.Title != nil && it.event.Title.MediaType == model.MediaTypeAnime && it.event.Title.MalID > 0 {
 			u := fmt.Sprintf("https://myanimelist.net/anime/%d", it.event.Title.MalID)
 			if err := exec.Command("xdg-open", u).Start(); err != nil {
 				t.flashMsg = fmt.Sprintf("Failed to open browser: %v", err)
 			}
-		} else {
+		} else if it.event.Title != nil {
 			tl := it.event.Title
 			rtURL := tl.RTURL
 			if rtURL == "" {
