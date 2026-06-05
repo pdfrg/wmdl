@@ -292,6 +292,30 @@ func (c *MBClient) SearchReleaseGroup(ctx context.Context, albumTitle, artistNam
 	return nil, nil
 }
 
+// SearchReleaseGroupByAlbum searches for a release group by album title only
+// (no artist constraint). Used as a blind check when the artist-specific search
+// finds no match — if the album exists under a different artist, the scrape
+// likely associated the wrong artist name.
+func (c *MBClient) SearchReleaseGroupByAlbum(ctx context.Context, albumTitle string) (*MBReleaseGroupResult, error) {
+	cleanTitle := stripTitleParens(albumTitle)
+	queries := []string{
+		fmt.Sprintf(`release:"%s"`, albumTitle),
+	}
+	if cleanTitle != albumTitle {
+		queries = append(queries, fmt.Sprintf(`release:"%s"`, cleanTitle))
+	}
+	for _, q := range queries {
+		result, err := c.searchReleaseGroupOnce(ctx, q)
+		if err != nil {
+			continue
+		}
+		if result != nil {
+			return result, nil
+		}
+	}
+	return nil, nil
+}
+
 func (c *MBClient) searchReleaseGroupOnce(ctx context.Context, query string) (*MBReleaseGroupResult, error) {
 	c.rateLimit()
 

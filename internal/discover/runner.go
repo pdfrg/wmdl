@@ -11,9 +11,11 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"github.com/chromedp/chromedp"
 	"github.com/rs/zerolog"
+	"golang.org/x/text/unicode/norm"
 
 	"github.com/pdfrg/wmdl/internal/browser"
 	"github.com/pdfrg/wmdl/internal/config"
@@ -1226,6 +1228,16 @@ func (r *Runner) processMusicItem(ctx context.Context, item ScrapedItem, progYea
 	if err != nil {
 		r.log.Warn().Err(err).Str("album", item.Title).Msg("MusicBrainz search failed, storing without MB data")
 	} else if rgResult == nil {
+		blindResult, blindErr := r.mb.SearchReleaseGroupByAlbum(apiCtx, item.Title)
+		if blindErr == nil && blindResult != nil {
+			if !artistNamesMatch(item.ArtistName, blindResult.ArtistName) {
+				r.log.Warn().Str("scraped_artist", item.ArtistName).
+					Str("mb_artist", blindResult.ArtistName).
+					Str("album", item.Title).
+					Msg("artist mismatch with blind MB search, skipping unreliable pair")
+				return nil
+			}
+		}
 		r.log.Info().Str("album", item.Title).Msg("not found in MusicBrainz, storing without MB data")
 	} else {
 		mbAlbumID = rgResult.MBID
@@ -1299,6 +1311,7 @@ func (r *Runner) processMusicItem(ctx context.Context, item ScrapedItem, progYea
 		AllMusicRating:  item.AllMusicRating,
 		AllMusicURL:     item.AllMusicURL,
 		MBRating:        mbRating,
+		Overview:        item.Overview,
 	}
 	albumID, err := r.db.UpsertAlbum(ctx, album)
 	if err != nil {
@@ -1479,7 +1492,7 @@ func (r *Runner) processBookItem(ctx context.Context, item ScrapedItem, progYear
 		if hcResult.Description != "" {
 			description = hcResult.Description
 		}
-		if hcResult.ImageURL != "" {
+		if hcResult.ImageURL != "" && strings.Contains(hcResult.ImageURL, "/edition/") {
 			imageURL = hcResult.ImageURL
 		}
 		if hcResult.ReleaseDate != "" {
@@ -1503,7 +1516,7 @@ func (r *Runner) processBookItem(ctx context.Context, item ScrapedItem, progYear
 		if olResult.Description != "" {
 			description = olResult.Description
 		}
-		if olResult.ImageURL != "" {
+		if imageURL == "" && olResult.ImageURL != "" {
 			imageURL = olResult.ImageURL
 		}
 		if olResult.ReleaseDate != "" {
@@ -1514,6 +1527,9 @@ func (r *Runner) processBookItem(ctx context.Context, item ScrapedItem, progYear
 		}
 		tags = strings.Join(olResult.Subjects, ", ")
 	}
+
+	// Upgrade Goodreads thumbnail to 500px for faster loading and consistent quality
+	imageURL = upgradeGoodreadsImage(imageURL)
 
 	// Filter: only keep books whose release date falls in the target ISO week
 	if releaseDate != "" {
@@ -1650,6 +1666,7 @@ var (
 	trailingFmt = regexp.MustCompile(`(?i)\s+(season\s+\d+|dvd|blu-ray|4k)\s*$`)
 	// Strip AllMusic formatting suffixes like [2 CD], [Deluxe Edition], [Super Deluxe]
 	allMusicBracketRe = regexp.MustCompile(`\s*\[[^\]]*\]`)
+	goodreadsSizeRe   = regexp.MustCompile(`\._SX\d+_\.`)
 )
 
 func cleanTitleForSearch(title string) string {
@@ -1711,4 +1728,37 @@ func weekStateFromItems(items []ScrapedItem) *model.WeekState {
 		}
 	}
 	return nil
+}
+
+// upgradeGoodreadsImage constrains Goodreads/Amazon image URLs to 500px wide.
+func upgradeGoodreadsImage(url string) string {
+	if !strings.Contains(url, "m.media-amazon.com") && !strings.Contains(url, "gr-assets") {
+		return url
+	}
+	if goodreadsSizeRe.MatchString(url) {
+		return goodreadsSizeRe.ReplaceAllString(url, "._SX500_.")
+	}
+	if strings.HasSuffix(url, ".jpg") {
+		return strings.Replace(url, ".jpg", "._SX500_.jpg", 1)
+	}
+	return url
+}
+
+// artistNamesMatch does a fuzzy comparison of two artist names,
+// handling case differences, diacritics, and curly/smart quotes.
+func artistNamesMatch(a, b string) bool {
+	normalize := func(s string) string {
+		s = strings.ToLower(s)
+		s = strings.NewReplacer("\u2018", "'", "\u2019", "'", "\u02bc", "'").Replace(s)
+		t := norm.NFKD.String(s)
+		var out strings.Builder
+		for _, r := range t {
+			if unicode.Is(unicode.Mn, r) {
+				continue
+			}
+			out.WriteRune(r)
+		}
+		return out.String()
+	}
+	return normalize(a) == normalize(b)
 }

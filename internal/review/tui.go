@@ -1189,6 +1189,12 @@ func (t *TUI) buildMusicContent(ae *db.EventWithAlbum, rw int) string {
 		b.WriteString(approvedStyle.Render("★ Must Hear (Editor's Pick)"))
 	}
 
+	// Overview/blurb from AllMusic (or AOTY)
+	if al.Overview != "" {
+		b.WriteString("\n\n")
+		b.WriteString(overviewStyle.Width(rw).Render(al.Overview))
+	}
+
 	// Only show artist data for MB-matched items
 	if ar.MBID != "" && !strings.HasPrefix(ar.MBID, "_nm_") {
 		// Line 9: empty line before artist info
@@ -1324,6 +1330,9 @@ func (t *TUI) buildBookContent(be *db.EventWithBook, rw int) string {
 	}
 
 	var detailParts []string
+	if book.ReleaseDate != "" {
+		detailParts = append(detailParts, book.ReleaseDate)
+	}
 	if book.Publisher != "" {
 		detailParts = append(detailParts, book.Publisher)
 	}
