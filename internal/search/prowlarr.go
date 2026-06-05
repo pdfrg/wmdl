@@ -59,14 +59,15 @@ type prowlarrRelease struct {
 
 // Newznab category IDs for narrowing search results.
 const (
-	CatMovie     = 2000 // Movies (parent)
-	CatTV        = 5000 // TV (parent)
-	CatMusic     = 3000 // Music (parent)
-	CatAnime     = 5070 // TV/Anime (Newznab standard)
-	CatBook      = 7000 // Books (parent)
-	CatBookEbook = 7010 // Books/E-Books
-	CatBookAudio = 7020 // Books/Audiobooks
-	CatBookComic = 7030 // Books/Comics
+	CatMovie          = 2000 // Movies (parent)
+	CatTV             = 5000 // TV (parent)
+	CatMusic          = 3000 // Music (parent)
+	CatAudioAudiobook = 3030 // Audio/Audiobook
+	CatAnime          = 5070 // TV/Anime (Newznab standard)
+	CatBook           = 7000 // Books (parent)
+	CatBookEbook      = 7010 // Books/E-Books
+	CatBookAudio      = 7020 // Books/Audiobooks
+	CatBookComic      = 7030 // Books/Comics
 )
 
 func categoryKey(cat int) string {
@@ -77,7 +78,7 @@ func categoryKey(cat int) string {
 		return "anime"
 	case CatMusic:
 		return "music"
-	case CatBook, CatBookEbook, CatBookAudio, CatBookComic:
+	case CatBook, CatBookEbook, CatBookAudio, CatBookComic, CatAudioAudiobook:
 		return "books"
 	}
 	return ""

@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -518,7 +519,48 @@ func runProcessForWeek(ctx context.Context, database *db.DB, cfg *config.Config,
 	// ─── Book processing ─────────────────────────────────────────────────
 	if len(bookEventsForProcess) > 0 {
 		log.Info().Msgf("Processing %d book(s)...", len(bookEventsForProcess))
-		exec.ProcessBooks(ctx, bookEventsForProcess)
+
+		if cfg.ProcessMode == "batch" {
+			var bookSearchResults []*process.BookSearchResult
+			for _, evt := range bookEventsForProcess {
+				select {
+				case <-ctx.Done():
+					return ctx.Err()
+				default:
+				}
+				pref := evt.Event.FormatPref
+				ebookDone := evt.Event.EbookProcessed
+				audiobookDone := evt.Event.AudiobookProcessed
+				needsEbook := (pref == model.BookFormatEbook || pref == model.BookFormatBoth) && !ebookDone
+				needsAudiobook := (pref == model.BookFormatAudiobook || pref == model.BookFormatBoth) && !audiobookDone
+				if needsEbook {
+					sr := exec.SearchBook(ctx, evt, model.BookFormatEbook)
+					bookSearchResults = append(bookSearchResults, sr)
+				}
+				if needsAudiobook {
+					sr := exec.SearchBook(ctx, evt, model.BookFormatAudiobook)
+					bookSearchResults = append(bookSearchResults, sr)
+				}
+			}
+			for _, sr := range bookSearchResults {
+				n, err := exec.PickBook(ctx, sr)
+				if errors.Is(err, process.ErrAbort) {
+					log.Info().Msg("pipeline aborted by user")
+					break
+				}
+				if err != nil {
+					log.Warn().Err(err).Str("book", sr.Event.Book.Title).Msg("book picker error")
+					continue
+				}
+				if n > 0 {
+					if err := database.MarkBookFormatProcessed(ctx, sr.Event.Event.ID, sr.Format); err != nil {
+						log.Warn().Err(err).Msg("marking book format processed")
+					}
+				}
+			}
+		} else {
+			exec.ProcessBooks(ctx, bookEventsForProcess)
+		}
 	}
 
 	if len(events) > 0 || len(animeAiring) > 0 || len(albumEventsForProcess) > 0 || len(bookEventsForProcess) > 0 {
