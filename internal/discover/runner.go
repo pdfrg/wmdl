@@ -1531,28 +1531,34 @@ func (r *Runner) processBookItem(ctx context.Context, item ScrapedItem, progYear
 	// Upgrade Goodreads thumbnail to 500px for faster loading and consistent quality
 	imageURL = upgradeGoodreadsImage(imageURL)
 
+	// Skip books without a verified release date — we can't confirm they
+	// belong in the target week, and they'd appear in review with missing data.
+	if releaseDate == "" {
+		r.log.Info().Str("book", item.Title).Str("author", item.ArtistName).
+			Msg("no release date available from enrichment, skipping")
+		return nil
+	}
+
 	// Filter: only keep books whose release date falls in the target ISO week
-	if releaseDate != "" {
-		var t time.Time
-		var parseErr error
-		for _, f := range []string{"2006-01-02", "January 2, 2006", "Jan 2, 2006"} {
-			t, parseErr = time.Parse(f, releaseDate)
-			if parseErr == nil {
-				break
-			}
-		}
+	var t time.Time
+	var parseErr error
+	for _, f := range []string{"2006-01-02", "January 2, 2006", "Jan 2, 2006"} {
+		t, parseErr = time.Parse(f, releaseDate)
 		if parseErr == nil {
-			scrapeYear, scrapeWeek := r.bookTargetWeekFrom(progYear, progWeek)
-			// WMDL week runs Wednesday–Tuesday. Compute the Wed–Tue range
-			// from the scrape target's Tuesday boundary.
-			scrapeEnd := tuesdayOfISOWeek(scrapeYear, scrapeWeek)
-			scrapeStart := scrapeEnd.AddDate(0, 0, -6)
-			if t.Before(scrapeStart) || t.After(scrapeEnd) {
-				r.log.Info().Str("book", item.Title).Str("date", releaseDate).
-					Str("window", fmt.Sprintf("%s – %s", scrapeStart.Format("Jan 2"), scrapeEnd.Format("Jan 2"))).
-					Msg("not in target week, skipping")
-				return nil
-			}
+			break
+		}
+	}
+	if parseErr == nil {
+		scrapeYear, scrapeWeek := r.bookTargetWeekFrom(progYear, progWeek)
+		// WMDL week runs Wednesday–Tuesday. Compute the Wed–Tue range
+		// from the scrape target's Tuesday boundary.
+		scrapeEnd := tuesdayOfISOWeek(scrapeYear, scrapeWeek)
+		scrapeStart := scrapeEnd.AddDate(0, 0, -6)
+		if t.Before(scrapeStart) || t.After(scrapeEnd) {
+			r.log.Info().Str("book", item.Title).Str("date", releaseDate).
+				Str("window", fmt.Sprintf("%s – %s", scrapeStart.Format("Jan 2"), scrapeEnd.Format("Jan 2"))).
+				Msg("not in target week, skipping")
+			return nil
 		}
 	}
 
