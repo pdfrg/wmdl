@@ -131,7 +131,7 @@ func runReviewForWeek(ctx context.Context, database *db.DB, cfg *config.Config, 
 			}
 			switch choice {
 			case "r":
-				tui, err := review.NewReviewTUIWithEvents(events, albumEvents, bookEvents, database, cfg.PosterMode, year, week, prevAnimeWeek)
+				tui, err := review.NewReviewTUIWithEvents(events, albumEvents, bookEvents, database, cfg.PosterMode, year, week, prevAnimeWeek, model.BookFormat(cfg.MediaTypes.Books.DefaultFormat))
 				if err != nil {
 					return 0, err
 				}
@@ -181,7 +181,7 @@ func runReviewForWeek(ctx context.Context, database *db.DB, cfg *config.Config, 
 		}
 	}
 
-	tui, err := review.NewReviewTUIWithEvents(pendingEvents, pendingAlbumEvents, pendingBookEvents, database, cfg.PosterMode, year, week, prevAnimeWeek)
+	tui, err := review.NewReviewTUIWithEvents(pendingEvents, pendingAlbumEvents, pendingBookEvents, database, cfg.PosterMode, year, week, prevAnimeWeek, model.BookFormat(cfg.MediaTypes.Books.DefaultFormat))
 	if err != nil {
 		return 0, err
 	}

@@ -1412,6 +1412,11 @@ func (d *DB) UpdateBookReleaseEventStatusTx(ctx context.Context, tx *sql.Tx, id 
 	return err
 }
 
+func (d *DB) UpdateBookReleaseEventStatusAndFormatTx(ctx context.Context, tx *sql.Tx, id int64, status model.ReleaseStatus, formatPref model.BookFormat) error {
+	_, err := tx.ExecContext(ctx, `UPDATE book_release_events SET previous_status = status, status = ?, format_pref = ? WHERE id = ?`, string(status), string(formatPref), id)
+	return err
+}
+
 func (d *DB) MarkBookFormatProcessed(ctx context.Context, id int64, format model.BookFormat) error {
 	var col string
 	switch format {

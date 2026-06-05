@@ -205,30 +205,31 @@ type posterReadyMsg struct {
 }
 
 type TUI struct {
-	items           []itemState
-	cursor          int
-	phase           phase
-	database        *db.DB
-	width           int
-	height          int
-	approved        []db.EventWithTitle
-	approvedBooks   int
-	err             error
-	posterImg       image.Image
-	posterMode      PosterMode
-	flashMsg        string
-	vpConfirm       viewport.Model
-	filter          model.MediaType // "" = all, "movie" or "tv"
-	filtered        []int           // indices into items matching current filter
-	pendingQuit     bool
-	filterUndecided bool
-	year            int
-	week            int
-	prevAnimeWeek   string                      // most recent earlier week with anime events, for re-review hint
-	libraryCache    map[string]*db.LibraryCache // key: "source:ext_id"
+	items             []itemState
+	cursor            int
+	phase             phase
+	database          *db.DB
+	width             int
+	height            int
+	approved          []db.EventWithTitle
+	approvedBooks     int
+	err               error
+	posterImg         image.Image
+	posterMode        PosterMode
+	flashMsg          string
+	vpConfirm         viewport.Model
+	filter            model.MediaType // "" = all, "movie" or "tv"
+	filtered          []int           // indices into items matching current filter
+	pendingQuit       bool
+	filterUndecided   bool
+	year              int
+	week              int
+	prevAnimeWeek     string                      // most recent earlier week with anime events, for re-review hint
+	libraryCache      map[string]*db.LibraryCache // key: "source:ext_id"
+	defaultBookFormat model.BookFormat
 }
 
-func NewReviewTUIWithEvents(events []db.EventWithTitle, albumEvents []db.EventWithAlbum, bookEvents []db.EventWithBook, database *db.DB, posterMode string, year, week int, prevAnimeWeek string) (*TUI, error) {
+func NewReviewTUIWithEvents(events []db.EventWithTitle, albumEvents []db.EventWithAlbum, bookEvents []db.EventWithBook, database *db.DB, posterMode string, year, week int, prevAnimeWeek string, defaultBookFormat model.BookFormat) (*TUI, error) {
 	totalItems := len(events) + len(albumEvents) + len(bookEvents)
 	if totalItems == 0 {
 		return nil, fmt.Errorf("no events to review")
@@ -258,15 +259,16 @@ func NewReviewTUIWithEvents(events []db.EventWithTitle, albumEvents []db.EventWi
 	vp.SetHeight(10)
 
 	t := &TUI{
-		items:         items,
-		database:      database,
-		height:        24,
-		posterMode:    ParsePosterMode(posterMode),
-		vpConfirm:     vp,
-		year:          year,
-		week:          week,
-		prevAnimeWeek: prevAnimeWeek,
-		libraryCache:  buildLibraryCacheMap(database, events, albumEvents, bookEvents),
+		items:             items,
+		database:          database,
+		height:            24,
+		posterMode:        ParsePosterMode(posterMode),
+		vpConfirm:         vp,
+		year:              year,
+		week:              week,
+		prevAnimeWeek:     prevAnimeWeek,
+		libraryCache:      buildLibraryCacheMap(database, events, albumEvents, bookEvents),
+		defaultBookFormat: defaultBookFormat,
 	}
 
 	t.rebuildFiltered()
@@ -332,7 +334,7 @@ func buildLibraryCacheMap(database *db.DB, events []db.EventWithTitle, albumEven
 	return result
 }
 
-func NewReviewTUI(database *db.DB, posterMode string) (*TUI, error) {
+func NewReviewTUI(database *db.DB, posterMode string, defaultBookFormat model.BookFormat) (*TUI, error) {
 	ctx := context.Background()
 	events, err := database.ListPendingWithTitles(ctx)
 	if err != nil {
@@ -353,7 +355,7 @@ func NewReviewTUI(database *db.DB, posterMode string) (*TUI, error) {
 		return nil, fmt.Errorf("no pending releases to review")
 	}
 
-	return NewReviewTUIWithEvents(events, albumEvents, bookEvents, database, posterMode, 0, 0, "")
+	return NewReviewTUIWithEvents(events, albumEvents, bookEvents, database, posterMode, 0, 0, "", defaultBookFormat)
 }
 
 func (t *TUI) Run() error {
@@ -547,8 +549,15 @@ func (t *TUI) saveDecisions() error {
 
 			switch {
 			case it.bookEvent != nil:
-				if err := t.database.UpdateBookReleaseEventStatusTx(ctx, tx, it.bookEvent.Event.ID, status); err != nil {
-					return err
+				pref := it.bookEvent.Event.FormatPref
+				if pref != "" {
+					if err := t.database.UpdateBookReleaseEventStatusAndFormatTx(ctx, tx, it.bookEvent.Event.ID, status, pref); err != nil {
+						return err
+					}
+				} else {
+					if err := t.database.UpdateBookReleaseEventStatusTx(ctx, tx, it.bookEvent.Event.ID, status); err != nil {
+						return err
+					}
 				}
 			case it.albumEvent != nil:
 				if err := t.database.UpdateAlbumReleaseEventStatusTx(ctx, tx, it.albumEvent.Event.ID, status); err != nil {
@@ -658,6 +667,27 @@ func (t *TUI) updateReview(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case "a":
 		it := t.currentItem()
 		if it == nil {
+			return t, nil
+		}
+		if it.bookEvent != nil {
+			ev := it.bookEvent.Event
+			if ev.FormatPref == "" {
+				ev.FormatPref = t.defaultBookFormat
+			} else {
+				switch ev.FormatPref {
+				case model.BookFormatBoth:
+					ev.FormatPref = model.BookFormatEbook
+				case model.BookFormatEbook:
+					ev.FormatPref = model.BookFormatAudiobook
+				case model.BookFormatAudiobook:
+					ev.FormatPref = ""
+					it.decision = decisionNone
+					return t, nil
+				}
+			}
+			if ev.FormatPref != "" {
+				it.decision = decisionApproved
+			}
 			return t, nil
 		}
 		if it.decision == decisionApproved {
@@ -1284,8 +1314,15 @@ func (t *TUI) buildBookContent(be *db.EventWithBook, rw int) string {
 	if it != nil {
 		switch it.decision {
 		case decisionApproved:
-			decoration = " "
 			decorationStyle = approvedStyle
+			switch ev.FormatPref {
+			case model.BookFormatEbook:
+				decoration = "\U000f0bf8"
+			case model.BookFormatAudiobook:
+				decoration = "\U000f0bec"
+			default:
+				decoration = " "
+			}
 		case decisionRejected:
 			decoration = " "
 			decorationStyle = rejectedStyle
