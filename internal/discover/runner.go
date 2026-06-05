@@ -1643,6 +1643,7 @@ func (r *Runner) processBookItem(ctx context.Context, item ScrapedItem, progYear
 			Source:      item.Source,
 			ReleaseDate: releaseDate,
 			FormatPref:  formatPref,
+			Notes:       item.Notes,
 			Status:      model.StatusPending,
 			ISOYear:     progYear,
 			ISOWeek:     progWeek,
