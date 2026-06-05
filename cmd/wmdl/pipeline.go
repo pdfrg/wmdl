@@ -443,21 +443,25 @@ func runProcessForWeek(ctx context.Context, database *db.DB, cfg *config.Config,
 		log.Info().Msgf("Processed %d/%d movie/TV releases", len(picked), len(events))
 	}
 
-	// ─── Anime Phase B processing (airing items, no torrent search) ──────
+	// ─── Anime Phase B processing (airing items) ─────────────────────────
 	for _, ae := range animeAiring {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
 		default:
 		}
-		log.Info().Str("title", ae.Title.Title).Msg("adding airing anime to Sonarr")
-		if err := exec.AddAiringAnimeToSonarr(ctx, ae); err != nil {
+		series, err := exec.AddAiringAnimeToSonarr(ctx, ae)
+		if err != nil {
 			log.Warn().Err(err).Str("title", ae.Title.Title).Msg("error adding airing anime to Sonarr")
+			continue
+		}
+		if series == nil {
 			continue
 		}
 		if err := database.UpdateReleaseEventStatus(ctx, ae.Event.ID, model.StatusDownloaded); err != nil {
 			log.Warn().Err(err).Msg("updating anime event status")
 		}
+		exec.SearchAiringAnimeEarlierSeasons(ctx, ae, series)
 	}
 
 	// ─── Music album processing ──────────────────────────────────────────

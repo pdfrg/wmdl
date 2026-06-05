@@ -1231,27 +1231,29 @@ func (e *Executor) addToRadarr(ctx context.Context, evt db.EventWithTitle, confi
 	return nil
 }
 
-func (e *Executor) AddAiringAnimeToSonarr(ctx context.Context, evt db.EventWithTitle) error {
+func (e *Executor) AddAiringAnimeToSonarr(ctx context.Context, evt db.EventWithTitle) (*library.SonarrSeries, error) {
 	if e.sonarr == nil {
 		e.log.Warn().Msg("Sonarr not configured, skipping anime addition")
-		return nil
+		return nil, nil
 	}
 
-	title := sanitizeSearchQuery(quality.StripSeason(evt.Title.Title))
+	season := quality.ParseSeasonNumber(evt.Title.Title)
+	stripped := quality.StripSeason(evt.Title.Title)
+	searchTitle := sanitizeSearchQuery(stripped)
 
-	lookup, err := e.sonarr.LookupByTitle(ctx, title)
+	lookup, err := e.sonarr.LookupByTitle(ctx, searchTitle)
 	if err != nil {
-		return fmt.Errorf("looking up anime in Sonarr: %w", err)
+		return nil, fmt.Errorf("looking up anime in Sonarr: %w", err)
 	}
 	if lookup == nil {
-		e.log.Warn().Str("title", title).Msg("anime not found on Sonarr via title lookup")
-		return nil
+		e.log.Warn().Str("title", searchTitle).Msg("anime not found on Sonarr via title lookup")
+		return nil, nil
 	}
 
 	existing, err := e.sonarr.Exists(ctx, lookup.TVDBID)
 	if err == nil && existing != nil {
-		e.log.Info().Str("title", title).Int("id", existing.ID).Msg("already in Sonarr")
-		return nil
+		e.log.Info().Str("title", searchTitle).Int("id", existing.ID).Msg("already in Sonarr")
+		return existing, nil
 	}
 
 	e.log.Info().Msgf("Add to Sonarr? %s (%d)", lookup.Title, lookup.Year)
@@ -1262,18 +1264,28 @@ func (e *Executor) AddAiringAnimeToSonarr(ctx context.Context, evt db.EventWithT
 	}
 	e.log.Info().Str("profile", e.cfg.Library.Sonarr.QualityProfile).Str("root", e.cfg.Library.Sonarr.RootFolder).Msg("Sonarr config")
 	if !promptYesNo(ctx, "  Add to Sonarr?") {
-		e.log.Info().Str("title", title).Msg("skipped adding airing anime to Sonarr")
-		return nil
+		e.log.Info().Str("title", searchTitle).Msg("skipped adding airing anime to Sonarr")
+		return nil, nil
 	}
 
 	profileID := e.resolveSonarrProfileID(ctx, e.cfg.Library.Sonarr.QualityProfile)
 	langProfiles, err := e.sonarr.GetLanguageProfiles(ctx)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	langProfileID := 1
 	if len(langProfiles) > 0 {
 		langProfileID = langProfiles[0].ID
+	}
+
+	var seasons []library.SonarrSeason
+	for _, s := range lookup.Seasons {
+		if s.SeasonNumber > 0 {
+			seasons = append(seasons, library.SonarrSeason{
+				SeasonNumber: s.SeasonNumber,
+				Monitored:    s.SeasonNumber == season,
+			})
+		}
 	}
 
 	opts := library.AddSeriesOptions{
@@ -1282,16 +1294,51 @@ func (e *Executor) AddAiringAnimeToSonarr(ctx context.Context, evt db.EventWithT
 		QualityProfileID:  profileID,
 		LanguageProfileID: langProfileID,
 		RootFolderPath:    e.cfg.Library.Sonarr.RootFolder,
-		SearchForMissing:  true,
+		Seasons:           seasons,
+		SearchForMissing:  false,
 	}
 
 	series, err := e.sonarr.Add(ctx, lookup.TVDBID, lookup.Title, lookup.Year, opts)
 	if err != nil {
-		return fmt.Errorf("adding anime to Sonarr: %w", err)
+		return nil, fmt.Errorf("adding anime to Sonarr: %w", err)
 	}
 
 	e.log.Info().Str("title", series.Title).Int("id", series.ID).Msg("added airing anime to Sonarr")
-	return nil
+	return series, nil
+}
+
+// SearchAiringAnimeEarlierSeasons checks for missing earlier seasons of a
+// currently-airing anime that was added to Sonarr. For each missing season
+// the user approves, it searches Prowlarr, presents the torrent picker, and
+// downloads the selected release.
+func (e *Executor) SearchAiringAnimeEarlierSeasons(ctx context.Context, evt db.EventWithTitle, series *library.SonarrSeries) {
+	season := quality.ParseSeasonNumber(evt.Title.Title)
+	if season <= 1 {
+		return
+	}
+
+	displayTitle := series.Title
+	if displayTitle == "" {
+		displayTitle = evt.Title.Title
+	}
+
+	missing := e.checkExistingSonarrSeasons(ctx, series, season)
+	for _, ms := range missing {
+		if !promptYesNo(ctx, fmt.Sprintf("    %s: Search for Season %d?", displayTitle, ms.SeasonNumber)) {
+			continue
+		}
+		e.searchPhase3Season(ctx, struct {
+			SeriesID     int
+			SeasonNumber int
+			SeriesTitle  string
+			MediaType    model.MediaType
+		}{
+			SeriesID:     series.ID,
+			SeasonNumber: ms.SeasonNumber,
+			SeriesTitle:  displayTitle,
+			MediaType:    evt.Title.MediaType,
+		})
+	}
 }
 
 func (e *Executor) addToSonarr(ctx context.Context, evt db.EventWithTitle, tvdbID, season int, confirmed bool) error {
