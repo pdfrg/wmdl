@@ -139,14 +139,20 @@ func runReviewForWeek(ctx context.Context, database *db.DB, cfg *config.Config, 
 					return 0, err
 				}
 				approved = tui.ApprovedCount()
-				if approved > 0 {
+				_, _, pending := tui.Counts()
+				if pending > 0 {
+					fmt.Fprintf(os.Stderr, "\n%d items still need decisions.\n", pending)
+				} else if approved > 0 {
 					fmt.Fprintf(os.Stderr, "\nApproved %d titles for processing.\n", approved)
 				} else {
 					fmt.Fprintf(os.Stderr, "\nAll items rejected.\n")
 				}
-				target.Reviewed = true
+				target.Reviewed = (pending == 0)
 				if err := database.UpsertWeekState(ctx, target); err != nil {
 					fmt.Fprintf(os.Stderr, "Warning: tracking week state: %v\n", err)
+				}
+				if pending > 0 {
+					return 0, nil
 				}
 				return approved, nil
 			case "e":
@@ -190,16 +196,21 @@ func runReviewForWeek(ctx context.Context, database *db.DB, cfg *config.Config, 
 	}
 
 	approved = tui.ApprovedCount()
-	if approved > 0 {
+	_, _, pending := tui.Counts()
+	if pending > 0 {
+		fmt.Fprintf(os.Stderr, "\n%d items still need decisions.\n", pending)
+	} else if approved > 0 {
 		fmt.Fprintf(os.Stderr, "\nApproved %d titles for processing.\n", approved)
 	} else {
 		fmt.Fprintf(os.Stderr, "\nAll items rejected — nothing to process.\n")
 	}
-	target.Reviewed = true
+	target.Reviewed = (pending == 0)
 	if err := database.UpsertWeekState(ctx, target); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: tracking week state: %v\n", err)
 	}
-
+	if pending > 0 {
+		return 0, nil
+	}
 	return approved, nil
 }
 
@@ -228,6 +239,10 @@ func runProcessForWeek(ctx context.Context, database *db.DB, cfg *config.Config,
 	}
 
 	year, week = target.Year, target.Week
+
+	if !target.Reviewed {
+		return fmt.Errorf("week %d-W%02d has not been fully reviewed — run 'wmdl review' first", year, week)
+	}
 
 	allEvents, err := database.ListEventsByWeekWithTitles(ctx, year, week)
 	if err != nil {

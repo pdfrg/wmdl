@@ -376,6 +376,20 @@ func (t *TUI) ApprovedCount() int {
 	return len(t.approved) + t.approvedBooks
 }
 
+func (t *TUI) Counts() (approved, rejected, pending int) {
+	for _, it := range t.items {
+		switch it.decision {
+		case decisionApproved:
+			approved++
+		case decisionRejected:
+			rejected++
+		default:
+			pending++
+		}
+	}
+	return
+}
+
 func (t *TUI) Init() tea.Cmd {
 	return t.loadCurrentPosterCmd()
 }
@@ -929,14 +943,21 @@ func (t *TUI) View() tea.View {
 		filterLabel = "  [undecided]"
 	}
 
+	pending := 0
+	for _, it := range t.items {
+		if it.decision == decisionNone {
+			pending++
+		}
+	}
+
 	if t.phase == phaseConfirm {
 		b.WriteString(headerStyle.Render(fmt.Sprintf("wmdl review — %d pending%s — confirm decisions",
-			len(t.items), filterLabel)))
+			pending, filterLabel)))
 		b.WriteString("\n\n")
 		b.WriteString(t.vpConfirm.View())
 	} else {
 		b.WriteString(headerStyle.Render(fmt.Sprintf("wmdl review — %d pending%s       [%d/%d]",
-			len(t.items), filterLabel, t.cursor+1, len(t.filtered))))
+			pending, filterLabel, t.cursor+1, len(t.filtered))))
 		b.WriteString("\n\n")
 		b.WriteString(content)
 
