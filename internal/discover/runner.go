@@ -1049,7 +1049,7 @@ func (r *Runner) processItem(ctx context.Context, item ScrapedItem, progYear, pr
 
 		evt := &model.ReleaseEvent{
 			TitleID:        titleID,
-			Source:         "scraper",
+			Source:         item.Source,
 			ReleaseType:    item.ReleaseType,
 			ReleaseDate:    item.ReleaseDate,
 			Status:         st,
