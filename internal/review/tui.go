@@ -685,19 +685,20 @@ func (t *TUI) updateReview(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 		if it.bookEvent != nil {
 			ev := it.bookEvent.Event
-			if ev.FormatPref == "" {
+			if it.decision == decisionNone {
 				ev.FormatPref = t.defaultBookFormat
-			} else {
-				switch ev.FormatPref {
-				case model.BookFormatBoth:
-					ev.FormatPref = model.BookFormatEbook
-				case model.BookFormatEbook:
-					ev.FormatPref = model.BookFormatAudiobook
-				case model.BookFormatAudiobook:
-					ev.FormatPref = ""
-					it.decision = decisionNone
-					return t, nil
-				}
+				it.decision = decisionApproved
+				return t, nil
+			}
+			switch ev.FormatPref {
+			case model.BookFormatBoth:
+				ev.FormatPref = model.BookFormatEbook
+			case model.BookFormatEbook:
+				ev.FormatPref = model.BookFormatAudiobook
+			case model.BookFormatAudiobook:
+				ev.FormatPref = ""
+				it.decision = decisionNone
+				return t, nil
 			}
 			if ev.FormatPref != "" {
 				it.decision = decisionApproved
@@ -1352,9 +1353,9 @@ func (t *TUI) buildBookContent(be *db.EventWithBook, rw int) string {
 			decorationStyle = approvedStyle
 			switch ev.FormatPref {
 			case model.BookFormatEbook:
-				decoration = "\U0000f10a"
+				decoration = " "
 			case model.BookFormatAudiobook:
-				decoration = "\U0000f025"
+				decoration = " "
 			default:
 				decoration = " "
 			}
