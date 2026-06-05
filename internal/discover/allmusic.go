@@ -2,6 +2,7 @@ package discover
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -110,7 +111,42 @@ func (p *AllMusicProvider) scrapeMonth(scrapeYear, scrapeMonth, progYear, progWe
 	return items, nil
 }
 
+// fetchPage wraps fetchPageOnce with a single retry on transient errors
+// (WebSocket disconnect, Cloudflare timeout, Varnish 503).
 func (p *AllMusicProvider) fetchPage(url string) (string, error) {
+	var lastErr error
+	for attempt := 0; attempt < 2; attempt++ {
+		if attempt > 0 {
+			log.Info().Str("provider", "allmusic").Msg("retrying fetch after transient error")
+			select {
+			case <-p.allocCtx.Done():
+				return "", p.allocCtx.Err()
+			case <-time.After(2 * time.Second):
+			}
+		}
+		html, err := p.fetchPageOnce(url)
+		if err == nil {
+			return html, nil
+		}
+		lastErr = err
+		if !isTransientError(err) {
+			break
+		}
+	}
+	return "", lastErr
+}
+
+func isTransientError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	return strings.Contains(err.Error(), "backend fetch failed (503)")
+}
+
+func (p *AllMusicProvider) fetchPageOnce(url string) (string, error) {
 	if p.allocCtx == nil {
 		return "", fmt.Errorf("chromedp allocator not available")
 	}
@@ -118,65 +154,84 @@ func (p *AllMusicProvider) fetchPage(url string) (string, error) {
 	ct, cancel := chromedp.NewContext(p.allocCtx)
 	defer cancel()
 
-	// Warm up on homepage first to pass Cloudflare challenge
-	log.Info().Str("provider", "allmusic").Msg("loading allmusic.com (may take a moment for Cloudflare challenge)")
-	homeCtx, homeCancel := context.WithTimeout(ct, 60*time.Second)
-	err := chromedp.Run(homeCtx,
-		chromedp.Navigate("https://www.allmusic.com"),
-		chromedp.WaitReady("body"),
-	)
-	homeCancel()
-	if err != nil {
-		return "", fmt.Errorf("navigating to allmusic.com: %w", err)
-	}
-
-	if err := waitForRealPage(ct); err != nil {
-		return "", fmt.Errorf("Cloudflare challenge on homepage: %w", err)
-	}
-
-	var html string
-	pageCtx, pageCancel := context.WithTimeout(ct, 60*time.Second)
+	pageCtx, pageCancel := context.WithTimeout(ct, 120*time.Second)
 	defer pageCancel()
 
 	log.Info().Str("provider", "allmusic").Msg("navigating to editors choice page")
-	err = chromedp.Run(pageCtx,
+	if err := chromedp.Run(pageCtx,
 		chromedp.Navigate(url),
 		chromedp.WaitReady("body"),
-	)
-	if err != nil {
+	); err != nil {
 		return "", fmt.Errorf("navigating to %s: %w", url, err)
 	}
 
 	if err := waitForRealPage(ct); err != nil {
-		return "", fmt.Errorf("Cloudflare challenge on editors choice page: %w", err)
+		return "", fmt.Errorf("Cloudflare challenge: %w", err)
 	}
 
-	// Fetch the rendered HTML
+	var html string
 	if err := chromedp.Run(ct, chromedp.OuterHTML("html", &html)); err != nil {
 		return "", fmt.Errorf("getting page HTML: %w", err)
-	}
-
-	// Check for Varnish 503 error
-	if strings.Contains(html, "503 Backend fetch failed") {
-		return "", fmt.Errorf("backend fetch failed (503)")
 	}
 
 	return html, nil
 }
 
+// retry calls fn up to n times with the given delay between attempts.
+func retry(n int, delay time.Duration, fn func() error) error {
+	var lastErr error
+	for i := 0; i < n; i++ {
+		if err := fn(); err != nil {
+			lastErr = err
+			time.Sleep(delay)
+			continue
+		}
+		return nil
+	}
+	return lastErr
+}
+
+// waitForRealPage polls the page title until the real page loads (Cloudflare
+// challenge passes) or a Varnish 503 is detected. Times out after 120 seconds.
+// Title reads are retried on transient errors — the Cloudflare challenge
+// redirect briefly resets the CDP session, and chromedp.Title can return
+// context.Canceled during that window.
 func waitForRealPage(ct context.Context) error {
+	waitCtx, waitCancel := context.WithTimeout(ct, 120*time.Second)
+	defer waitCancel()
+
 	var title string
-	for i := 0; i < 30; i++ {
-		if err := chromedp.Run(ct, chromedp.Title(&title)); err != nil {
+	for i := 0; i < 60; i++ {
+		if err := retry(5, 500*time.Millisecond, func() error {
+			return chromedp.Run(waitCtx, chromedp.Title(&title))
+		}); err != nil {
 			return err
 		}
+
+		// Check for Varnish 503 immediately (title contains "503" or "Error")
+		if strings.Contains(title, "503") || strings.Contains(title, "Error") {
+			var html string
+			if err := retry(3, 500*time.Millisecond, func() error {
+				return chromedp.Run(waitCtx, chromedp.OuterHTML("html", &html))
+			}); err == nil {
+				if strings.Contains(html, "503 Backend fetch failed") {
+					return fmt.Errorf("backend fetch failed (503)")
+				}
+			}
+		}
+
 		if !strings.Contains(title, "Just a moment") &&
 			!strings.Contains(title, "503") &&
 			!strings.Contains(title, "Error") &&
 			title != "" {
 			return nil
 		}
-		time.Sleep(2 * time.Second)
+
+		select {
+		case <-waitCtx.Done():
+			return waitCtx.Err()
+		case <-time.After(2 * time.Second):
+		}
 	}
 	return fmt.Errorf("timed out waiting for real page, last title: %q", title)
 }

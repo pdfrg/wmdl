@@ -120,7 +120,7 @@ func (p *GoodreadsProvider) Scrape() ([]ScrapedItem, error) {
 }
 
 func (p *GoodreadsProvider) scrapeMonth(year, month int) ([]grScrapedBook, error) {
-	ct, cancelCT := chromedp.NewContext(p.allocCtx, chromedp.WithLogf(func(string, ...interface{}) {}))
+	ct, cancelCT := chromedp.NewContext(p.allocCtx)
 	defer cancelCT()
 
 	scrapeCtx, cancel := context.WithTimeout(ct, 45*time.Second)

@@ -67,6 +67,7 @@ type Runner struct {
 	debugURL        string
 	allocCtx        context.Context
 	allocCancel     context.CancelFunc
+	browserCtx      context.Context // single browser instance shared by all chromedp providers
 	targetYear      int
 	targetWeek      int
 	hasTargetWeek   bool
@@ -376,6 +377,28 @@ func (r *Runner) Run(ctx context.Context) error {
 		if r.allocCancel != nil {
 			defer r.allocCancel()
 		}
+
+		// Pre-allocate the browser so all providers share one WebSocket connection.
+		// Each provider creates its own tab via NewContext(browserCtx) without
+		// opening a new CDP WebSocket — Chrome only supports one at a time.
+		r.browserCtx, _ = chromedp.NewContext(r.allocCtx,
+			chromedp.WithLogf(func(s string, v ...any) {
+				r.log.Debug().Str("source", "chromedp").Msgf(s, v...)
+			}),
+			chromedp.WithErrorf(func(s string, v ...any) {
+				r.log.Debug().Str("source", "chromedp").Msgf(s, v...)
+			}),
+		)
+
+		// Force-allocate the browser with the options above so all derived
+		// provider contexts inherit an existing browser and won't call
+		// Allocate again (preventing duplicate WebSocket connections).
+		if err := chromedp.Run(r.browserCtx, chromedp.ActionFunc(func(ctx context.Context) error {
+			return nil
+		})); err != nil {
+			r.log.Warn().Err(err).Msg("failed to pre-allocate chromedp browser, disabling browser providers")
+			r.browserCtx = nil
+		}
 	}
 
 	providers := []ReleaseProvider{}
@@ -409,8 +432,8 @@ func (r *Runner) Run(ctx context.Context) error {
 	// Book providers (gated on config and type filter)
 	if wantBooks && r.cfg.MediaTypes.Books.Enabled {
 		// Goodreads requires chromedp/Brave
-		if r.allocCtx != nil {
-			gr := NewGoodreadsProvider(r.debugURL, r.allocCtx)
+		if r.browserCtx != nil {
+			gr := NewGoodreadsProvider(r.debugURL, r.browserCtx)
 			bookYear, bookWeek := r.targetYear, r.targetWeek
 			if !r.hasTargetWeek {
 				bookYear, bookWeek = time.Now().ISOWeek()
@@ -430,8 +453,8 @@ func (r *Runner) Run(ctx context.Context) error {
 		providers = append(providers, aoty)
 
 		// AllMusic Editor's Choice (requires chromedp/Brave)
-		if r.allocCtx != nil {
-			allmusic := NewAllMusicProvider(r.debugURL, r.allocCtx)
+		if r.browserCtx != nil {
+			allmusic := NewAllMusicProvider(r.debugURL, r.browserCtx)
 			if r.hasTargetWeek {
 				allmusic.SetWeekRange(r.targetYear, r.targetWeek)
 			}
