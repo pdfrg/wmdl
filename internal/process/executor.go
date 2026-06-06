@@ -1696,8 +1696,8 @@ func (e *Executor) AddAiringAnimeToSonarr(ctx context.Context, evt db.EventWithT
 
 // SearchAiringAnimeEarlierSeasons checks for missing earlier seasons of a
 // currently-airing anime that was added to Sonarr. For each missing season
-// the user approves, it searches Prowlarr, presents the torrent picker, and
-// downloads the selected release.
+// the user approves, it looks up pre-searched results (from the batch search
+// phase) and presents the torrent picker.
 func (e *Executor) SearchAiringAnimeEarlierSeasons(ctx context.Context, evt db.EventWithTitle, series *library.SonarrSeries) {
 	season := quality.ParseSeasonNumber(evt.Title.Title)
 	if season <= 1 {
@@ -1714,17 +1714,43 @@ func (e *Executor) SearchAiringAnimeEarlierSeasons(ctx context.Context, evt db.E
 		if !promptYesNo(ctx, fmt.Sprintf("    %s: Search for Season %d?", displayTitle, ms.SeasonNumber)) {
 			continue
 		}
-		e.searchPhase3Season(ctx, struct {
-			SeriesID     int
-			SeasonNumber int
-			SeriesTitle  string
-			MediaType    model.MediaType
-		}{
-			SeriesID:     series.ID,
-			SeasonNumber: ms.SeasonNumber,
-			SeriesTitle:  displayTitle,
-			MediaType:    evt.Title.MediaType,
-		})
+
+		// Find pre-searched results from batch phase
+		var entry *Phase3SearchEntry
+		for i := range e.phase3SearchPhase {
+			c := &e.phase3SearchPhase[i].Candidate
+			if c.Title == evt.Title.Title && c.Season == ms.SeasonNumber {
+				entry = &e.phase3SearchPhase[i]
+				break
+			}
+		}
+		if entry == nil || len(entry.Top) == 0 {
+			e.log.Info().Str("title", displayTitle).Int("season", ms.SeasonNumber).Msg("no pre-searched results for earlier season, falling back")
+			e.searchPhase3Season(ctx, struct {
+				SeriesID     int
+				SeasonNumber int
+				SeriesTitle  string
+				MediaType    model.MediaType
+			}{
+				SeriesID:     series.ID,
+				SeasonNumber: ms.SeasonNumber,
+				SeriesTitle:  displayTitle,
+				MediaType:    evt.Title.MediaType,
+			})
+			continue
+		}
+
+		sr := &SearchResult{
+			Event:  db.EventWithTitle{Title: &model.Title{Title: displayTitle, MediaType: evt.Title.MediaType}},
+			Season: ms.SeasonNumber,
+			Top:    entry.Top,
+		}
+		chosen, err := e.presentPicker(ctx, sr)
+		if err != nil || len(chosen) == 0 {
+			continue
+		}
+		synthEvent := db.EventWithTitle{Title: &model.Title{Title: displayTitle, MediaType: evt.Title.MediaType}}
+		e.addToClient(ctx, synthEvent, chosen)
 	}
 }
 

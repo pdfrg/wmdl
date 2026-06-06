@@ -472,8 +472,11 @@ func runProcessForWeek(ctx context.Context, database *db.DB, cfg *config.Config,
 	if cfg.ProcessMode == "batch" || cfg.ProcessMode == "" {
 		// Compute Phase 3 candidates (collection gaps, earlier seasons)
 		var phase3Candidates []process.Phase3Candidate
-		if !skipLibrary && hasSearchable {
-			phase3Candidates = exec.ComputePhase3Candidates(ctx, events)
+		if !skipLibrary && (hasSearchable || hasAnimeAiring) {
+			allForPhase3 := make([]db.EventWithTitle, 0, len(events)+len(animeAiring))
+			allForPhase3 = append(allForPhase3, events...)
+			allForPhase3 = append(allForPhase3, animeAiring...)
+			phase3Candidates = exec.ComputePhase3Candidates(ctx, allForPhase3)
 			if len(phase3Candidates) > 0 {
 				fmt.Fprintf(os.Stderr, "  Pre-computed %d Phase 3 candidates (collection gaps + earlier seasons)\n", len(phase3Candidates))
 			}
@@ -538,9 +541,20 @@ func runProcessForWeek(ctx context.Context, database *db.DB, cfg *config.Config,
 		}
 	}
 
-	// ─── LIBRARY DECISIONS (Phase 2 only — no Phase 3 searches) ──
+	// ─── ALL PICKERS (continuous user attention) ─────────────────
+	var albumResults []process.MusicAlbumResult
+
+	if hasAlbums && (cfg.ProcessMode == "batch" || cfg.ProcessMode == "") {
+		albumResults = exec.PickMusicResults(ctx, musicResults)
+	}
+
+	if hasBooks && (cfg.ProcessMode == "batch" || cfg.ProcessMode == "") {
+		exec.PickBookResults(ctx, bookResults)
+	}
+
+	// ─── ALL LIBRARY DECISIONS ──────────────────────────────────
 	if !skipLibrary {
-		if hasSearchable || hasAnimeAiring {
+		if hasSearchable || hasAnimeAiring || hasAlbums {
 			fmt.Fprintf(os.Stderr, "  Waiting for library data...\n")
 			<-preWarmDone
 			<-preWarmDone
@@ -550,14 +564,16 @@ func runProcessForWeek(ctx context.Context, database *db.DB, cfg *config.Config,
 		if len(picked) > 0 {
 			exec.ProcessLibraryDecisions(ctx, picked)
 		}
+
+		if len(albumResults) > 0 {
+			exec.ProcessMusicAlbumDecisions(ctx, albumResults)
+		}
 	}
 
 	// ─── PHASE 3 PICKERS (collection movies + earlier seasons) ──
 	if !skipLibrary {
 		exec.ProcessPhase3Pickers(ctx)
 	}
-
-	log.Info().Msgf("Processed %d/%d movie/TV releases", len(picked), len(events))
 
 	// ─── Anime Phase B processing (airing items) ─────────────────
 	for _, ae := range animeAiring {
@@ -580,45 +596,20 @@ func runProcessForWeek(ctx context.Context, database *db.DB, cfg *config.Config,
 		exec.SearchAiringAnimeEarlierSeasons(ctx, ae, series)
 	}
 
-	// ─── Music album processing ──────────────────────────────────
-	if hasAlbums {
-		if cfg.ProcessMode == "batch" || cfg.ProcessMode == "" {
-			albumResults := exec.PickMusicResults(ctx, musicResults)
-			if !skipLibrary {
-				exec.ProcessMusicAlbumDecisions(ctx, albumResults)
-			}
-		} else {
-			// Interactive mode — one by one
-			for _, ae := range albumEventsForProcess {
-				select {
-				case <-ctx.Done():
-					return ctx.Err()
-				default:
-				}
-				if _, err := exec.ProcessMusicAlbum(ctx, ae); err != nil {
-					log.Warn().Err(err).Str("album", ae.Album.Title).Msg("error processing album")
-				}
+	// ─── Book upload trigger (no user attention needed) ─────────
+	if hasBooks && (cfg.ProcessMode == "batch" || cfg.ProcessMode == "") {
+		bookDownloaded := false
+		for _, sre := range bookResults {
+			if sre != nil && len(sre.Top) > 0 {
+				bookDownloaded = true
+				break
 			}
 		}
-	}
-
-	// ─── Book processing ─────────────────────────────────────────
-	if hasBooks {
-		if cfg.ProcessMode == "batch" || cfg.ProcessMode == "" {
-			exec.PickBookResults(ctx, bookResults)
-			bookDownloaded := false
-			for _, sre := range bookResults {
-				if sre != nil && len(sre.Top) > 0 {
-					bookDownloaded = true
-					break
-				}
-			}
-			if bookDownloaded {
-				exec.UploadToAudiobookshelf(ctx)
-			}
-		} else {
-			exec.ProcessBooks(ctx, bookEventsForProcess)
+		if bookDownloaded {
+			exec.UploadToAudiobookshelf(ctx)
 		}
+	} else if hasBooks {
+		exec.ProcessBooks(ctx, bookEventsForProcess)
 	}
 
 	if hasSearchable || hasAnimeAiring || hasAlbums || hasBooks {
