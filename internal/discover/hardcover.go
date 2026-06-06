@@ -41,9 +41,11 @@ type HCBookResult struct {
 	Tags         []string
 	LiteraryType string // "fiction" or "nonfiction"
 
-	Slug   string // for hardcover.app/books/{slug}
-	Author *HCAuthorResult
-	OLID   string // Open Library ID
+	Slug       string // for hardcover.app/books/{slug}
+	Author     *HCAuthorResult
+	OLID       string // Open Library ID
+	SeriesID   string
+	SeriesName string
 }
 
 type HCAuthorResult struct {
@@ -146,6 +148,10 @@ func (c *HardcoverClient) GetBook(ctx context.Context, hcID int) (*HCBookResult,
 			cached_tags
 			contributions {
 				author { id name bio born_date death_date image { url } identifiers }
+			}
+			book_series {
+				position
+				series { id name }
 			}
 		}
 	}`
@@ -265,6 +271,13 @@ func (c *HardcoverClient) decodeBook(raw json.RawMessage) (*HCBookResult, error)
 
 		BookMappings  []json.RawMessage `json:"book_mappings"`
 		Contributions []json.RawMessage `json:"contributions"`
+		BookSeries    []struct {
+			Position float64 `json:"position"`
+			Series   struct {
+				ID   int    `json:"id"`
+				Name string `json:"name"`
+			} `json:"series"`
+		} `json:"book_series"`
 	}
 	if err := json.Unmarshal(raw, &rawBook); err != nil {
 		return nil, fmt.Errorf("decode book: %w", err)
@@ -279,6 +292,11 @@ func (c *HardcoverClient) decodeBook(raw json.RawMessage) (*HCBookResult, error)
 		Rating:       rawBook.Rating,
 		RatingsCount: rawBook.RatingsCount,
 		UsersCount:   rawBook.UsersCount,
+	}
+
+	if len(rawBook.BookSeries) > 0 {
+		res.SeriesID = fmt.Sprintf("%d", rawBook.BookSeries[0].Series.ID)
+		res.SeriesName = rawBook.BookSeries[0].Series.Name
 	}
 
 	if rawBook.CachedTags != nil {

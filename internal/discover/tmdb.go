@@ -74,6 +74,8 @@ type TMDBEnrichment struct {
 	PosterPath       string
 	OriginalLanguage string // ISO 639-1
 	OriginCountry    string // ISO 3166-1, first country
+	CollectionID     int
+	CollectionName   string
 }
 
 type TMDBDiscoverResult struct {
@@ -200,6 +202,47 @@ type TMDBDetails struct {
 	IMDbID           string   `json:"imdb_id,omitempty"`
 	OriginalLanguage string   `json:"original_language"`
 	OriginCountry    []string `json:"origin_country"`
+	BelongsToCollection *struct {
+		ID   int    `json:"id"`
+		Name string `json:"name"`
+	} `json:"belongs_to_collection"`
+}
+
+type TMDBCollectionPart struct {
+	ID          int    `json:"id"`
+	Title       string `json:"title"`
+	ReleaseDate string `json:"release_date"`
+}
+
+type TMDBCollection struct {
+	ID    int                  `json:"id"`
+	Name  string               `json:"name"`
+	Parts []TMDBCollectionPart `json:"parts"`
+}
+
+func (c *TMDBClient) GetCollection(ctx context.Context, collectionID int) (*TMDBCollection, error) {
+	if err := c.limiter.Wait(ctx); err != nil {
+		return nil, err
+	}
+	u := fmt.Sprintf("%s/collection/%d", tmdbBase, collectionID)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	if err != nil {
+		return nil, err
+	}
+	c.setAuth(req)
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("fetching TMDB collection: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("TMDB collection returned %d", resp.StatusCode)
+	}
+	var coll TMDBCollection
+	if err := json.NewDecoder(resp.Body).Decode(&coll); err != nil {
+		return nil, err
+	}
+	return &coll, nil
 }
 
 func (c *TMDBClient) GetMovieDetails(ctx context.Context, tmdbID int) (*TMDBDetails, error) {
@@ -439,6 +482,11 @@ func (c *TMDBClient) enrichWithPrefs(ctx context.Context, query string, year int
 		if len(details.OriginCountry) > 0 {
 			n := min(len(details.OriginCountry), 3)
 			enrich.OriginCountry = strings.Join(details.OriginCountry[:n], ",")
+		}
+
+		if enrich.MediaType == "movie" && details.BelongsToCollection != nil {
+			enrich.CollectionID = details.BelongsToCollection.ID
+			enrich.CollectionName = details.BelongsToCollection.Name
 		}
 	}
 

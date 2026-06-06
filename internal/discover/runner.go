@@ -1009,6 +1009,8 @@ func (r *Runner) processItem(ctx context.Context, item ScrapedItem, progYear, pr
 		PosterPath:       posterPath,
 		OriginalLanguage: originalLanguage,
 		OriginCountry:    originCountry,
+		CollectionID:     enrich.CollectionID,
+		CollectionName:   enrich.CollectionName,
 	}
 
 	var titleID int64
@@ -1096,6 +1098,37 @@ func (r *Runner) processItem(ctx context.Context, item ScrapedItem, progYear, pr
 	// Skip if already pending — don't stack duplicate events
 	if existingEvent != nil && existingEvent.Status == model.StatusPending {
 		return nil
+	}
+
+	// Store collection membership in library_cache if movie belongs to a collection
+	if enrich != nil && enrich.CollectionID > 0 && enrich.MediaType == "movie" {
+		collIDStr := strconv.Itoa(enrich.CollectionID)
+		existingCache, _ := r.db.GetLibraryCache(ctx, "tmdb-collection", collIDStr)
+		if existingCache == nil {
+			coll, err := r.tmdb.GetCollection(ctx, enrich.CollectionID)
+			if err == nil && coll != nil && len(coll.Parts) > 0 {
+				type collPart struct {
+					TmdbID int    `json:"tmdb_id"`
+					Title  string `json:"title"`
+					Year   int    `json:"year"`
+				}
+				parts := make([]collPart, 0, len(coll.Parts))
+				for _, p := range coll.Parts {
+					year := 0
+					if len(p.ReleaseDate) >= 4 {
+						if n, _ := fmt.Sscanf(p.ReleaseDate[:4], "%d", &year); n != 1 {
+							year = 0
+						}
+					}
+					parts = append(parts, collPart{TmdbID: p.ID, Title: p.Title, Year: year})
+				}
+				collJSON, _ := json.Marshal(map[string]any{
+					"name":   coll.Name,
+					"movies": parts,
+				})
+				_ = r.db.UpsertLibraryCache(ctx, "tmdb-collection", collIDStr, int64(coll.ID), coll.Name, string(collJSON))
+			}
+		}
 	}
 
 	return nil
@@ -1500,6 +1533,7 @@ func (r *Runner) processBookItem(ctx context.Context, item ScrapedItem, progYear
 	}
 
 	isbn10, isbn13, asin := "", "", ""
+	seriesID, seriesName := "", ""
 	pages := 0
 	audioSeconds := 0
 	publisher := ""
@@ -1522,6 +1556,8 @@ func (r *Runner) processBookItem(ctx context.Context, item ScrapedItem, progYear
 		isbn13 = hcResult.ISBN13
 		asin = hcResult.ASIN
 		pages = hcResult.Pages
+		seriesID = hcResult.SeriesID
+		seriesName = hcResult.SeriesName
 		audioSeconds = hcResult.AudioSeconds
 		publisher = hcResult.Publisher
 		language = hcResult.Language
@@ -1636,6 +1672,8 @@ func (r *Runner) processBookItem(ctx context.Context, item ScrapedItem, progYear
 			Publisher:      publisher,
 			Tags:           tags,
 			LiteraryType:   literaryType,
+			SeriesID:       seriesID,
+			SeriesName:     seriesName,
 		}
 		bookID, err := r.db.UpsertBookTx(ctx, tx, book)
 		if err != nil {

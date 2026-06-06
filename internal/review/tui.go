@@ -199,6 +199,37 @@ func (it *itemState) libraryInfo(dbCache map[string]*db.LibraryCache) libInfo {
 	return libInfo{status: libNone}
 }
 
+func (it *itemState) collectionStr(dbCache map[string]*db.LibraryCache) string {
+	if it.event.Title == nil || it.event.Title.MediaType != model.MediaTypeMovie || it.event.Title.CollectionID == 0 {
+		return ""
+	}
+	key := "tmdb-collection:" + strconv.Itoa(it.event.Title.CollectionID)
+	c := dbCache[key]
+	if c == nil || c.Details == "" {
+		return ""
+	}
+	var collData struct {
+		Name   string `json:"name"`
+		Movies []struct {
+			TmdbID int    `json:"tmdb_id"`
+			Title  string `json:"title"`
+		} `json:"movies"`
+	}
+	if err := json.Unmarshal([]byte(c.Details), &collData); err != nil {
+		return ""
+	}
+	if len(collData.Movies) == 0 {
+		return ""
+	}
+	owned := 0
+	for _, m := range collData.Movies {
+		if dbCache["radarr:"+strconv.Itoa(m.TmdbID)] != nil {
+			owned++
+		}
+	}
+	return fmt.Sprintf("Collection: %s (%d/%d)", collData.Name, owned, len(collData.Movies))
+}
+
 type posterReadyMsg struct {
 	img image.Image
 	err error
@@ -331,6 +362,65 @@ func buildLibraryCacheMap(database *db.DB, events []db.EventWithTitle, albumEven
 	if err != nil {
 		return nil
 	}
+
+	// Phase 2: fetch collection data for events with CollectionID
+	// and add Radarr lookups for collection member movies
+	var collLookups []struct{ Source, ExtID string }
+	for _, e := range events {
+		if e.Title.CollectionID > 0 {
+			key := "tmdb-collection:" + strconv.Itoa(e.Title.CollectionID)
+			if !seen[key] {
+				collLookups = append(collLookups, struct{ Source, ExtID string }{"tmdb-collection", strconv.Itoa(e.Title.CollectionID)})
+				seen[key] = true
+			}
+		}
+	}
+	if len(collLookups) > 0 {
+		collResult, err := database.GetLibraryCacheMap(ctx, collLookups)
+		if err == nil {
+			for k, v := range collResult {
+				result[k] = v
+			}
+			// Parse collection data to add radarr lookups for member movies
+			var memberLookups []struct{ Source, ExtID string }
+			for _, e := range events {
+				if e.Title.CollectionID == 0 {
+					continue
+				}
+				ck := "tmdb-collection:" + strconv.Itoa(e.Title.CollectionID)
+				c := collResult[ck]
+				if c == nil || c.Details == "" {
+					continue
+				}
+				var collData struct {
+					Movies []struct {
+						TmdbID int    `json:"tmdb_id"`
+						Title  string `json:"title"`
+						Year   int    `json:"year"`
+					} `json:"movies"`
+				}
+				if err := json.Unmarshal([]byte(c.Details), &collData); err != nil {
+					continue
+				}
+				for _, m := range collData.Movies {
+					rk := "radarr:" + strconv.Itoa(m.TmdbID)
+					if !seen[rk] {
+						memberLookups = append(memberLookups, struct{ Source, ExtID string }{"radarr", strconv.Itoa(m.TmdbID)})
+						seen[rk] = true
+					}
+				}
+			}
+			if len(memberLookups) > 0 {
+				memberResult, err := database.GetLibraryCacheMap(ctx, memberLookups)
+				if err == nil {
+					for k, v := range memberResult {
+						result[k] = v
+					}
+				}
+			}
+		}
+	}
+
 	return result
 }
 
@@ -1731,6 +1821,10 @@ func (t *TUI) buildRightContent(tl *model.Title, ev *model.ReleaseEvent, rw int)
 			b.WriteString(style.Render("Library:"))
 			b.WriteString("\n")
 			b.WriteString(style.Render("  " + info.label))
+		}
+		if collStr := it.collectionStr(t.libraryCache); collStr != "" {
+			b.WriteString("\n")
+			b.WriteString(rtStyle.Render("  " + collStr))
 		}
 	}
 
