@@ -411,6 +411,10 @@ func (d *DB) Migrate(ctx context.Context) error {
 	d.db.ExecContext(ctx, `ALTER TABLE titles ADD COLUMN themes TEXT NOT NULL DEFAULT ''`)
 	d.db.ExecContext(ctx, `ALTER TABLE titles ADD COLUMN demographics TEXT NOT NULL DEFAULT ''`)
 	d.db.ExecContext(ctx, `ALTER TABLE titles ADD COLUMN streaming TEXT NOT NULL DEFAULT ''`)
+	d.db.ExecContext(ctx, `ALTER TABLE titles ADD COLUMN collection_id INTEGER DEFAULT 0`)
+	d.db.ExecContext(ctx, `ALTER TABLE titles ADD COLUMN collection_name TEXT DEFAULT ''`)
+	d.db.ExecContext(ctx, `ALTER TABLE books ADD COLUMN series_id TEXT DEFAULT ''`)
+	d.db.ExecContext(ctx, `ALTER TABLE books ADD COLUMN series_name TEXT DEFAULT ''`)
 
 	d.db.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_release_events_week ON release_events(iso_year, iso_week)`)
 	d.db.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_albums_artist_id ON albums(artist_id)`)
@@ -459,7 +463,8 @@ func (d *DB) upsertTitle(ctx context.Context, q querier, t *model.Title) (int64,
 					poster_path = ?, tmdb_title = ?,
 					anime_type = ?, anime_episodes = ?, anime_status = ?,
 					anime_members = ?, anime_rank = ?, anime_source = ?,
-					anime_studio = ?, themes = ?, demographics = ?, streaming = ?
+					anime_studio = ?, themes = ?, demographics = ?, streaming = ?,
+					collection_id = ?, collection_name = ?
 				WHERE mal_id = ?
 			`,
 				t.TvdbID, t.Title, t.Year, string(t.MediaType),
@@ -470,7 +475,8 @@ func (d *DB) upsertTitle(ctx context.Context, q querier, t *model.Title) (int64,
 				t.PosterPath, t.TmdbTitle,
 				t.AnimeType, t.AnimeEpisodes, t.AnimeStatus,
 				t.AnimeMembers, t.AnimeRank, t.AnimeSource,
-				t.AnimeStudio, t.Themes, t.Demographics, t.Streaming, t.MalID,
+				t.AnimeStudio, t.Themes, t.Demographics, t.Streaming,
+				t.CollectionID, t.CollectionName, t.MalID,
 			)
 			if err != nil {
 				return 0, fmt.Errorf("updating anime title: %w", err)
@@ -485,9 +491,10 @@ func (d *DB) upsertTitle(ctx context.Context, q querier, t *model.Title) (int64,
 		                    metacritic_score, us_rating, original_language, origin_country,
 		                    yt_trailer_views, overview, genres, runtime, poster_path, created_at,
 		                    anime_type, anime_episodes, anime_status, anime_members, anime_rank,
-		                    anime_source, anime_studio, themes, demographics, streaming)
+		                    anime_source, anime_studio, themes, demographics, streaming,
+		                    collection_id, collection_name)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-		        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(tmdb_id, mal_id) DO UPDATE SET
 			title             = excluded.title,
 			tmdb_title        = excluded.tmdb_title,
@@ -519,7 +526,9 @@ func (d *DB) upsertTitle(ctx context.Context, q querier, t *model.Title) (int64,
 			anime_studio      = excluded.anime_studio,
 			themes            = excluded.themes,
 			demographics      = excluded.demographics,
-			streaming         = excluded.streaming
+			streaming         = excluded.streaming,
+			collection_id     = excluded.collection_id,
+			collection_name   = excluded.collection_name
 	`,
 		t.TmdbID, t.TvdbID, t.MalID, t.Title, t.TmdbTitle, t.Year, string(t.MediaType), t.ImdbID, t.ImdbRating,
 		t.RTURL, t.RTCriticsScore, t.RTAudienceScore, t.TmdbRating,
@@ -527,6 +536,7 @@ func (d *DB) upsertTitle(ctx context.Context, q querier, t *model.Title) (int64,
 		t.YoutubeViews, t.Overview, t.Genres, t.Runtime, t.PosterPath, t.CreatedAt,
 		t.AnimeType, t.AnimeEpisodes, t.AnimeStatus, t.AnimeMembers, t.AnimeRank,
 		t.AnimeSource, t.AnimeStudio, t.Themes, t.Demographics, t.Streaming,
+		t.CollectionID, t.CollectionName,
 	)
 	if err != nil {
 		return 0, fmt.Errorf("upserting title: %w", err)
@@ -559,7 +569,8 @@ func (d *DB) getTitleByMalID(ctx context.Context, q querier, malID int) (*model.
 		       tmdb_rating, metacritic_score, yt_trailer_views, us_rating, original_language, origin_country,
 		       overview, genres, runtime, poster_path, created_at,
 		       anime_type, anime_episodes, anime_status, anime_members, anime_rank,
-		       anime_source, anime_studio, themes, demographics, streaming
+		       anime_source, anime_studio, themes, demographics, streaming,
+		       collection_id, collection_name
 		FROM titles WHERE mal_id = ?
 	`, malID).Scan(
 		&t.ID, &t.TmdbID, &t.TvdbID, &t.MalID, &t.Title, &t.TmdbTitle, &t.Year, &mediaType,
@@ -568,6 +579,7 @@ func (d *DB) getTitleByMalID(ctx context.Context, q querier, malID int) (*model.
 		&t.Overview, &t.Genres, &t.Runtime, &t.PosterPath, &createdAt,
 		&t.AnimeType, &t.AnimeEpisodes, &t.AnimeStatus, &t.AnimeMembers, &t.AnimeRank,
 		&t.AnimeSource, &t.AnimeStudio, &t.Themes, &t.Demographics, &t.Streaming,
+		&t.CollectionID, &t.CollectionName,
 	)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -590,7 +602,8 @@ func (d *DB) getTitleByField(ctx context.Context, field string, value int) (*mod
 		       tmdb_rating, metacritic_score, yt_trailer_views, us_rating, original_language, origin_country,
 		       overview, genres, runtime, poster_path, created_at,
 		       anime_type, anime_episodes, anime_status, anime_members, anime_rank,
-		       anime_source, anime_studio, themes, demographics, streaming
+		       anime_source, anime_studio, themes, demographics, streaming,
+		       collection_id, collection_name
 		FROM titles WHERE %s = ?
 	`, field), value).Scan(
 		&t.ID, &t.TmdbID, &t.TvdbID, &t.MalID, &t.Title, &t.TmdbTitle, &t.Year, &mediaType,
@@ -599,6 +612,7 @@ func (d *DB) getTitleByField(ctx context.Context, field string, value int) (*mod
 		&t.Overview, &t.Genres, &t.Runtime, &t.PosterPath, &createdAt,
 		&t.AnimeType, &t.AnimeEpisodes, &t.AnimeStatus, &t.AnimeMembers, &t.AnimeRank,
 		&t.AnimeSource, &t.AnimeStudio, &t.Themes, &t.Demographics, &t.Streaming,
+		&t.CollectionID, &t.CollectionName,
 	)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -618,7 +632,8 @@ func (d *DB) ListTitles(ctx context.Context) ([]*model.Title, error) {
 		       tmdb_rating, metacritic_score, us_rating, original_language, origin_country,
 		       yt_trailer_views, overview, genres, runtime, poster_path, created_at,
 		       anime_type, anime_episodes, anime_status, anime_members, anime_rank,
-		       anime_source, anime_studio, themes, demographics, streaming
+		       anime_source, anime_studio, themes, demographics, streaming,
+		       collection_id, collection_name
 		FROM titles ORDER BY created_at DESC
 	`)
 	if err != nil {
@@ -638,6 +653,7 @@ func (d *DB) ListTitles(ctx context.Context) ([]*model.Title, error) {
 			&t.YoutubeViews, &t.Overview, &t.Genres, &t.Runtime, &t.PosterPath, &createdAt,
 			&t.AnimeType, &t.AnimeEpisodes, &t.AnimeStatus, &t.AnimeMembers, &t.AnimeRank,
 			&t.AnimeSource, &t.AnimeStudio, &t.Themes, &t.Demographics, &t.Streaming,
+			&t.CollectionID, &t.CollectionName,
 		); err != nil {
 			return nil, fmt.Errorf("scanning title row: %w", err)
 		}
@@ -744,7 +760,7 @@ func (d *DB) ListPendingWithTitles(ctx context.Context) ([]EventWithTitle, error
 		       t.original_language, t.origin_country,
 		       t.yt_trailer_views, t.overview, t.genres, t.runtime, t.poster_path, t.created_at,
 		       t.anime_type, t.anime_episodes, t.anime_status, t.anime_members, t.anime_rank,
-		       t.anime_source, t.anime_studio, t.themes, t.demographics, t.streaming
+		       t.anime_source, t.anime_studio, t.themes, t.demographics, t.streaming, t.collection_id, t.collection_name
 		FROM release_events e
 		JOIN titles t ON t.id = e.title_id
 		WHERE e.status = 'pending'
@@ -768,7 +784,7 @@ func (d *DB) ListApprovedWithTitles(ctx context.Context) ([]EventWithTitle, erro
 		       t.original_language, t.origin_country,
 		       t.yt_trailer_views, t.overview, t.genres, t.runtime, t.poster_path, t.created_at,
 		       t.anime_type, t.anime_episodes, t.anime_status, t.anime_members, t.anime_rank,
-		       t.anime_source, t.anime_studio, t.themes, t.demographics, t.streaming
+		       t.anime_source, t.anime_studio, t.themes, t.demographics, t.streaming, t.collection_id, t.collection_name
 		FROM release_events e
 		JOIN titles t ON t.id = e.title_id
 		WHERE e.status = 'approved'
@@ -975,7 +991,7 @@ func (d *DB) ListEventsByWeekWithTitles(ctx context.Context, year, week int) ([]
 		       t.original_language, t.origin_country,
 		       t.yt_trailer_views, t.overview, t.genres, t.runtime, t.poster_path, t.created_at,
 		       t.anime_type, t.anime_episodes, t.anime_status, t.anime_members, t.anime_rank,
-		       t.anime_source, t.anime_studio, t.themes, t.demographics, t.streaming
+		       t.anime_source, t.anime_studio, t.themes, t.demographics, t.streaming, t.collection_id, t.collection_name
 		FROM release_events e
 		JOIN titles t ON t.id = e.title_id
 		WHERE e.iso_year = ? AND e.iso_week = ?
@@ -1011,7 +1027,7 @@ func (d *DB) ListEventsByWeekAndStatus(ctx context.Context, year, week int, stat
 		       t.original_language, t.origin_country,
 		       t.yt_trailer_views, t.overview, t.genres, t.runtime, t.poster_path, t.created_at,
 		       t.anime_type, t.anime_episodes, t.anime_status, t.anime_members, t.anime_rank,
-		       t.anime_source, t.anime_studio, t.themes, t.demographics, t.streaming
+		       t.anime_source, t.anime_studio, t.themes, t.demographics, t.streaming, t.collection_id, t.collection_name
 		FROM release_events e
 		JOIN titles t ON t.id = e.title_id
 		WHERE e.iso_year = ? AND e.iso_week = ?
@@ -1262,14 +1278,16 @@ func (d *DB) upsertBook(ctx context.Context, q querier, b *model.Book) (int64, e
 					pages = ?, audio_seconds = ?, description = ?,
 					release_date = ?, release_year = ?,
 					rating = ?, ratings_count = ?, shelvings_count = ?, image_url = ?,
-					language = ?, publisher = ?, tags = ?, literary_type = ?
+					language = ?, publisher = ?, tags = ?, literary_type = ?,
+					series_id = ?, series_name = ?
 				WHERE id = ?
 			`, b.AuthorID, b.Title, b.Subtitle, b.HardcoverID,
 				b.HardcoverSlug, b.OLID, b.ISBN10, b.ASIN,
 				b.Pages, b.AudioSeconds, b.Description,
 				b.ReleaseDate, b.ReleaseYear,
 				b.Rating, b.RatingsCount, b.ShelvingsCount, b.ImageURL,
-				b.Language, b.Publisher, b.Tags, b.LiteraryType, existing.ID)
+				b.Language, b.Publisher, b.Tags, b.LiteraryType,
+				b.SeriesID, b.SeriesName, existing.ID)
 			if err != nil {
 				return 0, fmt.Errorf("updating existing book by isbn: %w", err)
 			}
@@ -1280,8 +1298,10 @@ func (d *DB) upsertBook(ctx context.Context, q querier, b *model.Book) (int64, e
 	res, err := q.ExecContext(ctx, `
 		INSERT INTO books (author_id, title, subtitle, hardcover_id, hardcover_slug, olid, isbn10, isbn13, asin,
 		                   pages, audio_seconds, description, release_date, release_year,
-		                   rating, ratings_count, shelvings_count, image_url, language, publisher, tags, literary_type, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+		                   rating, ratings_count, shelvings_count, image_url, language, publisher, tags, literary_type,
+		                   series_id, series_name, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+		        ?, ?, datetime('now'))
 		ON CONFLICT(author_id, title, release_year) DO UPDATE SET
 			subtitle       = excluded.subtitle,
 			hardcover_id   = excluded.hardcover_id,
@@ -1301,10 +1321,13 @@ func (d *DB) upsertBook(ctx context.Context, q querier, b *model.Book) (int64, e
 			language       = excluded.language,
 			publisher      = excluded.publisher,
 			tags           = excluded.tags,
-			literary_type  = excluded.literary_type
+			literary_type  = excluded.literary_type,
+			series_id      = excluded.series_id,
+			series_name    = excluded.series_name
 	`, b.AuthorID, b.Title, b.Subtitle, b.HardcoverID, b.HardcoverSlug, b.OLID, b.ISBN10, b.ISBN13, b.ASIN,
 		b.Pages, b.AudioSeconds, b.Description, b.ReleaseDate, b.ReleaseYear,
-		b.Rating, b.RatingsCount, b.ShelvingsCount, b.ImageURL, b.Language, b.Publisher, b.Tags, b.LiteraryType)
+		b.Rating, b.RatingsCount, b.ShelvingsCount, b.ImageURL, b.Language, b.Publisher, b.Tags, b.LiteraryType,
+		b.SeriesID, b.SeriesName)
 	if err != nil {
 		return 0, fmt.Errorf("upserting book: %w", err)
 	}
@@ -1331,13 +1354,15 @@ func (d *DB) getBookByISBN(ctx context.Context, q querier, isbn13 string) (*mode
 	err := q.QueryRowContext(ctx, `
 		SELECT id, author_id, title, subtitle, hardcover_id, hardcover_slug, olid, isbn10, isbn13, asin,
 		       pages, audio_seconds, description, release_date, release_year,
-		       rating, ratings_count, shelvings_count, image_url, language, publisher, tags, literary_type, created_at
+		       rating, ratings_count, shelvings_count, image_url, language, publisher, tags, literary_type,
+		       series_id, series_name, created_at
 		FROM books WHERE isbn13 = ?
 	`, isbn13).Scan(
 		&b.ID, &b.AuthorID, &b.Title, &b.Subtitle, &b.HardcoverID, &b.HardcoverSlug, &b.OLID,
 		&b.ISBN10, &b.ISBN13, &b.ASIN,
 		&b.Pages, &b.AudioSeconds, &b.Description, &b.ReleaseDate, &b.ReleaseYear,
-		&b.Rating, &b.RatingsCount, &b.ShelvingsCount, &b.ImageURL, &b.Language, &b.Publisher, &b.Tags, &b.LiteraryType, &b.CreatedAt)
+		&b.Rating, &b.RatingsCount, &b.ShelvingsCount, &b.ImageURL, &b.Language, &b.Publisher, &b.Tags, &b.LiteraryType,
+		&b.SeriesID, &b.SeriesName, &b.CreatedAt)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil, nil
@@ -1450,7 +1475,7 @@ func (d *DB) ListPendingBookEventsWithBooks(ctx context.Context) ([]EventWithBoo
 	b.id, b.author_id, b.title, b.subtitle, b.hardcover_id, b.hardcover_slug, b.olid,
 		       b.isbn10, b.isbn13, b.asin,
 		       b.pages, b.audio_seconds, b.description, b.release_date, b.release_year,
-		       b.rating, b.ratings_count, b.shelvings_count, b.image_url, b.language, b.publisher, b.tags, b.literary_type, b.created_at,
+		       b.rating, b.ratings_count, b.shelvings_count, b.image_url, b.language, b.publisher, b.tags, b.literary_type, b.series_id, b.series_name, b.created_at,
 		       a.id, a.hardcover_id, a.olid, a.name, a.bio, a.born_date, a.death_date, a.image_url, a.identifiers, a.links, a.created_at
 		FROM book_release_events e
 		JOIN books b ON b.id = e.book_id
@@ -1473,7 +1498,7 @@ func (d *DB) ListBookEventsByWeek(ctx context.Context, year, week int) ([]EventW
 		       b.id, b.author_id, b.title, b.subtitle, b.hardcover_id, b.hardcover_slug, b.olid,
 		       b.isbn10, b.isbn13, b.asin,
 		       b.pages, b.audio_seconds, b.description, b.release_date, b.release_year,
-		       b.rating, b.ratings_count, b.shelvings_count, b.image_url, b.language, b.publisher, b.tags, b.literary_type, b.created_at,
+		       b.rating, b.ratings_count, b.shelvings_count, b.image_url, b.language, b.publisher, b.tags, b.literary_type, b.series_id, b.series_name, b.created_at,
 		       a.id, a.hardcover_id, a.olid, a.name, a.bio, a.born_date, a.death_date, a.image_url, a.identifiers, a.links, a.created_at
 		FROM book_release_events e
 		JOIN books b ON b.id = e.book_id
@@ -1506,7 +1531,7 @@ func (d *DB) ListBookEventsByWeekAndStatus(ctx context.Context, year, week int, 
 		       b.id, b.author_id, b.title, b.subtitle, b.hardcover_id, b.hardcover_slug, b.olid,
 		       b.isbn10, b.isbn13, b.asin,
 		       b.pages, b.audio_seconds, b.description, b.release_date, b.release_year,
-		       b.rating, b.ratings_count, b.shelvings_count, b.image_url, b.language, b.publisher, b.tags, b.literary_type, b.created_at,
+		       b.rating, b.ratings_count, b.shelvings_count, b.image_url, b.language, b.publisher, b.tags, b.literary_type, b.series_id, b.series_name, b.created_at,
 		       a.id, a.hardcover_id, a.olid, a.name, a.bio, a.born_date, a.death_date, a.image_url, a.identifiers, a.links, a.created_at
 		FROM book_release_events e
 		JOIN books b ON b.id = e.book_id
@@ -1566,6 +1591,7 @@ func scanEventWithBookRows(rows *sql.Rows) ([]EventWithBook, error) {
 			&b.ISBN10, &b.ISBN13, &b.ASIN,
 			&b.Pages, &b.AudioSeconds, &b.Description, &b.ReleaseDate, &b.ReleaseYear,
 			&b.Rating, &b.RatingsCount, &b.ShelvingsCount, &b.ImageURL, &b.Language, &b.Publisher, &b.Tags, &b.LiteraryType, &bCreated,
+			&b.SeriesID, &b.SeriesName,
 			&a.ID, &a.HardcoverID, &a.OLID, &a.Name, &a.Bio, &a.BornDate, &a.DeathDate, &a.ImageURL, &a.Identifiers, &a.Links, &aCreated,
 		)
 		if err != nil {
@@ -1975,6 +2001,7 @@ func scanEventWithTitleRows(rows *sql.Rows) ([]EventWithTitle, error) {
 			&tl.YoutubeViews, &tl.Overview, &tl.Genres, &tl.Runtime, &tl.PosterPath, &tlCreated,
 			&tl.AnimeType, &tl.AnimeEpisodes, &tl.AnimeStatus, &tl.AnimeMembers, &tl.AnimeRank,
 			&tl.AnimeSource, &tl.AnimeStudio, &tl.Themes, &tl.Demographics, &tl.Streaming,
+			&tl.CollectionID, &tl.CollectionName,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("scanning event with title: %w", err)

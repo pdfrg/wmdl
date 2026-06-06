@@ -72,6 +72,10 @@ type Title struct {
 	Themes        string // comma-separated theme tags
 	Demographics  string // comma-separated demographic tags
 	Streaming     string // comma-separated streaming service names
+
+	// Collection membership (populated from TMDB during discovery)
+	CollectionID   int    `json:"collection_id"`
+	CollectionName string `json:"collection_name"`
 }
 
 type ReleaseEvent struct {
@@ -234,6 +238,8 @@ type Book struct {
 	Publisher      string
 	Tags           string // comma-separated
 	LiteraryType   string // fiction / nonfiction
+	SeriesID       string // Hardcover series ID or slug
+	SeriesName     string
 	CreatedAt      string
 }
 

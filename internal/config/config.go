@@ -34,10 +34,11 @@ type LogConfig struct {
 }
 
 type NotifierConfig struct {
-	Service        string `mapstructure:"service"`
-	URL            string `mapstructure:"url"`
-	Token          string `mapstructure:"token"`
-	CustomTemplate string `mapstructure:"custom_template"`
+	Service              string `mapstructure:"service"`
+	URL                  string `mapstructure:"url"`
+	Token                string `mapstructure:"token"`
+	CustomTemplate       string `mapstructure:"custom_template"`
+	SearchCompleteNotify bool   `mapstructure:"search_complete_notify"`
 }
 
 type BrowserConfig struct {
@@ -405,4 +406,5 @@ func setDefaults(v *viper.Viper) {
 
 	v.SetDefault("library.audiobookshelf.timeout", 60)
 	v.SetDefault("hardcover.api_key", "")
+	v.SetDefault("notifier.search_complete_notify", false)
 }

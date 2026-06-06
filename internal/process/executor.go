@@ -40,6 +40,20 @@ type Phase3Movie struct {
 	RootPath  string
 }
 
+type Phase3Candidate struct {
+	Title     string
+	Year      int
+	MediaType model.MediaType
+	TmdbID    int
+	TvdbID    int
+	Season    int // 0 for movies
+}
+
+type Phase3SearchEntry struct {
+	Candidate Phase3Candidate
+	Top       []quality.ParsedRelease
+}
+
 type PickedItem struct {
 	Event  db.EventWithTitle
 	Season int
@@ -57,9 +71,10 @@ type Executor struct {
 	lidarr *library.LidarrClient
 	abs    *library.AudiobookshelfClient
 
-	Unfound       []string
-	phase3Movies  []Phase3Movie
-	phase3Seasons []struct {
+	Unfound           []string
+	phase3SearchPhase []Phase3SearchEntry
+	phase3Movies      []Phase3Movie
+	phase3Seasons     []struct {
 		SeriesID     int
 		SeasonNumber int
 		SeriesTitle  string
@@ -561,33 +576,9 @@ func (e *Executor) PresentResult(ctx context.Context, sr *SearchResult) error {
 
 // SearchAndPickAll is Phase 1 for batch mode: search all items, present picker
 // for each, download chosen releases. Returns list of picked items for library
-// processing.
+// processing. Deprecated — use SearchAll + PickResults for unified batch flow.
 func (e *Executor) SearchAndPickAll(ctx context.Context, events []db.EventWithTitle) []PickedItem {
-	results := e.SearchAll(ctx, events)
-	var picked []PickedItem
-	for _, sr := range results {
-		if len(sr.Top) == 0 {
-			continue
-		}
-		chosen, err := e.presentPicker(ctx, sr)
-		if errors.Is(err, ErrAbort) {
-			e.log.Info().Msg("pipeline aborted by user")
-			break
-		}
-		if err != nil {
-			e.log.Warn().Err(err).Str("title", sr.Event.Title.Title).Msg("picker error")
-			continue
-		}
-		if len(chosen) == 0 {
-			e.log.Info().Str("title", sr.Event.Title.Title).Msg("skipped")
-			continue
-		}
-		e.addToClient(ctx, sr.Event, chosen)
-		e.handleUpgrade(ctx, sr.Event)
-		e.markDownloaded(ctx, sr.Event)
-		picked = append(picked, PickedItem{Event: sr.Event, Season: sr.Season, Chosen: chosen})
-	}
-	return picked
+	return e.PickResults(ctx, e.SearchAll(ctx, events))
 }
 
 // SearchAndPickOne is Phase 1 for interactive mode: search one item, present
@@ -621,10 +612,377 @@ func (e *Executor) SearchAndPickOne(ctx context.Context, evt db.EventWithTitle) 
 	return &PickedItem{Event: evt, Season: sr.Season, Chosen: chosen}
 }
 
+// PickResults takes pre-searched results and presents pickers, downloads,
+// and marks as downloaded. Returns list of picked items for library processing.
+func (e *Executor) PickResults(ctx context.Context, results []*SearchResult) []PickedItem {
+	var picked []PickedItem
+	for _, sr := range results {
+		if len(sr.Top) == 0 {
+			continue
+		}
+		chosen, err := e.presentPicker(ctx, sr)
+		if errors.Is(err, ErrAbort) {
+			e.log.Info().Msg("pipeline aborted by user")
+			break
+		}
+		if err != nil {
+			e.log.Warn().Err(err).Str("title", sr.Event.Title.Title).Msg("picker error")
+			continue
+		}
+		if len(chosen) == 0 {
+			e.log.Info().Str("title", sr.Event.Title.Title).Msg("skipped")
+			continue
+		}
+		e.addToClient(ctx, sr.Event, chosen)
+		e.handleUpgrade(ctx, sr.Event)
+		e.markDownloaded(ctx, sr.Event)
+		picked = append(picked, PickedItem{Event: sr.Event, Season: sr.Season, Chosen: chosen})
+	}
+	return picked
+}
+
+// ComputePhase3Candidates pre-computes Phase 3 search candidates for approved
+// events by checking library caches for collection gaps (movies) and missing
+// earlier seasons (TV/anime). Uses pre-warmed Radarr + Sonarr caches.
+// In Stage 1, collection gaps are only found for movies already in Radarr.
+// Stage 2 (discover enrichment of collection_id) will enable all movies.
+func (e *Executor) ComputePhase3Candidates(ctx context.Context, events []db.EventWithTitle) []Phase3Candidate {
+	var candidates []Phase3Candidate
+
+	// Pre-fetch Radarr collections once for all movie collection gap checks
+	var radarrCollections []library.RadarrCollection
+	if e.cfg.CheckCollections && e.radarr != nil {
+		var err error
+		radarrCollections, err = e.radarr.GetCollections(ctx)
+		if err != nil {
+			e.log.Warn().Err(err).Msg("failed to fetch Radarr collections, skipping Phase 3 movies")
+		}
+	}
+
+	for _, ev := range events {
+		if ev.Title.MediaType == model.MediaTypeMovie {
+			if !e.cfg.CheckCollections || e.radarr == nil {
+				continue
+			}
+			// Check if movie is in Radarr with collection info from cache
+			tmdbID := ev.Title.TmdbID
+			if tmdbID == 0 {
+				continue
+			}
+			existing, err := e.radarr.Exists(ctx, tmdbID)
+			if err != nil {
+				e.log.Warn().Err(err).Str("title", ev.Title.Title).Msg("radarr check for phase 3")
+				continue
+			}
+			if existing == nil || existing.Collection == nil || existing.Collection.TMDBID == 0 {
+				continue
+			}
+
+			// Fetch all Radarr movies for "not in library" check
+			allMovies, err := e.radarr.GetAllMovies(ctx)
+			if err != nil {
+				e.log.Warn().Err(err).Msg("failed to fetch Radarr movies for Phase 3")
+				continue
+			}
+			movieByTMDB := make(map[int]library.RadarrMovie, len(allMovies))
+			for _, m := range allMovies {
+				movieByTMDB[m.TMDBID] = m
+			}
+
+			for _, col := range radarrCollections {
+				if col.TMDBID != existing.Collection.TMDBID {
+					continue
+				}
+				for _, m := range col.Movies {
+					if m.TMDBID == tmdbID {
+						continue
+					}
+					if m.Status != "" && m.Status != "released" {
+						continue
+					}
+					if existing, ok := movieByTMDB[m.TMDBID]; ok && existing.HasFile {
+						continue
+					}
+					candidates = append(candidates, Phase3Candidate{
+						Title:     m.Title,
+						Year:      m.Year,
+						MediaType: model.MediaTypeMovie,
+						TmdbID:    m.TMDBID,
+					})
+				}
+			}
+		}
+
+		if ev.Title.MediaType == model.MediaTypeTV || ev.Title.MediaType == model.MediaTypeAnime {
+			season := quality.ParseSeasonNumber(ev.Title.Title)
+			if season <= 1 {
+				continue
+			}
+
+			tvdbID := ev.Title.TvdbID
+			if tvdbID == 0 && ev.Title.MediaType == model.MediaTypeAnime {
+				lookup, err := e.sonarr.LookupByTitle(ctx, ev.Title.Title)
+				if err != nil || lookup == nil {
+					continue
+				}
+				tvdbID = lookup.TVDBID
+			}
+			if tvdbID == 0 {
+				continue
+			}
+
+			existing, err := e.sonarr.Exists(ctx, tvdbID)
+			if err != nil {
+				e.log.Warn().Err(err).Str("title", ev.Title.Title).Msg("sonarr check for phase 3")
+				continue
+			}
+
+			var missingSeasons []int
+			if existing != nil {
+				// Series is in Sonarr — check for missing seasons
+				series, err := e.sonarr.GetSeries(ctx, existing.ID)
+				if err != nil {
+					e.log.Warn().Err(err).Msg("fetching sonarr series for phase 3")
+					continue
+				}
+				for _, s := range series.Seasons {
+					if s.SeasonNumber == 0 || s.SeasonNumber >= season {
+						continue
+					}
+					if s.Statistics != nil && s.Statistics.EpisodeFileCount > 0 {
+						continue
+					}
+					if s.Statistics != nil && s.Statistics.TotalEpisodeCount == 0 {
+						continue
+					}
+					missingSeasons = append(missingSeasons, s.SeasonNumber)
+				}
+			} else {
+				// Series not in Sonarr — assume all earlier seasons needed
+				for s := 1; s < season; s++ {
+					missingSeasons = append(missingSeasons, s)
+				}
+			}
+
+			for _, ms := range missingSeasons {
+				candidates = append(candidates, Phase3Candidate{
+					Title:     ev.Title.Title,
+					Year:      ev.Title.Year,
+					MediaType: ev.Title.MediaType,
+					TvdbID:    tvdbID,
+					Season:    ms,
+				})
+			}
+		}
+	}
+
+	return candidates
+}
+
+// SearchAllCandidates searches all Phase 3 candidates and stores results
+// in the executor's phase3SearchPhase slice.
+func (e *Executor) SearchAllCandidates(ctx context.Context, candidates []Phase3Candidate) {
+	e.log.Info().Msgf("Searching %d Phase 3 candidates...", len(candidates))
+	for i, c := range candidates {
+		e.log.Info().Str("title", c.Title).Msgf("[%d/%d] searching phase 3", i+1, len(candidates))
+
+		title := &model.Title{
+			Title:     c.Title,
+			Year:      c.Year,
+			MediaType: c.MediaType,
+			TmdbID:    c.TmdbID,
+			TvdbID:    c.TvdbID,
+		}
+		stripped := quality.StripSeason(c.Title)
+		season := c.Season
+		if season == 0 {
+			season = quality.ParseSeasonNumber(c.Title)
+		}
+
+		releases, err := e.searchRelease(ctx, title, stripped, season)
+		if err != nil {
+			e.log.Warn().Err(err).Str("title", c.Title).Msg("error searching phase 3 candidate")
+			entry := Phase3SearchEntry{Candidate: c}
+			e.phase3SearchPhase = append(e.phase3SearchPhase, entry)
+			continue
+		}
+
+		prefs := buildQualityPrefs(e.cfg, c.MediaType)
+		top := quality.SortAndTop(releases, prefs, e.cfg.ShowTopN)
+
+		entry := Phase3SearchEntry{Candidate: c, Top: top}
+		e.phase3SearchPhase = append(e.phase3SearchPhase, entry)
+
+		if len(top) > 0 {
+			e.log.Info().Int("count", len(top)).Str("title", c.Title).Msg("phase 3 results found")
+		} else {
+			e.log.Info().Str("title", c.Title).Msg("no phase 3 results")
+		}
+	}
+}
+
+// ProcessPhase3Pickers presents pickers for pre-searched Phase 3 items,
+// adds collection movies to Radarr, and downloads torrents.
+func (e *Executor) ProcessPhase3Pickers(ctx context.Context) {
+	if len(e.phase3SearchPhase) == 0 {
+		return
+	}
+
+	fmt.Fprintln(os.Stderr, "\n── Phase 3: Collection movies & earlier seasons ──")
+
+	profileID := 1
+	if e.radarr != nil {
+		profileID = e.resolveProfileID(ctx, e.cfg.Library.Radarr.QualityProfile)
+	}
+
+	for _, entry := range e.phase3SearchPhase {
+		if len(entry.Top) == 0 {
+			continue
+		}
+
+		c := entry.Candidate
+		sr := &SearchResult{
+			Event: db.EventWithTitle{
+				Title: &model.Title{
+					Title:     c.Title,
+					Year:      c.Year,
+					MediaType: c.MediaType,
+					TmdbID:    c.TmdbID,
+					TvdbID:    c.TvdbID,
+				},
+			},
+			Season: c.Season,
+			Top:    entry.Top,
+		}
+		if c.Season > 0 {
+			sr.Season = c.Season
+		}
+
+		chosen, err := e.presentPicker(ctx, sr)
+		if err != nil || len(chosen) == 0 {
+			continue
+		}
+
+		// For movies, add to Radarr first if not already present
+		if c.MediaType == model.MediaTypeMovie && c.TmdbID > 0 {
+			existing, err := e.radarr.Exists(ctx, c.TmdbID)
+			if err == nil && existing == nil {
+				if _, addErr := e.radarr.Add(ctx, c.TmdbID, c.Title, c.Year, library.AddMovieOptions{
+					Monitored:           e.cfg.Library.Radarr.Monitor,
+					MinimumAvailability: "released",
+					QualityProfileID:    profileID,
+					RootFolderPath:      e.cfg.Library.Radarr.RootFolder,
+					SearchNow:           false,
+				}); addErr != nil {
+					e.log.Warn().Err(addErr).Str("title", c.Title).Msg("adding collection movie to Radarr")
+				}
+			}
+		}
+
+		category := e.cfg.Downloader.Categories.Movies
+		if c.MediaType == model.MediaTypeTV || c.MediaType == model.MediaTypeAnime {
+			category = e.cfg.Downloader.Categories.TV
+		}
+
+		for _, release := range chosen {
+			uri := release.DownloadURL
+			if uri == "" {
+				uri = release.MagnetURL
+			}
+			if uri != "" {
+				if _, err := e.dl.AddTorrent(ctx, uri, download.WithCategory(category)); err != nil {
+					e.log.Warn().Err(err).Msg("phase 3 add failed")
+				}
+			}
+		}
+		e.log.Info().Str("title", c.Title).Msg("phase 3 item downloaded")
+	}
+
+	// Handle any Phase 3 items accumulated during ProcessLibraryDecisions
+	// (collection gaps from movies newly added to Radarr in Phase 2b).
+	// These are searched on-demand since they couldn't be pre-computed.
+	if len(e.phase3Movies) > 0 {
+		fmt.Fprintln(os.Stderr, "\n── Additional collection movies (from library adds) ──")
+		for _, p3m := range e.phase3Movies {
+			title := p3m.Title
+			stripped := quality.StripSeason(title)
+			season := quality.ParseSeasonNumber(title)
+
+			releases, err := e.searchRelease(ctx, &model.Title{
+				Title:     title, Year: p3m.Year, MediaType: model.MediaTypeMovie,
+			}, stripped, season)
+			if err != nil {
+				e.log.Warn().Err(err).Str("title", title).Msg("error searching collection movie")
+				continue
+			}
+
+			prefs := buildQualityPrefs(e.cfg, model.MediaTypeMovie)
+			top := quality.SortAndTop(releases, prefs, e.cfg.ShowTopN)
+			if len(top) == 0 {
+				continue
+			}
+
+			sr := &SearchResult{
+				Event: db.EventWithTitle{Title: &model.Title{
+					Title: title, Year: p3m.Year, MediaType: model.MediaTypeMovie, TmdbID: p3m.TMDBID,
+				}},
+				Season: season, Top: top,
+			}
+
+			chosen, err := e.presentPicker(ctx, sr)
+			if err != nil || len(chosen) == 0 {
+				continue
+			}
+			synthEvent := db.EventWithTitle{Title: &model.Title{
+				Title: title, Year: p3m.Year, MediaType: model.MediaTypeMovie, TmdbID: p3m.TMDBID,
+			}}
+			e.addToClient(ctx, synthEvent, chosen)
+		}
+		e.phase3Movies = nil
+	}
+
+	if len(e.phase3Seasons) > 0 {
+		fmt.Fprintln(os.Stderr, "\n── Additional earlier seasons (from library adds) ──")
+		for _, p3s := range e.phase3Seasons {
+			stripped := quality.StripSeason(p3s.SeriesTitle)
+			releases, err := e.searchRelease(ctx, &model.Title{
+				Title: p3s.SeriesTitle, MediaType: p3s.MediaType,
+			}, stripped, p3s.SeasonNumber)
+			if err != nil {
+				e.log.Warn().Err(err).Str("title", p3s.SeriesTitle).Int("season", p3s.SeasonNumber).Msg("error searching season")
+				continue
+			}
+
+			prefs := buildQualityPrefs(e.cfg, p3s.MediaType)
+			top := quality.SortAndTop(releases, prefs, e.cfg.ShowTopN)
+			if len(top) == 0 {
+				continue
+			}
+
+			sr := &SearchResult{
+				Event: db.EventWithTitle{Title: &model.Title{Title: p3s.SeriesTitle, MediaType: p3s.MediaType}},
+				Season: p3s.SeasonNumber, Top: top,
+			}
+
+			chosen, err := e.presentPicker(ctx, sr)
+			if err != nil || len(chosen) == 0 {
+				continue
+			}
+			synthEvent := db.EventWithTitle{Title: &model.Title{
+				Title: p3s.SeriesTitle, MediaType: p3s.MediaType,
+			}}
+			e.addToClient(ctx, synthEvent, chosen)
+		}
+		e.phase3Seasons = nil
+	}
+
+	// Reset for next run
+	e.phase3SearchPhase = nil
+}
+
 // ProcessLibraryDecisions implements Phase 2 + Phase 3, shared by both
 // batch and interactive modes. For each picked item it asks library questions
-// (add to Radarr/Sonarr, collection gaps, earlier seasons), executes adds,
-// then searches Prowlarr for approved collection movies and earlier seasons.
+// (add to Radarr/Sonarr, collection gaps, earlier seasons), executes adds.
 func (e *Executor) ProcessLibraryDecisions(ctx context.Context, picked []PickedItem) {
 	if len(picked) == 0 {
 		return
@@ -894,64 +1252,6 @@ processPicked:
 		}
 	}
 
-	// Phase 3: Search Prowlarr for approved collection movies and earlier seasons
-	if len(e.phase3Movies) > 0 {
-		fmt.Fprintln(os.Stderr, "\n── Searching for collection movies ──")
-		for _, p3m := range e.phase3Movies {
-			e.searchPhase3Movie(ctx, p3m)
-		}
-	}
-	if len(e.phase3Seasons) > 0 {
-		fmt.Fprintln(os.Stderr, "\n── Searching for earlier seasons ──")
-		for _, p3s := range e.phase3Seasons {
-			e.searchPhase3Season(ctx, p3s)
-		}
-	}
-}
-
-func (e *Executor) searchPhase3Movie(ctx context.Context, m Phase3Movie) {
-	title := m.Title
-	stripped := quality.StripSeason(title)
-	season := quality.ParseSeasonNumber(title)
-
-	releases, err := e.searchRelease(ctx, &model.Title{
-		Title:     title,
-		Year:      m.Year,
-		MediaType: model.MediaTypeMovie,
-	}, stripped, season)
-	if err != nil {
-		e.log.Warn().Err(err).Str("title", title).Msg("error searching collection movie")
-		return
-	}
-
-	prefs := buildQualityPrefs(e.cfg, model.MediaTypeMovie)
-	top := quality.SortAndTop(releases, prefs, e.cfg.ShowTopN)
-	if len(top) == 0 {
-		e.log.Info().Str("title", title).Msg("no results for collection movie")
-		return
-	}
-
-	sr := &SearchResult{
-		Event:  db.EventWithTitle{Title: &model.Title{Title: title, Year: m.Year, MediaType: model.MediaTypeMovie, TmdbID: m.TMDBID}},
-		Season: season,
-		Top:    top,
-	}
-
-	chosen, err := e.presentPicker(ctx, sr)
-	if err != nil || len(chosen) == 0 {
-		return
-	}
-
-	// Create a synthetic event for tracking
-	synthEvent := db.EventWithTitle{
-		Title: &model.Title{
-			Title:     title,
-			Year:      m.Year,
-			MediaType: model.MediaTypeMovie,
-			TmdbID:    m.TMDBID,
-		},
-	}
-	e.addToClient(ctx, synthEvent, chosen)
 }
 
 func (e *Executor) searchPhase3Season(ctx context.Context, s struct {
@@ -1829,6 +2129,34 @@ func (e *Executor) SearchMusicRelease(ctx context.Context, ae db.EventWithAlbum)
 	return &MusicSearchResult{Event: ae, Top: top}, nil
 }
 
+// SearchMusicAll searches all music events and returns results.
+func (e *Executor) SearchMusicAll(ctx context.Context, events []db.EventWithAlbum) []*MusicSearchResult {
+	e.log.Info().Msgf("Searching %d music album(s)...", len(events))
+	results := make([]*MusicSearchResult, 0, len(events))
+	for i, ae := range events {
+		e.log.Info().Str("album", ae.Album.Title).Str("artist", ae.Artist.Name).Msgf("[%d/%d] searching", i+1, len(events))
+		sr, err := e.SearchMusicRelease(ctx, ae)
+		if err != nil {
+			e.log.Warn().Err(err).Str("album", ae.Album.Title).Str("artist", ae.Artist.Name).Msg("error searching music")
+			continue
+		}
+		results = append(results, sr)
+	}
+	return results
+}
+
+// PickMusicResults presents pickers for pre-searched music results and downloads.
+func (e *Executor) PickMusicResults(ctx context.Context, results []*MusicSearchResult) []MusicAlbumResult {
+	var albumResults []MusicAlbumResult
+	for _, sr := range results {
+		result := e.PickMusicAlbum(ctx, sr)
+		if result != nil {
+			albumResults = append(albumResults, *result)
+		}
+	}
+	return albumResults
+}
+
 func (e *Executor) ProcessMusicAlbum(ctx context.Context, ae db.EventWithAlbum) (*MusicAlbumResult, error) {
 	sr, err := e.SearchMusicRelease(ctx, ae)
 	if err != nil {
@@ -2371,7 +2699,7 @@ func (e *Executor) addBookToClient(ctx context.Context, evt db.EventWithBook, ch
 	return added
 }
 
-func (e *Executor) uploadToAudiobookshelf(ctx context.Context) {
+func (e *Executor) UploadToAudiobookshelf(ctx context.Context) {
 	if e.abs == nil {
 		e.log.Info().Msg("Audiobookshelf not configured, skipping upload")
 		return
@@ -2405,6 +2733,47 @@ func (e *Executor) PickBook(ctx context.Context, sr *BookSearchResult) (int, err
 		return 0, nil
 	}
 	return e.addBookToClient(ctx, sr.Event, chosen, sr.Format), nil
+}
+
+// SearchBooksAll searches all book events (ebook + audiobook formats) and returns results.
+func (e *Executor) SearchBooksAll(ctx context.Context, events []db.EventWithBook) []*BookSearchResult {
+	e.log.Info().Msgf("Searching %d book(s)...", len(events))
+	var results []*BookSearchResult
+	for i, evt := range events {
+		e.log.Info().Str("book", evt.Book.Title).Str("author", evt.Author.Name).Msgf("[%d/%d] searching", i+1, len(events))
+		pref := evt.Event.FormatPref
+		ebookDone := evt.Event.EbookProcessed
+		audiobookDone := evt.Event.AudiobookProcessed
+		needsEbook := (pref == model.BookFormatEbook || pref == model.BookFormatBoth) && !ebookDone
+		needsAudiobook := (pref == model.BookFormatAudiobook || pref == model.BookFormatBoth) && !audiobookDone
+		if needsEbook {
+			results = append(results, e.SearchBook(ctx, evt, model.BookFormatEbook))
+		}
+		if needsAudiobook {
+			results = append(results, e.SearchBook(ctx, evt, model.BookFormatAudiobook))
+		}
+	}
+	return results
+}
+
+// PickBookResults presents pickers for pre-searched book results and downloads.
+func (e *Executor) PickBookResults(ctx context.Context, results []*BookSearchResult) {
+	for _, sr := range results {
+		n, err := e.PickBook(ctx, sr)
+		if errors.Is(err, ErrAbort) {
+			e.log.Info().Msg("pipeline aborted by user")
+			break
+		}
+		if err != nil {
+			e.log.Warn().Err(err).Str("book", sr.Event.Book.Title).Msg("book picker error")
+			continue
+		}
+		if n > 0 {
+			if err := e.db.MarkBookFormatProcessed(ctx, sr.Event.Event.ID, sr.Format); err != nil {
+				e.log.Warn().Err(err).Msg("marking book format processed")
+			}
+		}
+	}
 }
 
 func (e *Executor) ProcessBooks(ctx context.Context, events []db.EventWithBook) {
@@ -2501,7 +2870,7 @@ func (e *Executor) ProcessBooks(ctx context.Context, events []db.EventWithBook) 
 	}
 
 	if downloaded {
-		e.uploadToAudiobookshelf(ctx)
+		e.UploadToAudiobookshelf(ctx)
 	}
 }
 
