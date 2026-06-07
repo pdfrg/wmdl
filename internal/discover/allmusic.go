@@ -294,6 +294,12 @@ func (p *AllMusicProvider) parseBlock(s *goquery.Selection, scrapeYear, scrapeMo
 	// Extract blurb from headlineReview (first <p>, skip author credit)
 	blurb := strings.TrimSpace(s.Find("div.headlineReview p").First().Text())
 
+	// Extract genres from div.genres (comma-separated <a> tags)
+	var genreParts []string
+	s.Find("div.genres a").Each(func(i int, g *goquery.Selection) {
+		genreParts = append(genreParts, strings.TrimSpace(g.Text()))
+	})
+
 	// Build release date
 	releaseDate := fmt.Sprintf("%04d-%02d-01", scrapeYear, scrapeMonth)
 
@@ -309,6 +315,7 @@ func (p *AllMusicProvider) parseBlock(s *goquery.Selection, scrapeYear, scrapeMo
 		AllMusicURL:    albumURL,
 		AllMusicRating: rating,
 		Overview:       blurb,
+		Genres:         strings.Join(genreParts, ", "),
 		Source:         "allmusic",
 	}
 }

@@ -179,11 +179,29 @@ type BookFormatQualityConfig struct {
 }
 
 type MediaTypesConfig struct {
-	Movies bool        `mapstructure:"movies"`
-	TV     bool        `mapstructure:"tv"`
+	Movies MovieConfig `mapstructure:"movies"`
+	TV     TVConfig    `mapstructure:"tv"`
 	Music  MusicConfig `mapstructure:"music"`
 	Anime  AnimeConfig `mapstructure:"anime"`
 	Books  BookConfig  `mapstructure:"books"`
+}
+
+type MovieConfig struct {
+	Enabled bool          `mapstructure:"enabled"`
+	Filter  ContentFilter `mapstructure:"filter"`
+}
+
+type TVConfig struct {
+	Enabled bool          `mapstructure:"enabled"`
+	Filter  ContentFilter `mapstructure:"filter"`
+}
+
+type ContentFilter struct {
+	BlockedLanguages []string `mapstructure:"blocked_languages"`
+	BlockedCountries []string `mapstructure:"blocked_countries"`
+	BlockedGenres    []string `mapstructure:"blocked_genres"`
+	AllowedLanguages []string `mapstructure:"allowed_languages"`
+	OverrideGenres   []string `mapstructure:"override_genres"`
 }
 
 type MusicConfig struct {
@@ -193,6 +211,7 @@ type MusicConfig struct {
 }
 
 type MusicFilterConfig struct {
+	ContentFilter    `mapstructure:",squash"`
 	MinCriticScore   int  `mapstructure:"min_critic_score"`
 	MinCriticReviews int  `mapstructure:"min_critic_reviews"`
 	MinUserScore     int  `mapstructure:"min_user_score"`
@@ -201,14 +220,15 @@ type MusicFilterConfig struct {
 }
 
 type AnimeConfig struct {
-	Enabled               bool    `mapstructure:"enabled"`
-	MinScore              float64 `mapstructure:"min_score"`
-	MinMembers            int     `mapstructure:"min_members"`
-	PhaseBEnabled         bool    `mapstructure:"phase_b_enabled"`
-	PhaseBMinScore        float64 `mapstructure:"phase_b_min_score"`
-	PhaseBMinMembers      int     `mapstructure:"phase_b_min_members"`
-	MinPhaseBResults      int     `mapstructure:"min_phase_b_results"`
-	FilterFlixPatrolAnime bool    `mapstructure:"filter_flixpatrol_anime"`
+	Enabled               bool          `mapstructure:"enabled"`
+	MinScore              float64       `mapstructure:"min_score"`
+	MinMembers            int           `mapstructure:"min_members"`
+	PhaseBEnabled         bool          `mapstructure:"phase_b_enabled"`
+	PhaseBMinScore        float64       `mapstructure:"phase_b_min_score"`
+	PhaseBMinMembers      int           `mapstructure:"phase_b_min_members"`
+	MinPhaseBResults      int           `mapstructure:"min_phase_b_results"`
+	FilterFlixPatrolAnime bool          `mapstructure:"filter_flixpatrol_anime"`
+	Filter                ContentFilter `mapstructure:"filter"`
 }
 
 type BookConfig struct {
@@ -219,8 +239,9 @@ type BookConfig struct {
 }
 
 type BookFilterConfig struct {
-	MinRating  float64 `mapstructure:"min_rating"`
-	MinRatings int     `mapstructure:"min_ratings"`
+	ContentFilter `mapstructure:",squash"`
+	MinRating     float64 `mapstructure:"min_rating"`
+	MinRatings    int     `mapstructure:"min_ratings"`
 }
 
 const configName = "config"
@@ -366,8 +387,8 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("library.lidarr.monitor_new_albums", true)
 	v.SetDefault("library.lidarr.monitor", "all")
 
-	v.SetDefault("media_types.movies", true)
-	v.SetDefault("media_types.tv", true)
+	v.SetDefault("media_types.movies.enabled", true)
+	v.SetDefault("media_types.tv.enabled", true)
 	v.SetDefault("quality.music.format_priority", []string{"flac", "mp3", "aac"})
 	v.SetDefault("quality.music.bitrate_priority", []string{"lossless", "320", "v0", "v2"})
 	v.SetDefault("media_types.music.enabled", true)

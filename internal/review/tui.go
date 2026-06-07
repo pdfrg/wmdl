@@ -1392,16 +1392,10 @@ func (t *TUI) buildMusicContent(ae *db.EventWithAlbum, rw int) string {
 			b.WriteString(rtStyle.Render(ar.Disambiguation))
 		}
 
-		// Line 12: tags
-		if ar.Tags != "" {
+		// Line 12: album genres (from AllMusic scrape or MB enrichment)
+		if al.Genres != "" {
 			b.WriteString("\n")
-			b.WriteString(rtStyle.Width(rw).Render("tags: " + ar.Tags))
-		}
-
-		// Line 13: genres
-		if ar.Genres != "" {
-			b.WriteString("\n")
-			b.WriteString(rtStyle.Width(rw).Render("genres: " + ar.Genres))
+			b.WriteString(rtStyle.Width(rw).Render("genres: " + al.Genres))
 		}
 
 		// Line 14: MB artist rating (always shown, — when none)

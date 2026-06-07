@@ -197,11 +197,11 @@ type TMDBDetails struct {
 		ID   int    `json:"id"`
 		Name string `json:"name"`
 	} `json:"genres"`
-	Runtime          int      `json:"runtime"`
-	VoteAverage      float64  `json:"vote_average"`
-	IMDbID           string   `json:"imdb_id,omitempty"`
-	OriginalLanguage string   `json:"original_language"`
-	OriginCountry    []string `json:"origin_country"`
+	Runtime             int      `json:"runtime"`
+	VoteAverage         float64  `json:"vote_average"`
+	IMDbID              string   `json:"imdb_id,omitempty"`
+	OriginalLanguage    string   `json:"original_language"`
+	OriginCountry       []string `json:"origin_country"`
 	BelongsToCollection *struct {
 		ID   int    `json:"id"`
 		Name string `json:"name"`

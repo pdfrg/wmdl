@@ -926,7 +926,7 @@ func (e *Executor) ProcessPhase3Pickers(ctx context.Context) {
 			season := quality.ParseSeasonNumber(title)
 
 			releases, err := e.searchRelease(ctx, &model.Title{
-				Title:     title, Year: p3m.Year, MediaType: model.MediaTypeMovie,
+				Title: title, Year: p3m.Year, MediaType: model.MediaTypeMovie,
 			}, stripped, season)
 			if err != nil {
 				e.log.Warn().Err(err).Str("title", title).Msg("error searching collection movie")
@@ -977,7 +977,7 @@ func (e *Executor) ProcessPhase3Pickers(ctx context.Context) {
 			}
 
 			sr := &SearchResult{
-				Event: db.EventWithTitle{Title: &model.Title{Title: p3s.SeriesTitle, MediaType: p3s.MediaType}},
+				Event:  db.EventWithTitle{Title: &model.Title{Title: p3s.SeriesTitle, MediaType: p3s.MediaType}},
 				Season: p3s.SeasonNumber, Top: top,
 			}
 

@@ -1013,6 +1013,16 @@ func (r *Runner) processItem(ctx context.Context, item ScrapedItem, progYear, pr
 		CollectionName:   enrich.CollectionName,
 	}
 
+	// Content filter
+	cf := &r.cfg.MediaTypes.Movies.Filter
+	if mediaType == model.MediaTypeTV {
+		cf = &r.cfg.MediaTypes.TV.Filter
+	}
+	if result := FilterTitle(cf, title); !result.Passed {
+		r.log.Info().Str("title", item.Title).Str("reason", result.Reason).Msg("content filter: skipping")
+		return nil
+	}
+
 	var titleID int64
 	var existingEvent *model.ReleaseEvent
 
@@ -1203,6 +1213,12 @@ func (r *Runner) processAnimeItem(ctx context.Context, item ScrapedItem, progYea
 		Streaming:     item.Streaming,
 	}
 
+	// Content filter
+	if result := FilterTitle(&r.cfg.MediaTypes.Anime.Filter, title); !result.Passed {
+		r.log.Info().Str("title", item.Title).Str("reason", result.Reason).Msg("content filter: skipping")
+		return nil
+	}
+
 	var titleID int64
 	var existingEvent *model.ReleaseEvent
 
@@ -1264,7 +1280,10 @@ func (r *Runner) processMusicItem(ctx context.Context, item ScrapedItem, progYea
 
 	// Filter: skip low-quality albums immediately (AOTY only — AllMusic is curator-filtered)
 	if item.Source != "allmusic" {
-		if !passesMusicFilter(r.cfg.MediaTypes.Music.Filter, item) {
+		if HasOverrideGenre(&r.cfg.MediaTypes.Music.Filter.ContentFilter, item.Genres) {
+			r.log.Info().Str("artist", item.ArtistName).Str("album", item.Title).
+				Msg("override genre matched, skipping score filter")
+		} else if !passesMusicFilter(r.cfg.MediaTypes.Music.Filter, item) {
 			r.log.Info().Str("artist", item.ArtistName).Str("album", item.Title).Msg("does not pass filter, skipping")
 			return nil
 		}
@@ -1367,7 +1386,10 @@ func (r *Runner) processMusicItem(ctx context.Context, item ScrapedItem, progYea
 	}
 
 	// Step 3: Upsert album (always)
-	genresStr := strings.Join(mbGenres, ", ")
+	genresStr := item.Genres
+	if genresStr == "" {
+		genresStr = strings.Join(mbGenres, ", ")
+	}
 
 	album := &model.Album{
 		ArtistID:        artistID,
@@ -1389,6 +1411,14 @@ func (r *Runner) processMusicItem(ctx context.Context, item ScrapedItem, progYea
 		MBRating:        mbRating,
 		Overview:        item.Overview,
 	}
+
+	// Content filter
+	if result := FilterMusic(&r.cfg.MediaTypes.Music.Filter.ContentFilter, artist, album); !result.Passed {
+		r.log.Info().Str("artist", item.ArtistName).Str("album", item.Title).Str("reason", result.Reason).
+			Msg("content filter: skipping")
+		return nil
+	}
+
 	albumID, err := r.db.UpsertAlbum(ctx, album)
 	if err != nil {
 		return fmt.Errorf("saving album: %w", err)
@@ -1462,32 +1492,7 @@ func (r *Runner) processBookItem(ctx context.Context, item ScrapedItem, progYear
 		}
 	}
 
-	// Step 3: Filter by score/rating
-	minRating := r.cfg.MediaTypes.Books.Filter.MinRating
-	minRatings := r.cfg.MediaTypes.Books.Filter.MinRatings
-
-	rating := item.ImdbRating         // from Goodreads
-	ratingsCount := item.RatingsCount // from Goodreads
-
-	if minRatings > 0 && ratingsCount == 0 {
-		r.log.Warn().Str("book", item.Title).Msg("no ratings data available, cannot verify min_ratings threshold, skipping")
-		return nil
-	}
-	if minRating > 0 && rating == 0 {
-		r.log.Warn().Str("book", item.Title).Msg("no rating data available, cannot verify min_rating threshold, skipping")
-		return nil
-	}
-
-	if minRatings > 0 && ratingsCount < minRatings {
-		r.log.Info().Str("book", item.Title).Int("ratings", ratingsCount).Int("min", minRatings).Msg("below min_ratings filter, skipping")
-		return nil
-	}
-	if minRating > 0 && rating < minRating {
-		r.log.Info().Str("book", item.Title).Float64("rating", rating).Float64("min", minRating).Msg("below min_rating filter, skipping")
-		return nil
-	}
-
-	// Step 4: Build author from enrichment data
+	// Step 3: Build author from enrichment data
 	authorName := item.ArtistName
 	authorOLID := ""
 	authorBio := ""
@@ -1609,6 +1614,34 @@ func (r *Runner) processBookItem(ctx context.Context, item ScrapedItem, progYear
 		tags = strings.Join(olResult.Subjects, ", ")
 	}
 
+	// Step 4: Filter by score/rating (with override for matching genres)
+	rating := item.ImdbRating         // from Goodreads
+	ratingsCount := item.RatingsCount // from Goodreads
+
+	if HasOverrideGenre(&r.cfg.MediaTypes.Books.Filter.ContentFilter, tags) {
+		r.log.Info().Str("book", item.Title).Msg("override genre matched, skipping score filter")
+	} else {
+		minRating := r.cfg.MediaTypes.Books.Filter.MinRating
+		minRatings := r.cfg.MediaTypes.Books.Filter.MinRatings
+
+		if minRatings > 0 && ratingsCount == 0 {
+			r.log.Warn().Str("book", item.Title).Msg("no ratings data available, cannot verify min_ratings threshold, skipping")
+			return nil
+		}
+		if minRating > 0 && rating == 0 {
+			r.log.Warn().Str("book", item.Title).Msg("no rating data available, cannot verify min_rating threshold, skipping")
+			return nil
+		}
+		if minRatings > 0 && ratingsCount < minRatings {
+			r.log.Info().Str("book", item.Title).Int("ratings", ratingsCount).Int("min", minRatings).Msg("below min_ratings filter, skipping")
+			return nil
+		}
+		if minRating > 0 && rating < minRating {
+			r.log.Info().Str("book", item.Title).Float64("rating", rating).Float64("min", minRating).Msg("below min_rating filter, skipping")
+			return nil
+		}
+	}
+
 	// Upgrade Goodreads thumbnail to 500px for faster loading and consistent quality
 	imageURL = upgradeGoodreadsImage(imageURL)
 
@@ -1641,6 +1674,16 @@ func (r *Runner) processBookItem(ctx context.Context, item ScrapedItem, progYear
 				Msg("not in target week, skipping")
 			return nil
 		}
+	}
+
+	// Content filter (before transaction to avoid orphaned authors)
+	filterBook := &model.Book{
+		Language: language,
+		Tags:     tags,
+	}
+	if result := FilterBook(&r.cfg.MediaTypes.Books.Filter.ContentFilter, filterBook); !result.Passed {
+		r.log.Info().Str("book", title).Str("reason", result.Reason).Msg("content filter: skipping")
+		return nil
 	}
 
 	err := r.db.Transaction(ctx, func(tx *sql.Tx) error {
