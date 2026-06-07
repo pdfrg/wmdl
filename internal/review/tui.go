@@ -997,17 +997,17 @@ func (t *TUI) View() tea.View {
 	switch t.phase {
 	case phaseReview:
 		content = t.buildReviewContent()
-		footer = keyStyle.Render("j") + helpStyle.Render("/") + keyStyle.Render("k") + helpStyle.Render(" navigate  ") +
-			keyStyle.Render("a") + helpStyle.Render(" approve  ") +
-			keyStyle.Render("r") + helpStyle.Render(" reject  ") +
-			keyStyle.Render("n") + helpStyle.Render(" undecided  ") +
-			keyStyle.Render("m") + helpStyle.Render(" movies  ") +
-			keyStyle.Render("t") + helpStyle.Render(" tv  ") +
-			keyStyle.Render("e") + helpStyle.Render(" anime  ") +
-			keyStyle.Render("b") + helpStyle.Render(" books  ") +
-			keyStyle.Render("l") + helpStyle.Render(" albums  ") +
+		footer = keyStyle.Render("j") + helpStyle.Render("/") + keyStyle.Render("k") + helpStyle.Render("   ") +
+			keyStyle.Render("a") + helpStyle.Render(" 🟢  ") +
+			keyStyle.Render("r") + helpStyle.Render(" 🔴  ") +
+			keyStyle.Render("n") + helpStyle.Render(" ❔  ") +
+			keyStyle.Render("m") + helpStyle.Render(" 🎬️  ") +
+			keyStyle.Render("t") + helpStyle.Render(" 📺️  ") +
+			keyStyle.Render("e") + helpStyle.Render(" 🌸  ") +
+			keyStyle.Render("b") + helpStyle.Render(" 📚️  ") +
+			keyStyle.Render("l") + helpStyle.Render(" 💿️  ") +
 			keyStyle.Render("enter") + helpStyle.Render(" confirm  ") +
-			keyStyle.Render("o") + helpStyle.Render(" open    ") +
+			keyStyle.Render("o") + helpStyle.Render(" open  ") +
 			keyStyle.Render("q") + helpStyle.Render(" quit")
 	case phaseConfirm:
 		footer = keyStyle.Render("j") + helpStyle.Render("/") + keyStyle.Render("k") + helpStyle.Render(" scroll  ") +
