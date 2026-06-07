@@ -626,5 +626,12 @@ func runProcessForWeek(ctx context.Context, database *db.DB, cfg *config.Config,
 		}
 	}
 
+	if len(exec.Skipped) > 0 {
+		log.Warn().Msgf("Skipped %d item(s):", len(exec.Skipped))
+		for _, s := range exec.Skipped {
+			log.Info().Str("title", s).Msg("skipped")
+		}
+	}
+
 	return nil
 }

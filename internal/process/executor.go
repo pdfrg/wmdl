@@ -72,6 +72,7 @@ type Executor struct {
 	abs    *library.AudiobookshelfClient
 
 	Unfound           []string
+	Skipped           []string
 	phase3SearchPhase []Phase3SearchEntry
 	phase3Movies      []Phase3Movie
 	phase3Seasons     []struct {
@@ -560,6 +561,11 @@ func (e *Executor) PresentResult(ctx context.Context, sr *SearchResult) error {
 	}
 	if len(chosen) == 0 {
 		e.log.Info().Str("title", evt.Title.Title).Msg("skipped")
+		label := evt.Title.Title
+		if evt.Title.Year > 0 {
+			label = fmt.Sprintf("%s (%d)", label, evt.Title.Year)
+		}
+		e.Skipped = append(e.Skipped, label)
 		return nil
 	}
 
@@ -604,6 +610,11 @@ func (e *Executor) SearchAndPickOne(ctx context.Context, evt db.EventWithTitle) 
 	}
 	if len(chosen) == 0 {
 		e.log.Info().Str("title", evt.Title.Title).Msg("skipped")
+		label := evt.Title.Title
+		if evt.Title.Year > 0 {
+			label = fmt.Sprintf("%s (%d)", label, evt.Title.Year)
+		}
+		e.Skipped = append(e.Skipped, label)
 		return nil
 	}
 	e.addToClient(ctx, evt, chosen)
@@ -631,6 +642,11 @@ func (e *Executor) PickResults(ctx context.Context, results []*SearchResult) []P
 		}
 		if len(chosen) == 0 {
 			e.log.Info().Str("title", sr.Event.Title.Title).Msg("skipped")
+			label := sr.Event.Title.Title
+			if sr.Event.Title.Year > 0 {
+				label = fmt.Sprintf("%s (%d)", label, sr.Event.Title.Year)
+			}
+			e.Skipped = append(e.Skipped, label)
 			continue
 		}
 		e.addToClient(ctx, sr.Event, chosen)
@@ -2206,6 +2222,8 @@ func (e *Executor) PickMusicAlbum(ctx context.Context, sr *MusicSearchResult) *M
 		return &MusicAlbumResult{Event: ae}
 	}
 	if len(chosen) == 0 {
+		label := ae.Artist.Name + " - " + ae.Album.Title
+		e.Skipped = append(e.Skipped, label)
 		return &MusicAlbumResult{Event: ae}
 	}
 
@@ -2756,6 +2774,8 @@ func (e *Executor) PickBook(ctx context.Context, sr *BookSearchResult) (int, err
 		return 0, err
 	}
 	if len(chosen) == 0 {
+		label := fmt.Sprintf("%s by %s [%s]", sr.Event.Book.Title, sr.Event.Author.Name, sr.Format)
+		e.Skipped = append(e.Skipped, label)
 		return 0, nil
 	}
 	return e.addBookToClient(ctx, sr.Event, chosen, sr.Format), nil
