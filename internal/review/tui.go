@@ -1345,6 +1345,12 @@ func (t *TUI) buildMusicContent(ae *db.EventWithAlbum, rw int) string {
 		b.WriteString(approvedStyle.Render("★ Must Hear (Editor's Pick)"))
 	}
 
+	// Genres (from AOTY or AllMusic scrape)
+	if al.Genres != "" {
+		b.WriteString("\n")
+		b.WriteString(rtStyle.Width(rw).Render("genres: " + al.Genres))
+	}
+
 	// Overview/blurb from AllMusic (or AOTY)
 	if al.Overview != "" {
 		b.WriteString("\n\n")
@@ -1392,13 +1398,7 @@ func (t *TUI) buildMusicContent(ae *db.EventWithAlbum, rw int) string {
 			b.WriteString(rtStyle.Render(ar.Disambiguation))
 		}
 
-		// Line 12: album genres (from AllMusic scrape or MB enrichment)
-		if al.Genres != "" {
-			b.WriteString("\n")
-			b.WriteString(rtStyle.Width(rw).Render("genres: " + al.Genres))
-		}
-
-		// Line 14: MB artist rating (always shown, — when none)
+		// MB artist rating (always shown, — when none)
 		b.WriteString("\n")
 		b.WriteString(ratingsLine.Render(fmt.Sprintf("MB artist rating: %s", fmtRating(ar.MBRating))))
 	}
