@@ -1,10 +1,12 @@
 package discover
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/PuerkitoBio/goquery"
@@ -106,7 +108,64 @@ func (p *AOTYProvider) Scrape() ([]ScrapedItem, error) {
 		}
 	}
 
+	// Enrich with genres from individual album pages
+	if len(allItems) > 0 {
+		ctx := context.Background()
+		sem := make(chan struct{}, 5)
+		var wg sync.WaitGroup
+
+		for i := range allItems {
+			if allItems[i].AOTYURL == "" {
+				continue
+			}
+			wg.Add(1)
+			go func(item *ScrapedItem) {
+				defer wg.Done()
+				sem <- struct{}{}
+				defer func() { <-sem }()
+				genres, err := p.fetchAlbumGenres(ctx, item.AOTYURL)
+				if err == nil && genres != "" {
+					item.Genres = genres
+				}
+			}(&allItems[i])
+		}
+		wg.Wait()
+	}
+
 	return allItems, nil
+}
+
+func (p *AOTYProvider) fetchAlbumGenres(ctx context.Context, url string) (string, error) {
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("User-Agent", "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+
+	resp, err := p.client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("page returned %d", resp.StatusCode)
+	}
+
+	doc, err := goquery.NewDocumentFromReader(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("parsing html: %w", err)
+	}
+
+	var genres []string
+	doc.Find("a[href*='/genre/']").Each(func(i int, a *goquery.Selection) {
+		g := strings.TrimSpace(a.Text())
+		if g != "" {
+			genres = append(genres, g)
+		}
+	})
+
+	return strings.Join(genres, ", "), nil
 }
 
 func (p *AOTYProvider) scrapePage(page int) ([]ScrapedItem, error) {
