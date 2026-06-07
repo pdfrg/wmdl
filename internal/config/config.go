@@ -55,10 +55,11 @@ type ProwlarrConfig struct {
 }
 
 type IndexerPerCategory struct {
-	Videos int `mapstructure:"videos"`
-	Music  int `mapstructure:"music"`
-	Anime  int `mapstructure:"anime"`
-	Books  int `mapstructure:"books"`
+	Videos     int `mapstructure:"videos"`
+	Music      int `mapstructure:"music"`
+	Anime      int `mapstructure:"anime"`
+	Ebooks     int `mapstructure:"ebooks"`
+	Audiobooks int `mapstructure:"audiobooks"`
 }
 
 type TMDBConfig struct {
@@ -354,7 +355,8 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("prowlarr.indexer_id.videos", 0)
 	v.SetDefault("prowlarr.indexer_id.music", 0)
 	v.SetDefault("prowlarr.indexer_id.anime", 0)
-	v.SetDefault("prowlarr.indexer_id.books", 0)
+	v.SetDefault("prowlarr.indexer_id.ebooks", 0)
+	v.SetDefault("prowlarr.indexer_id.audiobooks", 0)
 	v.SetDefault("library.radarr.monitor", false)
 	v.SetDefault("library.radarr.timeout", 120)
 	v.SetDefault("library.sonarr.monitor_new_episodes", true)

@@ -92,10 +92,11 @@ func NewExecutor(logger zerolog.Logger, cfg *config.Config, database *db.DB) *Ex
 		lidarr = library.NewLidarrClient(cfg.Library.Lidarr.URL, cfg.Library.Lidarr.APIKey, cfg.Library.Lidarr.Timeout)
 	}
 	catMap := map[string]int{
-		"videos": cfg.Prowlarr.IndexerIDs.Videos,
-		"music":  cfg.Prowlarr.IndexerIDs.Music,
-		"anime":  cfg.Prowlarr.IndexerIDs.Anime,
-		"books":  cfg.Prowlarr.IndexerIDs.Books,
+		"videos":     cfg.Prowlarr.IndexerIDs.Videos,
+		"music":      cfg.Prowlarr.IndexerIDs.Music,
+		"anime":      cfg.Prowlarr.IndexerIDs.Anime,
+		"ebooks":     cfg.Prowlarr.IndexerIDs.Ebooks,
+		"audiobooks": cfg.Prowlarr.IndexerIDs.Audiobooks,
 	}
 	var abs *library.AudiobookshelfClient
 	if cfg.Library.Audiobookshelf.URL != "" && cfg.Library.Audiobookshelf.APIKey != "" {
@@ -2496,7 +2497,7 @@ func (e *Executor) SearchBook(ctx context.Context, evt db.EventWithBook, format 
 	}
 	bookCatSets := [][]int{{cat}, {search.CatBook}}
 
-	preferredID := e.prowl.PreferredIndexerID(search.CatBook)
+	preferredID := e.prowl.PreferredIndexerID(cat)
 	numTiers := len(queries)
 	var exactPool, fuzzyPool []quality.ParsedRelease
 

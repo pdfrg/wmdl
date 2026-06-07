@@ -78,8 +78,10 @@ func categoryKey(cat int) string {
 		return "anime"
 	case CatMusic:
 		return "music"
-	case CatBook, CatBookMags, CatBookEbook, CatBookComic, CatAudioAudiobook:
-		return "books"
+	case CatBook, CatBookMags, CatBookEbook, CatBookComic:
+		return "ebooks"
+	case CatAudioAudiobook:
+		return "audiobooks"
 	}
 	return ""
 }
