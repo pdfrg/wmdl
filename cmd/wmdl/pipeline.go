@@ -130,18 +130,20 @@ func runReviewForWeek(ctx context.Context, database *db.DB, cfg *config.Config, 
 	}
 
 	if !hasPending {
-		if approved > 0 {
-			fmt.Fprintf(os.Stderr, "All %d items auto-approved (yolo mode) for %d-W%02d.\n", approved, year, week)
-		} else {
-			fmt.Fprintf(os.Stderr, "No pending releases for %d-W%02d.\n", year, week)
-		}
 		if !target.Reviewed {
-			target.Reviewed = true
-			if err := database.UpsertWeekState(ctx, target); err != nil {
-				fmt.Fprintf(os.Stderr, "Warning: tracking week state: %v\n", err)
+			if approved > 0 {
+				fmt.Fprintf(os.Stderr, "All %d items auto-approved (yolo mode) for %d-W%02d.\n", approved, year, week)
+				target.Reviewed = true
+				if err := database.UpsertWeekState(ctx, target); err != nil {
+					fmt.Fprintf(os.Stderr, "Warning: tracking week state: %v\n", err)
+				}
+				return approved, nil
 			}
+			fmt.Fprintf(os.Stderr, "No pending releases for %d-W%02d.\n", year, week)
+			return 0, nil
 		}
-		return approved, nil
+		// target.Reviewed is true — all items were decided in a prior
+		// session (manually or by yolo). Fall through to re-review menu.
 	}
 
 	if target.Reviewed {
