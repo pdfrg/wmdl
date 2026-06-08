@@ -390,14 +390,52 @@ func (c *Config) Validate() error {
 		}
 	}
 
-	// Validate Radarr config if URL is set (partially configured)
+	// Mode-aware *arr validation: require config when arr/auto/yolo modes are used
+	needsLibMode := func(mode string) bool {
+		return mode == "arr" || mode == "auto" || mode == "yolo"
+	}
+
+	if c.MediaTypes.Movies.Enabled && needsLibMode(c.MediaTypes.Movies.Mode) {
+		if c.Library.Radarr.URL == "" {
+			errs = append(errs, "library.radarr.url is required when media_types.movies.mode is arr/auto/yolo")
+		}
+		if c.Library.Radarr.URL != "" && c.Library.Radarr.APIKey == "" {
+			errs = append(errs, "library.radarr.api_key is required when media_types.movies.mode is arr/auto/yolo")
+		}
+	}
+
+	if (c.MediaTypes.TV.Enabled || c.MediaTypes.Anime.Enabled) &&
+		(needsLibMode(c.MediaTypes.TV.Mode) || needsLibMode(c.MediaTypes.Anime.Mode)) {
+		if c.Library.Sonarr.URL == "" {
+			errs = append(errs, "library.sonarr.url is required when media_types.tv/anime.mode is arr/auto/yolo")
+		}
+		if c.Library.Sonarr.URL != "" && c.Library.Sonarr.APIKey == "" {
+			errs = append(errs, "library.sonarr.api_key is required when media_types.tv/anime.mode is arr/auto/yolo")
+		}
+	}
+
+	if c.MediaTypes.Music.Enabled && needsLibMode(c.MediaTypes.Music.Mode) {
+		if c.Library.Lidarr.URL == "" {
+			errs = append(errs, "library.lidarr.url is required when media_types.music.mode is arr/auto/yolo")
+		}
+		if c.Library.Lidarr.URL != "" && c.Library.Lidarr.APIKey == "" {
+			errs = append(errs, "library.lidarr.api_key is required when media_types.music.mode is arr/auto/yolo")
+		}
+	}
+
+	// Validate Radarr config if URL is set (partially configured — non-mode-specific)
 	if c.Library.Radarr.URL != "" && c.Library.Radarr.APIKey == "" {
 		errs = append(errs, "library.radarr.api_key is required when library.radarr.url is set")
 	}
 
-	// Validate Sonarr config if URL is set (partially configured)
+	// Validate Sonarr config if URL is set (partially configured — non-mode-specific)
 	if c.Library.Sonarr.URL != "" && c.Library.Sonarr.APIKey == "" {
 		errs = append(errs, "library.sonarr.api_key is required when library.sonarr.url is set")
+	}
+
+	// Validate Lidarr config if URL is set (partially configured — non-mode-specific)
+	if c.Library.Lidarr.URL != "" && c.Library.Lidarr.APIKey == "" {
+		errs = append(errs, "library.lidarr.api_key is required when library.lidarr.url is set")
 	}
 
 	// Validate Audiobookshelf config if URL is set (partially configured)

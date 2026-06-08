@@ -1254,6 +1254,7 @@ processPicked:
 	for _, item := range picked {
 		mode := e.cfg.MediaTypeMode(item.Event.Title.MediaType)
 		searchNow := mode == "arr" || mode == "auto" || mode == "yolo"
+		autoConfirm := mode == "auto" || mode == "yolo"
 		if item.Event.Title.MediaType == model.MediaTypeMovie {
 			tmdbID := item.Event.Title.TmdbID
 			if tmdbID == 0 {
@@ -1309,7 +1310,7 @@ processPicked:
 				}
 			}
 			e.log.Info().Str("profile", e.cfg.Library.Radarr.QualityProfile).Str("root", e.cfg.Library.Radarr.RootFolder).Msg("Radarr config")
-			if promptYesNo(ctx, "  Add to Radarr?") {
+			if autoConfirm || promptYesNo(ctx, "  Add to Radarr?") {
 				addActions = append(addActions, addAction{
 					evt:       item.Event,
 					isTV:      false,
@@ -1406,7 +1407,7 @@ processPicked:
 				}
 			}
 			e.log.Info().Str("profile", e.cfg.Library.Sonarr.QualityProfile).Str("root", e.cfg.Library.Sonarr.RootFolder).Msg("Sonarr config")
-			if promptYesNo(ctx, "  Add to Sonarr?") {
+			if autoConfirm || promptYesNo(ctx, "  Add to Sonarr?") {
 				addActions = append(addActions, addAction{
 					evt:       item.Event,
 					season:    item.Season,
@@ -2515,6 +2516,9 @@ func (e *Executor) ProcessMusicAlbumDecisions(ctx context.Context, results []Mus
 		return
 	}
 
+	mode := e.cfg.MediaTypeMode(model.MediaTypeMusic)
+	autoConfirm := mode == "auto" || mode == "yolo"
+
 	fmt.Fprintln(os.Stderr, "\n── Lidarr decisions ──")
 
 	type retryAction int
@@ -2579,7 +2583,7 @@ func (e *Executor) ProcessMusicAlbumDecisions(ctx context.Context, results []Mus
 		}
 
 		e.log.Info().Msgf("Add to Lidarr? %s — %s (%d)", ae.Artist.Name, ae.Album.Title, ae.Album.Year)
-		if promptYesNo(ctx, "  Add artist to Lidarr?") {
+		if autoConfirm || promptYesNo(ctx, "  Add artist to Lidarr?") {
 			decisions = append(decisions, albumDecision{
 				evt:        ae,
 				artistMbid: artistMbid,

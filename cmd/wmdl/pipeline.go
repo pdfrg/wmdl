@@ -211,6 +211,7 @@ func runReviewForWeek(ctx context.Context, database *db.DB, cfg *config.Config, 
 		}
 	}
 
+	autoApproved := approved // yolo auto-approvals counted before TUI
 	tui, err := review.NewReviewTUIWithEvents(pendingEvents, pendingAlbumEvents, pendingBookEvents, database, cfg.PosterMode, year, week, prevAnimeWeek, model.BookFormat(cfg.MediaTypes.Books.DefaultFormat))
 	if err != nil {
 		return 0, err
@@ -219,7 +220,7 @@ func runReviewForWeek(ctx context.Context, database *db.DB, cfg *config.Config, 
 		return 0, err
 	}
 
-	approved = tui.ApprovedCount()
+	approved = tui.ApprovedCount() + autoApproved
 	_, _, pending := tui.Counts()
 	if pending > 0 {
 		fmt.Fprintf(os.Stderr, "\n%d items still need decisions.\n", pending)
@@ -326,6 +327,9 @@ func runProcessForWeek(ctx context.Context, database *db.DB, cfg *config.Config,
 
 	var events []db.EventWithTitle
 
+	// Determine which services are needed based on active processing modes
+	modes := cfg.UsedModes()
+
 	switch {
 	case len(pending) == 0 && len(downloaded) == 0 && len(albumEventsForProcess) == 0 && len(bookEventsForProcess) == 0:
 		log.Info().Msgf("No processable releases for week %d-W%02d — all rejected.", year, week)
@@ -337,7 +341,9 @@ func runProcessForWeek(ctx context.Context, database *db.DB, cfg *config.Config,
 
 	case len(downloaded) > 0 && len(pending) == 0:
 		log.Info().Msgf("All %d releases for %d-W%02d already downloaded.", len(downloaded), year, week)
-		if !promptYesNo(ctx, "Continue anyway (re-process all)?") {
+		if modes["yolo"] {
+			log.Info().Msg("yolo mode: re-processing all")
+		} else if !promptYesNo(ctx, "Continue anyway (re-process all)?") {
 			return nil
 		}
 		events = downloaded
@@ -371,8 +377,6 @@ func runProcessForWeek(ctx context.Context, database *db.DB, cfg *config.Config,
 
 	exec := process.NewExecutor(log.Logger, cfg, database)
 
-	// Determine which services are needed based on active processing modes
-	modes := cfg.UsedModes()
 	needsProwlarr := modes["full"] || modes["prowlarr-grab"]
 	needsDownloader := modes["full"]
 	needsLibrary := modes["full"] || modes["arr"] || modes["auto"] || modes["yolo"]
@@ -424,6 +428,10 @@ func runProcessForWeek(ctx context.Context, database *db.DB, cfg *config.Config,
 	}
 
 	if len(health.Critical) > 0 {
+		if modes["yolo"] {
+			log.Error().Msg("yolo mode: critical services unreachable, aborting")
+			return fmt.Errorf("critical services unreachable")
+		}
 		fmt.Fprintln(os.Stderr, "  Critical services unreachable. Cannot proceed without them.")
 		for {
 			fmt.Fprintf(os.Stderr, "  [r] retry  [q] quit\n")
@@ -457,6 +465,10 @@ func runProcessForWeek(ctx context.Context, database *db.DB, cfg *config.Config,
 	}
 
 	if len(health.Warnings) > 0 && len(health.Critical) == 0 {
+		if modes["yolo"] {
+			log.Error().Msg("yolo mode: library services unreachable, aborting")
+			return fmt.Errorf("library services unreachable")
+		}
 		for {
 			fmt.Fprintf(os.Stderr, "  [r] retry  [p] proceed without library management  [q] quit\n")
 			fmt.Fprintf(os.Stderr, "  Choose: ")
@@ -567,9 +579,14 @@ func runProcessForWeek(ctx context.Context, database *db.DB, cfg *config.Config,
 			musicResults = exec.SearchMusicAll(ctx, albumEventsForProcess)
 		}
 
-		// Search all books
+		// Search all books (skip for arr/auto/yolo — no library integration yet)
 		if hasBooks {
-			bookResults = exec.SearchBooksAll(ctx, bookEventsForProcess)
+			bookMode := cfg.MediaTypeMode(model.MediaTypeBook)
+			if bookMode == "arr" || bookMode == "auto" || bookMode == "yolo" {
+				log.Info().Msgf("books in %s mode not yet supported — skipping", bookMode)
+			} else {
+				bookResults = exec.SearchBooksAll(ctx, bookEventsForProcess)
+			}
 		}
 
 		// Optional notification: searches complete
@@ -697,19 +714,24 @@ func runProcessForWeek(ctx context.Context, database *db.DB, cfg *config.Config,
 	}
 
 	// ─── Book upload trigger (no user attention needed) ─────────
-	if hasBooks && (cfg.ProcessMode == "batch" || cfg.ProcessMode == "") {
-		bookDownloaded := false
-		for _, sre := range bookResults {
-			if sre != nil && len(sre.Top) > 0 {
-				bookDownloaded = true
-				break
+	if hasBooks {
+		bookMode := cfg.MediaTypeMode(model.MediaTypeBook)
+		if bookMode == "arr" || bookMode == "auto" || bookMode == "yolo" {
+			// Already logged "skipping" in search phase
+		} else if cfg.ProcessMode == "batch" || cfg.ProcessMode == "" {
+			bookDownloaded := false
+			for _, sre := range bookResults {
+				if sre != nil && len(sre.Top) > 0 {
+					bookDownloaded = true
+					break
+				}
 			}
+			if bookDownloaded {
+				exec.UploadToAudiobookshelf(ctx)
+			}
+		} else {
+			exec.ProcessBooks(ctx, bookEventsForProcess)
 		}
-		if bookDownloaded {
-			exec.UploadToAudiobookshelf(ctx)
-		}
-	} else if hasBooks {
-		exec.ProcessBooks(ctx, bookEventsForProcess)
 	}
 
 	if hasSearchable || hasAnimeAiring || hasAlbums || hasBooks {
