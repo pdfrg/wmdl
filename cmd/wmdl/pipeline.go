@@ -508,10 +508,11 @@ func runProcessForWeek(ctx context.Context, database *db.DB, cfg *config.Config,
 			}
 		}
 
-		// Search all primary video events (skip arr-mode items — no Prowlarr needed)
+		// Search all primary video events (skip arr/auto/yolo items — no Prowlarr needed)
 		var searchEvents []db.EventWithTitle
 		for _, ev := range events {
-			if cfg.MediaTypeMode(ev.Title.MediaType) != "arr" {
+			mode := cfg.MediaTypeMode(ev.Title.MediaType)
+			if mode != "arr" && mode != "auto" && mode != "yolo" {
 				searchEvents = append(searchEvents, ev)
 			}
 		}
@@ -592,10 +593,11 @@ func runProcessForWeek(ctx context.Context, database *db.DB, cfg *config.Config,
 		}
 	}
 
-	// ─── ARR MODE ITEMS (no Prowlarr search, add directly to *arr) ──
+	// ─── ARR/AUTO/YOLO MODE ITEMS (no Prowlarr search, add directly to *arr) ──
 	// These weren't searched above, so construct synthetic PickedItems
 	for _, ev := range events {
-		if cfg.MediaTypeMode(ev.Title.MediaType) == "arr" {
+		mode := cfg.MediaTypeMode(ev.Title.MediaType)
+		if mode == "arr" || mode == "auto" || mode == "yolo" {
 			season := quality.ParseSeasonNumber(ev.Title.Title)
 			picked = append(picked, process.PickedItem{Event: ev, Season: season})
 		}
@@ -642,7 +644,8 @@ func runProcessForWeek(ctx context.Context, database *db.DB, cfg *config.Config,
 			return ctx.Err()
 		default:
 		}
-		searchNow := cfg.MediaTypeMode(ae.Title.MediaType) == "arr"
+		mode := cfg.MediaTypeMode(ae.Title.MediaType)
+		searchNow := mode == "arr" || mode == "auto" || mode == "yolo"
 		series, err := exec.AddAiringAnimeToSonarr(ctx, ae, searchNow)
 		if err != nil {
 			log.Warn().Err(err).Str("title", ae.Title.Title).Msg("error adding airing anime to Sonarr")

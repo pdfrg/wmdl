@@ -968,7 +968,7 @@ func (e *Executor) ProcessPhase3Pickers(ctx context.Context) {
 		c := entry.Candidate
 		mode := e.cfg.MediaTypeMode(c.MediaType)
 
-		if mode == "arr" {
+		if mode == "arr" || mode == "auto" || mode == "yolo" {
 			// Arr mode: add to *arr with SearchNow, skip picker & download
 			if c.MediaType == model.MediaTypeMovie && c.TmdbID > 0 {
 				existing, err := e.radarr.Exists(ctx, c.TmdbID)
@@ -1066,7 +1066,7 @@ func (e *Executor) ProcessPhase3Pickers(ctx context.Context) {
 	if len(e.phase3Movies) > 0 {
 		mode := e.cfg.MediaTypeMode(model.MediaTypeMovie)
 
-		if mode == "arr" {
+		if mode == "arr" || mode == "auto" || mode == "yolo" {
 			fmt.Fprintln(os.Stderr, "\n── Adding collection movies to Radarr ──")
 			for _, p3m := range e.phase3Movies {
 				existing, err := e.radarr.Exists(ctx, p3m.TMDBID)
@@ -1129,7 +1129,7 @@ func (e *Executor) ProcessPhase3Pickers(ctx context.Context) {
 		// Check mode from the first season entry (all should be same media type)
 		seasonMode := e.cfg.MediaTypeMode(e.phase3Seasons[0].MediaType)
 
-		if seasonMode == "arr" {
+		if seasonMode == "arr" || seasonMode == "auto" || seasonMode == "yolo" {
 			fmt.Fprintln(os.Stderr, "\n── Triggering Sonarr season searches ──")
 			for _, p3s := range e.phase3Seasons {
 				existing, err := e.sonarr.Exists(ctx, p3s.SeriesID)
@@ -1252,7 +1252,8 @@ func (e *Executor) ProcessLibraryDecisions(ctx context.Context, picked []PickedI
 
 processPicked:
 	for _, item := range picked {
-		searchNow := e.cfg.MediaTypeMode(item.Event.Title.MediaType) == "arr"
+		mode := e.cfg.MediaTypeMode(item.Event.Title.MediaType)
+		searchNow := mode == "arr" || mode == "auto" || mode == "yolo"
 		if item.Event.Title.MediaType == model.MediaTypeMovie {
 			tmdbID := item.Event.Title.TmdbID
 			if tmdbID == 0 {
@@ -1352,7 +1353,14 @@ processPicked:
 					if item.Season > 1 {
 						missing := e.checkExistingSonarrSeasons(ctx, existing, item.Season)
 						for _, missingS := range missing {
-							if promptYesNo(ctx, fmt.Sprintf("    %s: Search for Season %d?", existing.Title, missingS.SeasonNumber)) {
+							enqueue := false
+							if searchNow { // auto/yolo modes
+								enqueue = true
+								e.log.Info().Str("series", existing.Title).Int("season", missingS.SeasonNumber).Msg("auto-queueing earlier season search")
+							} else {
+								enqueue = promptYesNo(ctx, fmt.Sprintf("    %s: Search for Season %d?", existing.Title, missingS.SeasonNumber))
+							}
+							if enqueue {
 								e.phase3Seasons = append(e.phase3Seasons, struct {
 									SeriesID     int
 									SeasonNumber int
@@ -1863,7 +1871,9 @@ func (e *Executor) AddAiringAnimeToSonarr(ctx context.Context, evt db.EventWithT
 		}
 	}
 	e.log.Info().Str("profile", e.cfg.Library.Sonarr.QualityProfile).Str("root", e.cfg.Library.Sonarr.RootFolder).Msg("Sonarr config")
-	if !promptYesNo(ctx, "  Add to Sonarr?") {
+	if searchNow {
+		e.log.Info().Str("title", searchTitle).Msg("auto-adding airing anime to Sonarr")
+	} else if !promptYesNo(ctx, "  Add to Sonarr?") {
 		e.log.Info().Str("title", searchTitle).Msg("skipped adding airing anime to Sonarr")
 		return nil, nil
 	}
@@ -1923,8 +1933,16 @@ func (e *Executor) SearchAiringAnimeEarlierSeasons(ctx context.Context, evt db.E
 	}
 
 	missing := e.checkExistingSonarrSeasons(ctx, series, season)
+	mode := e.cfg.MediaTypeMode(evt.Title.MediaType)
 	for _, ms := range missing {
-		if !promptYesNo(ctx, fmt.Sprintf("    %s: Search for Season %d?", displayTitle, ms.SeasonNumber)) {
+		searchSeason := false
+		if mode == "auto" || mode == "yolo" {
+			searchSeason = true
+			e.log.Info().Str("title", displayTitle).Int("season", ms.SeasonNumber).Msg("auto-searching earlier season")
+		} else {
+			searchSeason = promptYesNo(ctx, fmt.Sprintf("    %s: Search for Season %d?", displayTitle, ms.SeasonNumber))
+		}
+		if !searchSeason {
 			continue
 		}
 
@@ -2063,8 +2081,16 @@ func (e *Executor) addToSonarr(ctx context.Context, evt db.EventWithTitle, tvdbI
 	e.log.Info().Str("title", added.Title).Int("id", added.ID).Msg("added to Sonarr")
 
 	if season > 1 && added.ID > 0 {
+		mode := e.cfg.MediaTypeMode(evt.Title.MediaType)
 		for s := 1; s < season; s++ {
-			if promptYesNo(ctx, fmt.Sprintf("    %s: Search for Season %d?", title, s)) {
+			enqueue := false
+			if mode == "auto" || mode == "yolo" {
+				enqueue = true
+				e.log.Info().Str("title", title).Int("season", s).Msg("auto-queueing earlier season search")
+			} else {
+				enqueue = promptYesNo(ctx, fmt.Sprintf("    %s: Search for Season %d?", title, s))
+			}
+			if enqueue {
 				e.phase3Seasons = append(e.phase3Seasons, struct {
 					SeriesID     int
 					SeasonNumber int
@@ -2196,7 +2222,15 @@ func (e *Executor) checkCollectionGaps(ctx context.Context, tmdbID int, colTMDBI
 		}
 		e.log.Info().Str("collection", col.Name).Msgf("collection has %d missing movie(s)", len(missing))
 		for _, m := range missing {
-			if promptYesNo(ctx, fmt.Sprintf("    Collection %q: Add %s?", col.Name, m.Title)) {
+			addIt := false
+			mode := e.cfg.MediaTypeMode(model.MediaTypeMovie)
+			if mode == "auto" || mode == "yolo" {
+				addIt = true
+				e.log.Info().Str("title", m.Title).Str("collection", col.Name).Msg("auto-adding collection movie")
+			} else {
+				addIt = promptYesNo(ctx, fmt.Sprintf("    Collection %q: Add %s?", col.Name, m.Title))
+			}
+			if addIt {
 				if _, err := e.radarr.Add(ctx, m.TMDBID, m.Title, m.Year, library.AddMovieOptions{
 					Monitored:           e.cfg.Library.Radarr.Monitor,
 					MinimumAvailability: "released",
