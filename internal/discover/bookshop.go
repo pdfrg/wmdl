@@ -158,7 +158,7 @@ func (p *BookshopProvider) Scrape() ([]ScrapedItem, error) {
 		entry := bookMap[title]
 		entry.Author = author
 		entry.EAN = extractEANFromHref(href)
-		entry.URL = "https://bookshop.org" + href
+		entry.URL = "https://bookshop.org" + htmlUnescape(href)
 		bookMap[title] = entry
 	}
 
