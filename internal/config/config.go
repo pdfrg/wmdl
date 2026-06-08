@@ -186,13 +186,22 @@ type MediaTypesConfig struct {
 	Books  BookConfig  `mapstructure:"books"`
 }
 
+// Mode selects the processing pipeline for this media type:
+//   - full          — wmdl searches via Prowlarr, downloads via client, adds to *arr
+//   - prowlarr-grab — wmdl searches via Prowlarr, grabs via Prowlarr's configured download client
+//   - arr           — wmdl adds to *arr as monitored (with SearchNow), *arr handles search+download
+//   - auto          — like arr but auto-yes for all prompts (review TUI still mandatory)
+//   - yolo          — fully automatic, no TUI, cron-friendly
+
 type MovieConfig struct {
 	Enabled bool          `mapstructure:"enabled"`
+	Mode    string        `mapstructure:"mode"`
 	Filter  ContentFilter `mapstructure:"filter"`
 }
 
 type TVConfig struct {
 	Enabled bool          `mapstructure:"enabled"`
+	Mode    string        `mapstructure:"mode"`
 	Filter  ContentFilter `mapstructure:"filter"`
 }
 
@@ -206,6 +215,7 @@ type ContentFilter struct {
 
 type MusicConfig struct {
 	Enabled               bool              `mapstructure:"enabled"`
+	Mode                  string            `mapstructure:"mode"`
 	InitialTimeshiftWeeks int               `mapstructure:"initial_timeshift_weeks"`
 	Filter                MusicFilterConfig `mapstructure:"filter"`
 }
@@ -221,6 +231,7 @@ type MusicFilterConfig struct {
 
 type AnimeConfig struct {
 	Enabled               bool          `mapstructure:"enabled"`
+	Mode                  string        `mapstructure:"mode"`
 	MinScore              float64       `mapstructure:"min_score"`
 	MinMembers            int           `mapstructure:"min_members"`
 	PhaseBEnabled         bool          `mapstructure:"phase_b_enabled"`
@@ -233,6 +244,7 @@ type AnimeConfig struct {
 
 type BookConfig struct {
 	Enabled               bool             `mapstructure:"enabled"`
+	Mode                  string           `mapstructure:"mode"`
 	InitialTimeshiftWeeks int              `mapstructure:"initial_timeshift_weeks"`
 	DefaultFormat         string           `mapstructure:"default_format"`
 	Filter                BookFilterConfig `mapstructure:"filter"`
@@ -272,36 +284,91 @@ func Load() (*Config, error) {
 	return &cfg, nil
 }
 
+var validModes = map[string]bool{
+	"full":          true,
+	"prowlarr-grab": true,
+	"arr":           true,
+	"auto":          true,
+	"yolo":          true,
+}
+
+func (c *Config) usedModes() map[string]bool {
+	modes := make(map[string]bool)
+	if c.MediaTypes.Movies.Enabled {
+		modes[c.MediaTypes.Movies.Mode] = true
+	}
+	if c.MediaTypes.TV.Enabled {
+		modes[c.MediaTypes.TV.Mode] = true
+	}
+	if c.MediaTypes.Music.Enabled {
+		modes[c.MediaTypes.Music.Mode] = true
+	}
+	if c.MediaTypes.Anime.Enabled {
+		modes[c.MediaTypes.Anime.Mode] = true
+	}
+	if c.MediaTypes.Books.Enabled {
+		modes[c.MediaTypes.Books.Mode] = true
+	}
+	return modes
+}
+
 func (c *Config) Validate() error {
 	var errs []string
+
+	// Validate mode values for all media types
+	type mtMode struct {
+		label string
+		mode  string
+	}
+	for _, mt := range []mtMode{
+		{"media_types.movies.mode", c.MediaTypes.Movies.Mode},
+		{"media_types.tv.mode", c.MediaTypes.TV.Mode},
+		{"media_types.music.mode", c.MediaTypes.Music.Mode},
+		{"media_types.anime.mode", c.MediaTypes.Anime.Mode},
+		{"media_types.books.mode", c.MediaTypes.Books.Mode},
+	} {
+		if mt.mode != "" && !validModes[mt.mode] {
+			errs = append(errs, fmt.Sprintf("%s must be one of: full, prowlarr-grab, arr, auto, yolo", mt.label))
+		}
+	}
 
 	if c.TMDB.APIKey == "" {
 		errs = append(errs, "tmdb.api_key is required (get one at https://www.themoviedb.org/settings/api)")
 	}
-	if c.Prowlarr.URL == "" {
-		errs = append(errs, "prowlarr.url is required")
-	}
-	if c.Prowlarr.APIKey == "" {
-		errs = append(errs, "prowlarr.api_key is required")
+
+	// Conditional service requirements based on active modes
+	modes := c.usedModes()
+	needsProwlarr := modes["full"] || modes["prowlarr-grab"]
+	needsDownloader := modes["full"]
+
+	if needsProwlarr {
+		if c.Prowlarr.URL == "" {
+			errs = append(errs, "prowlarr.url is required for full/prowlarr-grab modes")
+		}
+		if c.Prowlarr.APIKey == "" {
+			errs = append(errs, "prowlarr.api_key is required for full/prowlarr-grab modes")
+		}
 	}
 
-	switch c.Downloader.Type {
-	case "qbittorrent":
-		if c.Downloader.Qbittorrent.URL == "" {
-			errs = append(errs, "downloader.qbittorrent.url is required when downloader.type is qbittorrent")
+	if needsDownloader {
+		switch c.Downloader.Type {
+		case "qbittorrent":
+			if c.Downloader.Qbittorrent.URL == "" {
+				errs = append(errs, "downloader.qbittorrent.url is required when downloader.type is qbittorrent")
+			}
+		case "transmission":
+			if c.Downloader.Transmission.URL == "" {
+				errs = append(errs, "downloader.transmission.url is required when downloader.type is transmission")
+			}
+		case "deluge":
+			if c.Downloader.Deluge.URL == "" {
+				errs = append(errs, "downloader.deluge.url is required when downloader.type is deluge")
+			}
+		case "":
+			errs = append(errs, "downloader.type is required for full mode (qbittorrent, transmission, or deluge)")
+		default:
+			errs = append(errs, fmt.Sprintf("unknown downloader.type %q (must be qbittorrent, transmission, or deluge)", c.Downloader.Type))
 		}
-	case "transmission":
-		if c.Downloader.Transmission.URL == "" {
-			errs = append(errs, "downloader.transmission.url is required when downloader.type is transmission")
-		}
-	case "deluge":
-		if c.Downloader.Deluge.URL == "" {
-			errs = append(errs, "downloader.deluge.url is required when downloader.type is deluge")
-		}
-	case "":
-		errs = append(errs, "downloader.type is required (qbittorrent, transmission, or deluge)")
-	default:
-		errs = append(errs, fmt.Sprintf("unknown downloader.type %q (must be qbittorrent, transmission, or deluge)", c.Downloader.Type))
 	}
 
 	// Validate Radarr config if URL is set (partially configured)
@@ -322,7 +389,6 @@ func (c *Config) Validate() error {
 		errs = append(errs, "library.audiobookshelf.library_id is required when library.audiobookshelf.url is set")
 	}
 
-	// Validate log level
 	// Validate book config
 	if c.MediaTypes.Books.Enabled {
 		switch c.MediaTypes.Books.DefaultFormat {
@@ -338,7 +404,7 @@ func (c *Config) Validate() error {
 	switch c.Log.Level {
 	case "debug", "info", "warn", "error", "":
 	default:
-		errs = append(errs, fmt.Sprintf("log.level must be one of: debug, info, warn, error"))
+		errs = append(errs, "log.level must be one of: debug, info, warn, error")
 	}
 
 	if len(errs) == 0 {
@@ -388,10 +454,13 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("library.lidarr.monitor", "all")
 
 	v.SetDefault("media_types.movies.enabled", true)
+	v.SetDefault("media_types.movies.mode", "full")
 	v.SetDefault("media_types.tv.enabled", true)
+	v.SetDefault("media_types.tv.mode", "full")
 	v.SetDefault("quality.music.format_priority", []string{"flac", "mp3", "aac"})
 	v.SetDefault("quality.music.bitrate_priority", []string{"lossless", "320", "v0", "v2"})
 	v.SetDefault("media_types.music.enabled", true)
+	v.SetDefault("media_types.music.mode", "full")
 	v.SetDefault("media_types.music.initial_timeshift_weeks", 1)
 	v.SetDefault("media_types.music.filter.min_critic_score", 75)
 	v.SetDefault("media_types.music.filter.min_critic_reviews", 5)
@@ -400,6 +469,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("media_types.music.filter.include_must_hear", true)
 
 	v.SetDefault("media_types.anime.enabled", true)
+	v.SetDefault("media_types.anime.mode", "full")
 	v.SetDefault("media_types.anime.min_score", 7.0)
 	v.SetDefault("media_types.anime.min_members", 50000)
 	v.SetDefault("media_types.anime.phase_b_enabled", true)
@@ -422,6 +492,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("quality.books.audiobooks.format_priority", []string{"m4b", "mp3", "flac", "aac", "opus"})
 
 	v.SetDefault("media_types.books.enabled", true)
+	v.SetDefault("media_types.books.mode", "full")
 	v.SetDefault("media_types.books.initial_timeshift_weeks", 1)
 	v.SetDefault("media_types.books.default_format", "both")
 	v.SetDefault("media_types.books.filter.min_rating", 3.5)
