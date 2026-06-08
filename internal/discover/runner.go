@@ -433,15 +433,33 @@ func (r *Runner) Run(ctx context.Context) error {
 
 	// Book providers (gated on config and type filter)
 	if wantBooks && r.cfg.MediaTypes.Books.Enabled {
-		// Goodreads requires chromedp/Brave
-		if r.browserCtx != nil {
-			gr := NewGoodreadsProvider(r.debugURL, r.browserCtx)
-			bookYear, bookWeek := r.targetYear, r.targetWeek
-			if !r.hasTargetWeek {
-				bookYear, bookWeek = time.Now().ISOWeek()
+		bookYear, bookWeek := r.targetYear, r.targetWeek
+		if !r.hasTargetWeek {
+			bookYear, bookWeek = time.Now().ISOWeek()
+		}
+		bookScrapeYear, bookScrapeWeek := r.bookTargetWeekFrom(bookYear, bookWeek)
+
+		for _, name := range r.cfg.MediaTypes.Books.Scrapers {
+			switch name {
+			case "goodreads":
+				if r.browserCtx == nil {
+					r.log.Warn().Msg("goodreads: browser unavailable, skipping")
+					continue
+				}
+				gr := NewGoodreadsProvider(r.debugURL, r.browserCtx)
+				gr.SetWeekRange(bookScrapeYear, bookScrapeWeek)
+				providers = append(providers, gr)
+			case "bookshop":
+				bs := NewBookshopProvider()
+				bs.SetWeekRange(bookScrapeYear, bookScrapeWeek)
+				providers = append(providers, bs)
+			case "bookmarks":
+				bm := NewBookMarksProvider()
+				bm.SetWeekRange(bookScrapeYear, bookScrapeWeek)
+				providers = append(providers, bm)
+			default:
+				r.log.Warn().Str("scraper", name).Msg("unknown book scraper configured")
 			}
-			gr.SetWeekRange(r.bookTargetWeekFrom(bookYear, bookWeek))
-			providers = append(providers, gr)
 		}
 	}
 
@@ -1624,21 +1642,19 @@ func (r *Runner) processBookItem(ctx context.Context, item ScrapedItem, progYear
 		minRating := r.cfg.MediaTypes.Books.Filter.MinRating
 		minRatings := r.cfg.MediaTypes.Books.Filter.MinRatings
 
-		if minRatings > 0 && ratingsCount == 0 {
-			r.log.Warn().Str("book", item.Title).Msg("no ratings data available, cannot verify min_ratings threshold, skipping")
-			return nil
+		// Rating/ratings filters only apply when the source actually provides this data.
+		// Sources like bookshop.org and bookmarks.reviews don't supply scores.
+		if ratingsCount > 0 {
+			if minRatings > 0 && ratingsCount < minRatings {
+				r.log.Info().Str("book", item.Title).Int("ratings", ratingsCount).Int("min", minRatings).Msg("below min_ratings filter, skipping")
+				return nil
+			}
 		}
-		if minRating > 0 && rating == 0 {
-			r.log.Warn().Str("book", item.Title).Msg("no rating data available, cannot verify min_rating threshold, skipping")
-			return nil
-		}
-		if minRatings > 0 && ratingsCount < minRatings {
-			r.log.Info().Str("book", item.Title).Int("ratings", ratingsCount).Int("min", minRatings).Msg("below min_ratings filter, skipping")
-			return nil
-		}
-		if minRating > 0 && rating < minRating {
-			r.log.Info().Str("book", item.Title).Float64("rating", rating).Float64("min", minRating).Msg("below min_rating filter, skipping")
-			return nil
+		if rating > 0 {
+			if minRating > 0 && rating < minRating {
+				r.log.Info().Str("book", item.Title).Float64("rating", rating).Float64("min", minRating).Msg("below min_rating filter, skipping")
+				return nil
+			}
 		}
 	}
 
