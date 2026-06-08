@@ -16,10 +16,11 @@ import (
 )
 
 type FlixPatrolProvider struct {
-	http          *http.Client
-	targetYear    int
-	targetWeek    int
-	hasTargetWeek bool
+	http            *http.Client
+	targetYear      int
+	targetWeek      int
+	hasTargetWeek   bool
+	mediaTypeFilter model.MediaType
 }
 
 var (
@@ -35,6 +36,10 @@ func NewFlixPatrolProvider(_ string) *FlixPatrolProvider {
 
 func (f *FlixPatrolProvider) Name() string {
 	return "flixpatrol"
+}
+
+func (f *FlixPatrolProvider) SetMediaTypeFilter(mt model.MediaType) {
+	f.mediaTypeFilter = mt
 }
 
 func (f *FlixPatrolProvider) SetWeekRange(year, week int) {
@@ -141,6 +146,9 @@ pageLoop:
 		}
 		if item.hasAnimeGenre {
 			scraped.Genres = "Anime"
+		}
+		if f.mediaTypeFilter != "" && scraped.MediaType != f.mediaTypeFilter {
+			continue
 		}
 		results = append(results, scraped)
 	}

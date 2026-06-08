@@ -313,7 +313,8 @@ func (r *Runner) Run(ctx context.Context) error {
 		return fmt.Errorf("TMDB not configured: set tmdb.api_key or tmdb.access_token in config\n  Get a free API key at https://www.themoviedb.org/settings/api")
 	}
 
-	wantVideo := r.mediaTypeFilter == "" || r.mediaTypeFilter == model.MediaTypeMovie || r.mediaTypeFilter == model.MediaTypeTV
+	wantMovie := r.mediaTypeFilter == "" || r.mediaTypeFilter == model.MediaTypeMovie
+	wantTV := r.mediaTypeFilter == "" || r.mediaTypeFilter == model.MediaTypeTV
 	wantAnime := r.mediaTypeFilter == "" || r.mediaTypeFilter == model.MediaTypeAnime
 	wantMusic := r.mediaTypeFilter == "" || r.mediaTypeFilter == model.MediaTypeMusic
 	wantBooks := r.mediaTypeFilter == "" || r.mediaTypeFilter == model.MediaTypeBook
@@ -357,7 +358,7 @@ func (r *Runner) Run(ctx context.Context) error {
 
 	// Auto-launch Brave if not already running on the debug port
 	// Needed for video/TV/movie processing, AllMusic, and Goodreads scraping.
-	if wantVideo || wantMusic || wantBooks {
+	if (wantMovie || wantTV) || wantMusic || wantBooks {
 		killBrave, err := browser.EnsureRunning(r.cfg.Browser.Binary, r.cfg.Browser.DebugPort, r.cfg.Browser.Profile, r.headless)
 		if err != nil {
 			r.log.Warn().Err(err).Msg("browser unavailable, some features disabled")
@@ -405,18 +406,70 @@ func (r *Runner) Run(ctx context.Context) error {
 
 	providers := []ReleaseProvider{}
 
-	// Video/movie/TV providers (DVD release dates, TMDB discover, FlixPatrol via chromedp)
-	if wantVideo {
-		providers = append(providers, NewDVDReleaseDates(), NewTMDBDiscoverProvider(r.tmdb))
+	// Video/movie/TV providers (DVD release dates, TMDB discover, FlixPatrol)
+	if (wantMovie && r.cfg.MediaTypes.Movies.Enabled) ||
+		(wantTV && r.cfg.MediaTypes.TV.Enabled) {
 
-		fp := NewFlixPatrolProvider(r.debugURL)
-		providers = append(providers, fp)
+		// Collect which scraper names are needed and what media types requested them
+		typeReq := make(map[string]map[model.MediaType]bool)
 
-		if r.hasTargetWeek {
-			for _, p := range providers {
-				if ws, ok := p.(WeekSettable); ok {
-					ws.SetWeekRange(r.targetYear, r.targetWeek)
+		if wantMovie && r.cfg.MediaTypes.Movies.Enabled {
+			for _, s := range r.cfg.MediaTypes.Movies.Scrapers {
+				if typeReq[s] == nil {
+					typeReq[s] = make(map[model.MediaType]bool)
 				}
+				typeReq[s][model.MediaTypeMovie] = true
+			}
+		}
+		if wantTV && r.cfg.MediaTypes.TV.Enabled {
+			for _, s := range r.cfg.MediaTypes.TV.Scrapers {
+				if typeReq[s] == nil {
+					typeReq[s] = make(map[model.MediaType]bool)
+				}
+				typeReq[s][model.MediaTypeTV] = true
+			}
+		}
+
+		for scraperName, types := range typeReq {
+			switch scraperName {
+			case "dvdsreleasedates":
+				dvd := NewDVDReleaseDates()
+				if len(types) == 1 {
+					for mt := range types {
+						dvd.SetMediaTypeFilter(mt)
+					}
+				}
+				if r.hasTargetWeek {
+					dvd.SetWeekRange(r.targetYear, r.targetWeek)
+				}
+				providers = append(providers, dvd)
+
+			case "tmdb-discover":
+				tmdb := NewTMDBDiscoverProvider(r.tmdb)
+				if len(types) == 1 {
+					for mt := range types {
+						tmdb.SetMediaTypeFilter(mt)
+					}
+				}
+				if r.hasTargetWeek {
+					tmdb.SetWeekRange(r.targetYear, r.targetWeek)
+				}
+				providers = append(providers, tmdb)
+
+			case "flixpatrol":
+				fp := NewFlixPatrolProvider(r.debugURL)
+				if len(types) == 1 {
+					for mt := range types {
+						fp.SetMediaTypeFilter(mt)
+					}
+				}
+				if r.hasTargetWeek {
+					fp.SetWeekRange(r.targetYear, r.targetWeek)
+				}
+				providers = append(providers, fp)
+
+			default:
+				r.log.Warn().Str("scraper", scraperName).Msg("unknown video scraper configured")
 			}
 		}
 	}
@@ -465,20 +518,30 @@ func (r *Runner) Run(ctx context.Context) error {
 
 	// Music providers (gated on config and type filter)
 	if wantMusic && r.cfg.MediaTypes.Music.Enabled {
-		aoty := NewAOTYProvider(r.cfg.MediaTypes.Music.Filter)
-		if r.hasTargetWeek {
-			musicYear, musicWeek := r.musicTargetWeek()
-			aoty.SetWeekRange(musicYear, musicWeek)
-		}
-		providers = append(providers, aoty)
+		for _, name := range r.cfg.MediaTypes.Music.Scrapers {
+			switch name {
+			case "albumoftheyear":
+				aoty := NewAOTYProvider(r.cfg.MediaTypes.Music.Filter)
+				if r.hasTargetWeek {
+					musicYear, musicWeek := r.musicTargetWeek()
+					aoty.SetWeekRange(musicYear, musicWeek)
+				}
+				providers = append(providers, aoty)
 
-		// AllMusic Editor's Choice (requires chromedp/Brave)
-		if r.browserCtx != nil {
-			allmusic := NewAllMusicProvider(r.debugURL, r.browserCtx)
-			if r.hasTargetWeek {
-				allmusic.SetWeekRange(r.targetYear, r.targetWeek)
+			case "allmusic":
+				if r.browserCtx == nil {
+					r.log.Warn().Msg("allmusic: browser unavailable, skipping")
+					continue
+				}
+				allmusic := NewAllMusicProvider(r.debugURL, r.browserCtx)
+				if r.hasTargetWeek {
+					allmusic.SetWeekRange(r.targetYear, r.targetWeek)
+				}
+				providers = append(providers, allmusic)
+
+			default:
+				r.log.Warn().Str("scraper", name).Msg("unknown music scraper configured")
 			}
-			providers = append(providers, allmusic)
 		}
 	}
 
@@ -591,7 +654,7 @@ func (r *Runner) Run(ctx context.Context) error {
 	totalItems := len(uniqueVideos) + len(animeItems) + len(uniqueMusic) + len(uniqueBooks)
 
 	// Process video items (only when type filter matches)
-	if wantVideo && len(uniqueVideos) > 0 {
+	if (wantMovie || wantTV) && len(uniqueVideos) > 0 {
 		// When filtering to a specific video subtype (movie or tv),
 		// only process items matching that type.
 		toProcess := uniqueVideos

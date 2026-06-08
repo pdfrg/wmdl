@@ -9,10 +9,11 @@ import (
 )
 
 type TMDBDiscoverProvider struct {
-	client        *TMDBClient
-	targetYear    int
-	targetWeek    int
-	hasTargetWeek bool
+	client          *TMDBClient
+	targetYear      int
+	targetWeek      int
+	hasTargetWeek   bool
+	mediaTypeFilter model.MediaType
 }
 
 var (
@@ -26,6 +27,10 @@ func NewTMDBDiscoverProvider(client *TMDBClient) *TMDBDiscoverProvider {
 
 func (t *TMDBDiscoverProvider) Name() string {
 	return "tmdb-discover"
+}
+
+func (t *TMDBDiscoverProvider) SetMediaTypeFilter(mt model.MediaType) {
+	t.mediaTypeFilter = mt
 }
 
 func (t *TMDBDiscoverProvider) SetWeekRange(year, week int) {
@@ -56,35 +61,39 @@ func (t *TMDBDiscoverProvider) Scrape() ([]ScrapedItem, error) {
 	endStr := streamEnd.Format("2006-01-02")
 
 	// Discover movies
-	movies, err := t.client.DiscoverStreamingMovies(ctx, startStr, endStr)
-	if err != nil {
-		return nil, fmt.Errorf("discovering streaming movies: %w", err)
-	}
-	for _, m := range movies {
-		items = append(items, ScrapedItem{
-			Title:       m.Title,
-			Year:        m.Year,
-			MediaType:   model.MediaTypeMovie,
-			ReleaseType: model.ReleaseStreaming,
-			ReleaseDate: m.Date,
-			Source:      "tmdb-discover",
-		})
+	if t.mediaTypeFilter == "" || t.mediaTypeFilter == model.MediaTypeMovie {
+		movies, err := t.client.DiscoverStreamingMovies(ctx, startStr, endStr)
+		if err != nil {
+			return nil, fmt.Errorf("discovering streaming movies: %w", err)
+		}
+		for _, m := range movies {
+			items = append(items, ScrapedItem{
+				Title:       m.Title,
+				Year:        m.Year,
+				MediaType:   model.MediaTypeMovie,
+				ReleaseType: model.ReleaseStreaming,
+				ReleaseDate: m.Date,
+				Source:      "tmdb-discover",
+			})
+		}
 	}
 
 	// Discover TV
-	tvshows, err := t.client.DiscoverStreamingTV(ctx, startStr, endStr)
-	if err != nil {
-		return nil, fmt.Errorf("discovering streaming tv: %w", err)
-	}
-	for _, t := range tvshows {
-		items = append(items, ScrapedItem{
-			Title:       t.Title,
-			Year:        t.Year,
-			MediaType:   model.MediaTypeTV,
-			ReleaseType: model.ReleaseStreaming,
-			ReleaseDate: t.Date,
-			Source:      "tmdb-discover",
-		})
+	if t.mediaTypeFilter == "" || t.mediaTypeFilter == model.MediaTypeTV {
+		tvshows, err := t.client.DiscoverStreamingTV(ctx, startStr, endStr)
+		if err != nil {
+			return nil, fmt.Errorf("discovering streaming tv: %w", err)
+		}
+		for _, t := range tvshows {
+			items = append(items, ScrapedItem{
+				Title:       t.Title,
+				Year:        t.Year,
+				MediaType:   model.MediaTypeTV,
+				ReleaseType: model.ReleaseStreaming,
+				ReleaseDate: t.Date,
+				Source:      "tmdb-discover",
+			})
+		}
 	}
 
 	return items, nil

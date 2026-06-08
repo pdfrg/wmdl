@@ -196,15 +196,17 @@ type MediaTypesConfig struct {
 //   - yolo          — fully automatic, no TUI, cron-friendly
 
 type MovieConfig struct {
-	Enabled bool          `mapstructure:"enabled"`
-	Mode    string        `mapstructure:"mode"`
-	Filter  ContentFilter `mapstructure:"filter"`
+	Enabled  bool          `mapstructure:"enabled"`
+	Mode     string        `mapstructure:"mode"`
+	Scrapers []string      `mapstructure:"scrapers"`
+	Filter   ContentFilter `mapstructure:"filter"`
 }
 
 type TVConfig struct {
-	Enabled bool          `mapstructure:"enabled"`
-	Mode    string        `mapstructure:"mode"`
-	Filter  ContentFilter `mapstructure:"filter"`
+	Enabled  bool          `mapstructure:"enabled"`
+	Mode     string        `mapstructure:"mode"`
+	Scrapers []string      `mapstructure:"scrapers"`
+	Filter   ContentFilter `mapstructure:"filter"`
 }
 
 type ContentFilter struct {
@@ -218,6 +220,7 @@ type ContentFilter struct {
 type MusicConfig struct {
 	Enabled               bool              `mapstructure:"enabled"`
 	Mode                  string            `mapstructure:"mode"`
+	Scrapers              []string          `mapstructure:"scrapers"`
 	InitialTimeshiftWeeks int               `mapstructure:"initial_timeshift_weeks"`
 	Filter                MusicFilterConfig `mapstructure:"filter"`
 }
@@ -513,12 +516,15 @@ func setDefaults(v *viper.Viper) {
 
 	v.SetDefault("media_types.movies.enabled", true)
 	v.SetDefault("media_types.movies.mode", "full")
+	v.SetDefault("media_types.movies.scrapers", []string{"dvdsreleasedates", "tmdb-discover", "flixpatrol"})
 	v.SetDefault("media_types.tv.enabled", true)
 	v.SetDefault("media_types.tv.mode", "full")
+	v.SetDefault("media_types.tv.scrapers", []string{"dvdsreleasedates", "tmdb-discover", "flixpatrol"})
 	v.SetDefault("quality.music.format_priority", []string{"flac", "mp3", "aac"})
 	v.SetDefault("quality.music.bitrate_priority", []string{"lossless", "320", "v0", "v2"})
 	v.SetDefault("media_types.music.enabled", true)
 	v.SetDefault("media_types.music.mode", "full")
+	v.SetDefault("media_types.music.scrapers", []string{"albumoftheyear", "allmusic"})
 	v.SetDefault("media_types.music.initial_timeshift_weeks", 1)
 	v.SetDefault("media_types.music.filter.min_critic_score", 75)
 	v.SetDefault("media_types.music.filter.min_critic_reviews", 5)

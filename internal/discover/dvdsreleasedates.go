@@ -15,10 +15,11 @@ import (
 )
 
 type DVDReleaseDates struct {
-	http          *http.Client
-	targetYear    int
-	targetWeek    int
-	hasTargetWeek bool
+	http            *http.Client
+	targetYear      int
+	targetWeek      int
+	hasTargetWeek   bool
+	mediaTypeFilter model.MediaType
 }
 
 var (
@@ -36,6 +37,10 @@ func NewDVDReleaseDates() *DVDReleaseDates {
 
 func (d *DVDReleaseDates) Name() string {
 	return "dvdsreleasedates"
+}
+
+func (d *DVDReleaseDates) SetMediaTypeFilter(mt model.MediaType) {
+	d.mediaTypeFilter = mt
 }
 
 func (d *DVDReleaseDates) SetWeekRange(year, week int) {
@@ -183,6 +188,10 @@ func (d *DVDReleaseDates) parseDVDCell(cell *goquery.Selection, releaseDate stri
 	year := extractYear(imgAlt, imgSrc, title)
 
 	mediaType := d.detectMediaType(title, cell)
+
+	if d.mediaTypeFilter != "" && mediaType != d.mediaTypeFilter {
+		return nil
+	}
 
 	// Fetch detail page for accurate production year and resolve uncertain type.
 	// The listing image src has the DVD release year (e.g., "Dreams-2026.jpg")
