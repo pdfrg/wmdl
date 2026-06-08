@@ -1553,11 +1553,29 @@ func (r *Runner) processMusicItem(ctx context.Context, item ScrapedItem, progYea
 func (r *Runner) processBookItem(ctx context.Context, item ScrapedItem, progYear, progWeek int) error {
 	r.log.Info().Str("title", item.Title).Str("author", item.ArtistName).Msg("processing book item")
 
+	// Extract EAN/ISBN from Notes (from bookshop/bookmarks scrapers)
+	var notesISBN string
+	if item.Notes != "" {
+		for _, part := range strings.Split(item.Notes, "|") {
+			if strings.HasPrefix(part, "isbn=") {
+				notesISBN = strings.TrimPrefix(part, "isbn=")
+			} else if strings.HasPrefix(part, "ean=") && notesISBN == "" {
+				notesISBN = strings.TrimPrefix(part, "ean=")
+			}
+		}
+	}
+
 	// Step 1: Hardcover enrichment (best-effort, only if API key configured)
 	var hcResult *HCBookResult
 	if r.hc != nil {
 		var hcErr error
 		hcResult, hcErr = r.hc.SearchBook(ctx, item.Title, item.ArtistName)
+		if hcErr != nil {
+			// If title+author search failed, try with ISBN in query
+			if notesISBN != "" {
+				hcResult, hcErr = r.hc.SearchBook(ctx, item.Title+" "+notesISBN, item.ArtistName)
+			}
+		}
 		if hcErr != nil {
 			r.log.Warn().Err(hcErr).Str("book", item.Title).Msg("hardcover search failed, falling back to Open Library")
 		}
@@ -1568,6 +1586,12 @@ func (r *Runner) processBookItem(ctx context.Context, item ScrapedItem, progYear
 	if hcResult == nil || hcResult.ISBN13 == "" || (hcResult.ReleaseDate == "" && hcResult.ReleaseYear == 0) {
 		var olErr error
 		olResult, olErr = r.ol.SearchBook(ctx, item.Title, item.ArtistName)
+		if olErr != nil {
+			// If title+author search failed, try with ISBN in query
+			if notesISBN != "" {
+				olResult, olErr = r.ol.SearchBook(ctx, item.Title, notesISBN)
+			}
+		}
 		if olErr != nil {
 			r.log.Warn().Err(olErr).Str("book", item.Title).Msg("openlibrary search failed, storing without enrichment")
 		}
@@ -1693,6 +1717,15 @@ func (r *Runner) processBookItem(ctx context.Context, item ScrapedItem, progYear
 			releaseYear = olResult.ReleaseYear
 		}
 		tags = strings.Join(olResult.Subjects, ", ")
+	}
+
+	// Fallback: use ISBN from Notes if enrichment didn't provide one
+	if isbn13 == "" && notesISBN != "" {
+		if len(notesISBN) == 13 {
+			isbn13 = notesISBN
+		} else if len(notesISBN) == 10 {
+			isbn10 = notesISBN
+		}
 	}
 
 	// Step 4: Filter by score/rating (with override for matching genres)

@@ -135,7 +135,7 @@ func (p *BookshopProvider) Scrape() ([]ScrapedItem, error) {
 
 	// Re-extract with context for author/image/EAN
 	// Use a different approach: find book blocks by looking at the <a> tag containing the title
-	bookLinkPattern := regexp.MustCompile(`<a[^>]*href="/p/books/[^"]*ean=(\d{13})[^"]*"[^>]*>.*?<h1[^>]*class="[^"]*title[^"]*"[^>]*>([^<]+)</h1>.*?<p[^>]*class="flex items-end text-sm"[^>]*>([^<]+)`)
+	bookLinkPattern := regexp.MustCompile(`<a[^>]*href="(/p/books/[^"]*)"[^>]*>.*?<h1[^>]*class="[^"]*title[^"]*"[^>]*>([^<]+)</h1>.*?<p[^>]*class="flex items-end text-sm"[^>]*>([^<]+)`)
 	linkMatches := bookLinkPattern.FindAllStringSubmatch(html, -1)
 
 	bookMap := make(map[string]struct {
@@ -143,20 +143,22 @@ func (p *BookshopProvider) Scrape() ([]ScrapedItem, error) {
 		EAN      string
 		ImageURL string
 		Desc     string
+		URL      string
 	})
 
 	for _, m := range linkMatches {
 		if len(m) < 4 {
 			continue
 		}
-		ean := m[1]
+		href := m[1]
 		title := strings.TrimSpace(htmlUnescape(m[2]))
 		author := strings.TrimSpace(htmlUnescape(m[3]))
 		author = regexp.MustCompile(`\s+`).ReplaceAllString(author, " ")
 
 		entry := bookMap[title]
 		entry.Author = author
-		entry.EAN = ean
+		entry.EAN = extractEANFromHref(href)
+		entry.URL = "https://bookshop.org" + href
 		bookMap[title] = entry
 	}
 
@@ -214,7 +216,7 @@ func (p *BookshopProvider) Scrape() ([]ScrapedItem, error) {
 				MediaType:  model.MediaTypeBook,
 				Source:     "bookshop",
 				ImageURL:   info.ImageURL,
-				Notes:      fmt.Sprintf("ean=%s", info.EAN),
+				Notes:      fmt.Sprintf("url=%s|ean=%s", info.URL, info.EAN),
 				Overview:   info.Desc,
 			})
 		}
@@ -226,4 +228,12 @@ func (p *BookshopProvider) Scrape() ([]ScrapedItem, error) {
 
 	log.Info().Int("count", len(result)).Int("year", year).Int("week", week).Msg("bookshop: found books")
 	return result, nil
+}
+
+func extractEANFromHref(href string) string {
+	re := regexp.MustCompile(`ean=(\d{13})`)
+	if m := re.FindStringSubmatch(href); len(m) > 1 {
+		return m[1]
+	}
+	return ""
 }

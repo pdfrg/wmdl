@@ -49,11 +49,13 @@ type bmListEntry struct {
 }
 
 type bmBookDetail struct {
-	ReleaseDate string // ISO format "2006-01-02"
-	ISBN        string
-	Publisher   string
-	Description string
-	Tags        string
+	ReleaseDate  string // ISO format "2006-01-02"
+	ISBN         string
+	Publisher    string
+	Description  string
+	Tags         string
+	Verdict      string // Overall: Rave/Positive/Mixed/Pan
+	TotalReviews int
 }
 
 var (
@@ -65,11 +67,12 @@ var (
 	bmImgRe     = regexp.MustCompile(`<img[^>]*src="([^"]+)"[^>]*class="latest_book_image"`)
 
 	// Individual book page patterns
-	bmDetailDateRe  = regexp.MustCompile(`itemprop="datePublished" content="([^"]+)"`)
-	bmDetailISBNRe  = regexp.MustCompile(`bookshop\.org/a/\d+/(\d{13})`)
-	bmDetailPubRe   = regexp.MustCompile(`itemprop="publisher"[^>]*>.*?<span itemprop="name">\s*([^<]+)`)
-	bmDetailDescRe  = regexp.MustCompile(`<div class="book_manual_description">\s*([^<]+)`)
-	bmDetailTagsRe  = regexp.MustCompile(`name="keywords"\s*content="([^"]+)"`)
+	bmDetailDateRe    = regexp.MustCompile(`itemprop="datePublished" content="([^"]+)"`)
+	bmDetailISBNRe    = regexp.MustCompile(`bookshop\.org/a/\d+/(\d{13})`)
+	bmDetailPubRe     = regexp.MustCompile(`itemprop="publisher"[^>]*>.*?<span itemprop="name">\s*([^<]+)`)
+	bmDetailDescRe    = regexp.MustCompile(`<div class="book_manual_description">\s*([^<]+)`)
+	bmDetailTagsRe    = regexp.MustCompile(`name="keywords"\s*content="([^"]+)"`)
+	bmDetailVerdictRe = regexp.MustCompile(`overall rating of (\w+) based on (\d+)`)
 )
 
 func fetchBody(url string) ([]byte, error) {
@@ -218,12 +221,15 @@ func (p *BookMarksProvider) Scrape() ([]ScrapedItem, error) {
 			overview = r.entry.Title
 		}
 
-		notes := fmt.Sprintf("slug=%s", r.entry.Slug)
+		notes := fmt.Sprintf("slug=%s|url=%s", r.entry.Slug, "https://bookmarks.reviews/reviews/"+r.entry.Slug+"/")
 		if r.detail.ISBN != "" {
 			notes += "|isbn=" + r.detail.ISBN
 		}
 		if r.detail.Publisher != "" {
 			notes += "|publisher=" + r.detail.Publisher
+		}
+		if r.detail.TotalReviews > 0 {
+			notes += fmt.Sprintf("|verdict=%s|total=%d", r.detail.Verdict, r.detail.TotalReviews)
 		}
 
 		results = append(results, ScrapedItem{
@@ -303,6 +309,14 @@ func (p *BookMarksProvider) fetchBookDetail(ctx context.Context, slug string) (*
 			detail.Tags = strings.ReplaceAll(detail.Tags, author, "")
 		}
 		detail.Tags = strings.Trim(detail.Tags, ", ")
+	}
+
+	// Overall verdict + review count from meta description
+	if m := bmDetailVerdictRe.FindStringSubmatch(html); len(m) > 2 {
+		detail.Verdict = m[1]
+		if n, err := fmt.Sscanf(m[2], "%d", &detail.TotalReviews); err != nil || n != 1 {
+			detail.TotalReviews = 0
+		}
 	}
 
 	return detail, nil

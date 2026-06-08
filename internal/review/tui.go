@@ -886,7 +886,31 @@ func (t *TUI) updateReview(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			return t, nil
 		}
 		if it.bookEvent != nil {
-			u := it.bookEvent.Event.Notes // Goodreads URL
+			ev := it.bookEvent.Event
+			// Parse structured notes for source-specific URLs
+			u := ""
+			var slug, ean string
+			if ev.Notes != "" {
+				for _, part := range strings.Split(ev.Notes, "|") {
+					if strings.HasPrefix(part, "url=") {
+						u = strings.TrimPrefix(part, "url=")
+					} else if strings.HasPrefix(part, "slug=") {
+						slug = strings.TrimPrefix(part, "slug=")
+					} else if strings.HasPrefix(part, "ean=") {
+						ean = strings.TrimPrefix(part, "ean=")
+					}
+				}
+			}
+			// Check if Notes itself is a direct URL (Goodreads compatibility)
+			if u == "" && !strings.Contains(ev.Notes, "=") {
+				u = ev.Notes
+			}
+			if u == "" && slug != "" {
+				u = "https://bookmarks.reviews/reviews/" + slug + "/"
+			}
+			if u == "" && ean != "" {
+				u = "https://bookshop.org/books?ean=" + ean
+			}
 			if u == "" && it.bookEvent.Book.HardcoverSlug != "" {
 				u = fmt.Sprintf("https://hardcover.app/books/%s", it.bookEvent.Book.HardcoverSlug)
 			}
@@ -1486,6 +1510,19 @@ func (t *TUI) buildBookContent(be *db.EventWithBook, rw int) string {
 		b.WriteString(ratingsLine.Render(strings.Join(scoreParts, " · ")))
 	}
 
+	// Book Marks critic verdict
+	if ev.Source == "bookmarks" {
+		verdict, total := parseBmVerdict(ev.Notes)
+		if verdict != "" {
+			b.WriteString("\n")
+			display := "Book Marks: " + verdict
+			if total > 0 {
+				display += fmt.Sprintf(" — %d reviews", total)
+			}
+			b.WriteString(ratingsLine.Render(display))
+		}
+	}
+
 	var detailParts []string
 	if book.ReleaseDate != "" {
 		detailParts = append(detailParts, book.ReleaseDate)
@@ -1965,6 +2002,24 @@ func fmtMembers(n int) string {
 	default:
 		return strconv.Itoa(n)
 	}
+}
+
+func parseBmVerdict(notes string) (verdict string, total int) {
+	if notes == "" {
+		return "", 0
+	}
+	for _, part := range strings.Split(notes, "|") {
+		if strings.HasPrefix(part, "verdict=") {
+			verdict = strings.TrimPrefix(part, "verdict=")
+		}
+		if strings.HasPrefix(part, "total=") {
+			n, err := fmt.Sscanf(strings.TrimPrefix(part, "total="), "%d", &total)
+			if err != nil || n != 1 {
+				total = 0
+			}
+		}
+	}
+	return
 }
 
 func fmtViews(n int64) string {
