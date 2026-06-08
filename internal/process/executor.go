@@ -3043,6 +3043,12 @@ func (e *Executor) SearchBooksAll(ctx context.Context, events []db.EventWithBook
 
 // PickBookResults presents pickers for pre-searched book results and downloads.
 func (e *Executor) PickBookResults(ctx context.Context, results []*BookSearchResult) {
+	type formatsDone struct {
+		ebook, audiobook bool
+	}
+	done := make(map[int64]*formatsDone)
+	events := make(map[int64]db.EventWithBook)
+
 	for _, sr := range results {
 		n, err := e.PickBook(ctx, sr)
 		if errors.Is(err, ErrAbort) {
@@ -3057,6 +3063,36 @@ func (e *Executor) PickBookResults(ctx context.Context, results []*BookSearchRes
 			if err := e.db.MarkBookFormatProcessed(ctx, sr.Event.Event.ID, sr.Format); err != nil {
 				e.log.Warn().Err(err).Msg("marking book format processed")
 			}
+			id := sr.Event.Event.ID
+			if _, ok := done[id]; !ok {
+				done[id] = &formatsDone{
+					ebook:     sr.Event.Event.EbookProcessed,
+					audiobook: sr.Event.Event.AudiobookProcessed,
+				}
+				events[id] = sr.Event
+			}
+			switch sr.Format {
+			case model.BookFormatEbook:
+				done[id].ebook = true
+			case model.BookFormatAudiobook:
+				done[id].audiobook = true
+			}
+		}
+	}
+
+	for id, f := range done {
+		pref := events[id].Event.FormatPref
+		allDone := false
+		switch pref {
+		case model.BookFormatEbook:
+			allDone = f.ebook
+		case model.BookFormatAudiobook:
+			allDone = f.audiobook
+		case model.BookFormatBoth:
+			allDone = f.ebook && f.audiobook
+		}
+		if allDone {
+			e.markBookDownloaded(ctx, events[id])
 		}
 	}
 }
