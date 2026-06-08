@@ -292,7 +292,7 @@ var validModes = map[string]bool{
 	"yolo":          true,
 }
 
-func (c *Config) usedModes() map[string]bool {
+func (c *Config) UsedModes() map[string]bool {
 	modes := make(map[string]bool)
 	if c.MediaTypes.Movies.Enabled {
 		modes[c.MediaTypes.Movies.Mode] = true
@@ -337,7 +337,7 @@ func (c *Config) Validate() error {
 	}
 
 	// Conditional service requirements based on active modes
-	modes := c.usedModes()
+	modes := c.UsedModes()
 	needsProwlarr := modes["full"] || modes["prowlarr-grab"]
 	needsDownloader := modes["full"]
 

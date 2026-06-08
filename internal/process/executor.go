@@ -369,30 +369,34 @@ func (e *Executor) updateLidarrCache(ctx context.Context, artists []library.Lida
 	}
 }
 
-func (e *Executor) HealthCheck(ctx context.Context) HealthCheckResult {
+func (e *Executor) HealthCheck(ctx context.Context, checkProwlarr, checkDownloader, checkLibrary bool) HealthCheckResult {
 	var result HealthCheckResult
 
-	if err := e.prowl.Ping(ctx); err != nil {
-		result.Critical = append(result.Critical, fmt.Sprintf("Prowlarr: %v", err))
+	if checkProwlarr {
+		if err := e.prowl.Ping(ctx); err != nil {
+			result.Critical = append(result.Critical, fmt.Sprintf("Prowlarr: %v", err))
+		}
 	}
-	if e.dl != nil {
+	if checkDownloader && e.dl != nil {
 		if err := e.dl.Ping(ctx); err != nil {
 			result.Critical = append(result.Critical, fmt.Sprintf("Downloader (%s): %v", e.cfg.Downloader.Type, err))
 		}
 	}
-	if e.radarr != nil {
-		if err := e.radarr.Ping(ctx); err != nil {
-			result.Warnings = append(result.Warnings, fmt.Sprintf("Radarr: %v", err))
+	if checkLibrary {
+		if e.radarr != nil {
+			if err := e.radarr.Ping(ctx); err != nil {
+				result.Warnings = append(result.Warnings, fmt.Sprintf("Radarr: %v", err))
+			}
 		}
-	}
-	if e.sonarr != nil {
-		if err := e.sonarr.Ping(ctx); err != nil {
-			result.Warnings = append(result.Warnings, fmt.Sprintf("Sonarr: %v", err))
+		if e.sonarr != nil {
+			if err := e.sonarr.Ping(ctx); err != nil {
+				result.Warnings = append(result.Warnings, fmt.Sprintf("Sonarr: %v", err))
+			}
 		}
-	}
-	if e.lidarr != nil {
-		if err := e.lidarr.Ping(ctx); err != nil {
-			result.Warnings = append(result.Warnings, fmt.Sprintf("Lidarr: %v", err))
+		if e.lidarr != nil {
+			if err := e.lidarr.Ping(ctx); err != nil {
+				result.Warnings = append(result.Warnings, fmt.Sprintf("Lidarr: %v", err))
+			}
 		}
 	}
 
@@ -548,6 +552,113 @@ func (e *Executor) markDownloaded(ctx context.Context, evt db.EventWithTitle) {
 	if err := e.db.UpdateReleaseEventStatus(ctx, evt.Event.ID, model.StatusDownloaded); err != nil {
 		e.log.Warn().Err(err).Msg("updating event status")
 	}
+}
+
+// grabViaProwlarr sends chosen releases to Prowlarr's grab API instead of
+// adding them to a locally-configured download client. Prowlarr handles
+// routing to its own configured download client.
+func (e *Executor) grabViaProwlarr(ctx context.Context, evt db.EventWithTitle, chosen []quality.ParsedRelease) {
+	title := evt.Title
+	if title == nil {
+		e.log.Warn().Msg("grabViaProwlarr called with nil title")
+		return
+	}
+
+	var releaseEventID int64
+	if evt.Event != nil {
+		releaseEventID = evt.Event.ID
+	}
+
+	for _, release := range chosen {
+		e.log.Info().Str("release", release.RawTitle).Int("score", release.Score).Int("indexer", release.IndexerID).Msg("grabbing via Prowlarr")
+
+		if err := e.prowl.Grab(ctx, release.IndexerID, release.Guid); err != nil {
+			e.log.Warn().Err(err).Str("release", release.RawTitle).Msg("prowlarr grab failed")
+			continue
+		}
+
+		dl := &model.Download{
+			TitleID:        title.ID,
+			ReleaseEventID: releaseEventID,
+			Quality:        fmt.Sprintf("%dp", release.Resolution),
+			SourceType:     release.Source,
+			Codec:          release.Codec,
+			InfoHash:       release.InfoHash,
+			Status:         model.DownloadAdded,
+		}
+		if _, err := e.db.CreateDownload(ctx, dl); err != nil {
+			e.log.Warn().Err(err).Msg("creating download record")
+		}
+	}
+}
+
+// ProcessGrabResults shows pickers for pre-searched results and grabs
+// via Prowlarr's API. Intended for prowlarr-grab mode (no download client,
+// no library management).
+func (e *Executor) ProcessGrabResults(ctx context.Context, results []*SearchResult) {
+	for _, sr := range results {
+		if len(sr.Top) == 0 {
+			continue
+		}
+		chosen, err := e.presentPicker(ctx, sr)
+		if errors.Is(err, ErrAbort) {
+			e.log.Info().Msg("pipeline aborted by user")
+			break
+		}
+		if err != nil {
+			e.log.Warn().Err(err).Str("title", sr.Event.Title.Title).Msg("picker error")
+			continue
+		}
+		if len(chosen) == 0 {
+			e.log.Info().Str("title", sr.Event.Title.Title).Msg("skipped")
+			label := sr.Event.Title.Title
+			if sr.Event.Title.Year > 0 {
+				label = fmt.Sprintf("%s (%d)", label, sr.Event.Title.Year)
+			}
+			e.Skipped = append(e.Skipped, label)
+			continue
+		}
+		e.grabViaProwlarr(ctx, sr.Event, chosen)
+		e.handleUpgrade(ctx, sr.Event)
+		e.markDownloaded(ctx, sr.Event)
+	}
+}
+
+// SearchAndGrabOne is the interactive-mode equivalent of SearchAndPickOne
+// for prowlarr-grab mode: search, show picker, grab via Prowlarr, mark.
+func (e *Executor) SearchAndGrabOne(ctx context.Context, evt db.EventWithTitle) *PickedItem {
+	sr := e.SearchEvent(ctx, evt)
+	if sr.Error != nil {
+		e.log.Warn().Err(sr.Error).Str("title", evt.Title.Title).Msg("error searching")
+		return nil
+	}
+	if len(sr.Top) == 0 {
+		e.log.Info().Str("title", evt.Title.Title).Msg("no search results found, skipping")
+		return nil
+	}
+	chosen, err := e.presentPicker(ctx, sr)
+	if errors.Is(err, ErrAbort) {
+		e.log.Info().Msg("pipeline aborted by user")
+		return nil
+	}
+	if err != nil {
+		e.log.Warn().Err(err).Str("title", evt.Title.Title).Msg("picker error")
+		return nil
+	}
+	if len(chosen) == 0 {
+		e.log.Info().Str("title", evt.Title.Title).Msg("skipped")
+		label := evt.Title.Title
+		if evt.Title.Year > 0 {
+			label = fmt.Sprintf("%s (%d)", label, evt.Title.Year)
+		}
+		e.Skipped = append(e.Skipped, label)
+		return nil
+	}
+	e.grabViaProwlarr(ctx, evt, chosen)
+	e.handleUpgrade(ctx, evt)
+	e.markDownloaded(ctx, evt)
+	// No PickedItem returned — prowlarr-grab mode has no library step
+	return nil
 }
 
 func (e *Executor) PresentResult(ctx context.Context, sr *SearchResult) error {

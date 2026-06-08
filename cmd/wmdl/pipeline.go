@@ -215,6 +215,23 @@ func runReviewForWeek(ctx context.Context, database *db.DB, cfg *config.Config, 
 	return approved, nil
 }
 
+func mediaTypeMode(cfg *config.Config, mt model.MediaType) string {
+	switch mt {
+	case model.MediaTypeMovie:
+		return cfg.MediaTypes.Movies.Mode
+	case model.MediaTypeTV:
+		return cfg.MediaTypes.TV.Mode
+	case model.MediaTypeAnime:
+		return cfg.MediaTypes.Anime.Mode
+	case model.MediaTypeMusic:
+		return cfg.MediaTypes.Music.Mode
+	case model.MediaTypeBook:
+		return cfg.MediaTypes.Books.Mode
+	default:
+		return "full"
+	}
+}
+
 func runProcessForWeek(ctx context.Context, database *db.DB, cfg *config.Config, year, week int, typeFilter model.MediaType) error {
 	var target *model.WeekState
 	var err error
@@ -334,6 +351,12 @@ func runProcessForWeek(ctx context.Context, database *db.DB, cfg *config.Config,
 
 	exec := process.NewExecutor(log.Logger, cfg, database)
 
+	// Determine which services are needed based on active processing modes
+	modes := cfg.UsedModes()
+	needsProwlarr := modes["full"] || modes["prowlarr-grab"]
+	needsDownloader := modes["full"]
+	needsLibrary := modes["full"] || modes["arr"] || modes["auto"] || modes["yolo"]
+
 	// Split anime Phase B (airing) items — skip search, add directly to Sonarr
 	var animeAiring []db.EventWithTitle
 	var searchable []db.EventWithTitle
@@ -345,6 +368,12 @@ func runProcessForWeek(ctx context.Context, database *db.DB, cfg *config.Config,
 		}
 	}
 	events = searchable
+
+	// For anime airing items in prowlarr-grab mode, skip them entirely
+	// (no Sonarr to add to)
+	if !needsLibrary {
+		animeAiring = nil
+	}
 
 	hasSearchable := len(events) > 0
 	hasAlbums := len(albumEventsForProcess) > 0
@@ -360,9 +389,9 @@ func runProcessForWeek(ctx context.Context, database *db.DB, cfg *config.Config,
 		return nil
 	}
 
-	// ─── Health check (all services) ─────────────────────────────
-	health := exec.HealthCheck(ctx)
-	skipLibrary := false
+	// ─── Health check (mode-aware) ───────────────────────────────
+	health := exec.HealthCheck(ctx, needsProwlarr, needsDownloader, needsLibrary)
+	skipLibrary := !needsLibrary
 
 	if len(health.Critical) > 0 || len(health.Warnings) > 0 {
 		fmt.Fprintln(os.Stderr, "── Service health check ──")
@@ -389,7 +418,7 @@ func runProcessForWeek(ctx context.Context, database *db.DB, cfg *config.Config,
 			case ans := <-ch:
 				switch strings.ToLower(strings.TrimSpace(ans)) {
 				case "r", "retry":
-					health = exec.HealthCheck(ctx)
+					health = exec.HealthCheck(ctx, needsProwlarr, needsDownloader, needsLibrary)
 					if len(health.Critical) == 0 && len(health.Warnings) == 0 {
 						fmt.Fprintln(os.Stderr, "  All services OK")
 						break
@@ -421,7 +450,7 @@ func runProcessForWeek(ctx context.Context, database *db.DB, cfg *config.Config,
 			case ans := <-ch:
 				switch strings.ToLower(strings.TrimSpace(ans)) {
 				case "r", "retry":
-					health = exec.HealthCheck(ctx)
+					health = exec.HealthCheck(ctx, needsProwlarr, needsDownloader, needsLibrary)
 					if len(health.Critical) > 0 {
 						fmt.Fprintln(os.Stderr, "  Critical services also unreachable now.")
 						return nil
@@ -442,7 +471,7 @@ func runProcessForWeek(ctx context.Context, database *db.DB, cfg *config.Config,
 		}
 	}
 
-	// ─── Pre-warm all caches ─────────────────────────────────────
+	// ─── Pre-warm caches (only if library services are needed) ──
 	warmCtx, warmCancel := context.WithCancel(ctx)
 	defer warmCancel()
 
@@ -470,15 +499,28 @@ func runProcessForWeek(ctx context.Context, database *db.DB, cfg *config.Config,
 	var bookResults []*process.BookSearchResult
 
 	if cfg.ProcessMode == "batch" || cfg.ProcessMode == "" {
-		// Compute Phase 3 candidates (collection gaps, earlier seasons)
+		// Compute Phase 3 candidates (collection gaps, earlier seasons) —
+		// only for items using modes that manage a library
 		var phase3Candidates []process.Phase3Candidate
-		if !skipLibrary && (hasSearchable || hasAnimeAiring) {
+		if needsLibrary && (hasSearchable || hasAnimeAiring) {
 			allForPhase3 := make([]db.EventWithTitle, 0, len(events)+len(animeAiring))
-			allForPhase3 = append(allForPhase3, events...)
-			allForPhase3 = append(allForPhase3, animeAiring...)
-			phase3Candidates = exec.ComputePhase3Candidates(ctx, allForPhase3)
-			if len(phase3Candidates) > 0 {
-				fmt.Fprintf(os.Stderr, "  Pre-computed %d Phase 3 candidates (collection gaps + earlier seasons)\n", len(phase3Candidates))
+			for _, ev := range events {
+				mode := mediaTypeMode(cfg, ev.Title.MediaType)
+				if mode == "full" || mode == "arr" || mode == "auto" || mode == "yolo" {
+					allForPhase3 = append(allForPhase3, ev)
+				}
+			}
+			for _, ev := range animeAiring {
+				mode := mediaTypeMode(cfg, ev.Title.MediaType)
+				if mode == "full" || mode == "arr" || mode == "auto" || mode == "yolo" {
+					allForPhase3 = append(allForPhase3, ev)
+				}
+			}
+			if len(allForPhase3) > 0 {
+				phase3Candidates = exec.ComputePhase3Candidates(ctx, allForPhase3)
+				if len(phase3Candidates) > 0 {
+					fmt.Fprintf(os.Stderr, "  Pre-computed %d Phase 3 candidates (collection gaps + earlier seasons)\n", len(phase3Candidates))
+				}
 			}
 		}
 
@@ -525,17 +567,36 @@ func runProcessForWeek(ctx context.Context, database *db.DB, cfg *config.Config,
 		fmt.Fprintf(os.Stderr, "  Interactive mode: processing items one at a time...\n")
 	}
 
-	// ─── PRIMARY PICKERS (movies/TV/anime) ───────────────────────
+	// ─── PRIMARY PICKERS (movies/TV/anime, mode-aware) ──────────
 	var picked []process.PickedItem
 	if hasSearchable {
 		if cfg.ProcessMode == "batch" || cfg.ProcessMode == "" {
-			picked = exec.PickResults(ctx, primaryVideoResults)
+			// Split results by processing mode
+			var fullResults, grabResults []*process.SearchResult
+			for _, sr := range primaryVideoResults {
+				mode := mediaTypeMode(cfg, sr.Event.Title.MediaType)
+				if mode == "prowlarr-grab" {
+					grabResults = append(grabResults, sr)
+				} else {
+					fullResults = append(fullResults, sr)
+				}
+			}
+			if len(grabResults) > 0 {
+				exec.ProcessGrabResults(ctx, grabResults)
+			}
+			if len(fullResults) > 0 {
+				picked = exec.PickResults(ctx, fullResults)
+			}
 		} else {
-			// Interactive mode — items already downloaded in the search loop above
-			// Collect them for library decisions
+			// Interactive mode — process one at a time
 			for _, ev := range events {
-				if item := exec.SearchAndPickOne(ctx, ev); item != nil {
-					picked = append(picked, *item)
+				mode := mediaTypeMode(cfg, ev.Title.MediaType)
+				if mode == "prowlarr-grab" {
+					exec.SearchAndGrabOne(ctx, ev)
+				} else {
+					if item := exec.SearchAndPickOne(ctx, ev); item != nil {
+						picked = append(picked, *item)
+					}
 				}
 			}
 		}
