@@ -15,6 +15,7 @@ import (
 	"github.com/pdfrg/wmdl/internal/model"
 	"github.com/pdfrg/wmdl/internal/notifier"
 	"github.com/pdfrg/wmdl/internal/process"
+	"github.com/pdfrg/wmdl/internal/quality"
 	"github.com/pdfrg/wmdl/internal/review"
 )
 
@@ -213,23 +214,6 @@ func runReviewForWeek(ctx context.Context, database *db.DB, cfg *config.Config, 
 		return 0, nil
 	}
 	return approved, nil
-}
-
-func mediaTypeMode(cfg *config.Config, mt model.MediaType) string {
-	switch mt {
-	case model.MediaTypeMovie:
-		return cfg.MediaTypes.Movies.Mode
-	case model.MediaTypeTV:
-		return cfg.MediaTypes.TV.Mode
-	case model.MediaTypeAnime:
-		return cfg.MediaTypes.Anime.Mode
-	case model.MediaTypeMusic:
-		return cfg.MediaTypes.Music.Mode
-	case model.MediaTypeBook:
-		return cfg.MediaTypes.Books.Mode
-	default:
-		return "full"
-	}
 }
 
 func runProcessForWeek(ctx context.Context, database *db.DB, cfg *config.Config, year, week int, typeFilter model.MediaType) error {
@@ -505,13 +489,13 @@ func runProcessForWeek(ctx context.Context, database *db.DB, cfg *config.Config,
 		if needsLibrary && (hasSearchable || hasAnimeAiring) {
 			allForPhase3 := make([]db.EventWithTitle, 0, len(events)+len(animeAiring))
 			for _, ev := range events {
-				mode := mediaTypeMode(cfg, ev.Title.MediaType)
+				mode := cfg.MediaTypeMode(ev.Title.MediaType)
 				if mode == "full" || mode == "arr" || mode == "auto" || mode == "yolo" {
 					allForPhase3 = append(allForPhase3, ev)
 				}
 			}
 			for _, ev := range animeAiring {
-				mode := mediaTypeMode(cfg, ev.Title.MediaType)
+				mode := cfg.MediaTypeMode(ev.Title.MediaType)
 				if mode == "full" || mode == "arr" || mode == "auto" || mode == "yolo" {
 					allForPhase3 = append(allForPhase3, ev)
 				}
@@ -524,10 +508,16 @@ func runProcessForWeek(ctx context.Context, database *db.DB, cfg *config.Config,
 			}
 		}
 
-		// Search all primary video events
-		if hasSearchable {
-			log.Info().Msgf("Searching %d movie/TV release(s)...", len(events))
-			primaryVideoResults = exec.SearchAll(ctx, events)
+		// Search all primary video events (skip arr-mode items — no Prowlarr needed)
+		var searchEvents []db.EventWithTitle
+		for _, ev := range events {
+			if cfg.MediaTypeMode(ev.Title.MediaType) != "arr" {
+				searchEvents = append(searchEvents, ev)
+			}
+		}
+		if len(searchEvents) > 0 {
+			log.Info().Msgf("Searching %d movie/TV release(s)...", len(searchEvents))
+			primaryVideoResults = exec.SearchAll(ctx, searchEvents)
 		}
 
 		// Search all Phase 3 candidates
@@ -574,7 +564,7 @@ func runProcessForWeek(ctx context.Context, database *db.DB, cfg *config.Config,
 			// Split results by processing mode
 			var fullResults, grabResults []*process.SearchResult
 			for _, sr := range primaryVideoResults {
-				mode := mediaTypeMode(cfg, sr.Event.Title.MediaType)
+				mode := cfg.MediaTypeMode(sr.Event.Title.MediaType)
 				if mode == "prowlarr-grab" {
 					grabResults = append(grabResults, sr)
 				} else {
@@ -590,7 +580,7 @@ func runProcessForWeek(ctx context.Context, database *db.DB, cfg *config.Config,
 		} else {
 			// Interactive mode — process one at a time
 			for _, ev := range events {
-				mode := mediaTypeMode(cfg, ev.Title.MediaType)
+				mode := cfg.MediaTypeMode(ev.Title.MediaType)
 				if mode == "prowlarr-grab" {
 					exec.SearchAndGrabOne(ctx, ev)
 				} else {
@@ -599,6 +589,15 @@ func runProcessForWeek(ctx context.Context, database *db.DB, cfg *config.Config,
 					}
 				}
 			}
+		}
+	}
+
+	// ─── ARR MODE ITEMS (no Prowlarr search, add directly to *arr) ──
+	// These weren't searched above, so construct synthetic PickedItems
+	for _, ev := range events {
+		if cfg.MediaTypeMode(ev.Title.MediaType) == "arr" {
+			season := quality.ParseSeasonNumber(ev.Title.Title)
+			picked = append(picked, process.PickedItem{Event: ev, Season: season})
 		}
 	}
 
@@ -643,7 +642,8 @@ func runProcessForWeek(ctx context.Context, database *db.DB, cfg *config.Config,
 			return ctx.Err()
 		default:
 		}
-		series, err := exec.AddAiringAnimeToSonarr(ctx, ae)
+		searchNow := cfg.MediaTypeMode(ae.Title.MediaType) == "arr"
+		series, err := exec.AddAiringAnimeToSonarr(ctx, ae, searchNow)
 		if err != nil {
 			log.Warn().Err(err).Str("title", ae.Title.Title).Msg("error adding airing anime to Sonarr")
 			continue

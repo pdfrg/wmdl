@@ -952,7 +952,7 @@ func (e *Executor) SearchAllCandidates(ctx context.Context, candidates []Phase3C
 // ProcessPhase3Pickers presents pickers for pre-searched Phase 3 items,
 // adds collection movies to Radarr, and downloads torrents.
 func (e *Executor) ProcessPhase3Pickers(ctx context.Context) {
-	if len(e.phase3SearchPhase) == 0 {
+	if len(e.phase3SearchPhase) == 0 && len(e.phase3Movies) == 0 && len(e.phase3Seasons) == 0 {
 		return
 	}
 
@@ -963,12 +963,47 @@ func (e *Executor) ProcessPhase3Pickers(ctx context.Context) {
 		profileID = e.resolveProfileID(ctx, e.cfg.Library.Radarr.QualityProfile)
 	}
 
+	// Pre-computed Phase 3 candidates
 	for _, entry := range e.phase3SearchPhase {
+		c := entry.Candidate
+		mode := e.cfg.MediaTypeMode(c.MediaType)
+
+		if mode == "arr" {
+			// Arr mode: add to *arr with SearchNow, skip picker & download
+			if c.MediaType == model.MediaTypeMovie && c.TmdbID > 0 {
+				existing, err := e.radarr.Exists(ctx, c.TmdbID)
+				if err == nil && existing == nil {
+					if _, addErr := e.radarr.Add(ctx, c.TmdbID, c.Title, c.Year, library.AddMovieOptions{
+						Monitored:           e.cfg.Library.Radarr.Monitor,
+						MinimumAvailability: "released",
+						QualityProfileID:    profileID,
+						RootFolderPath:      e.cfg.Library.Radarr.RootFolder,
+						SearchNow:           true,
+					}); addErr != nil {
+						e.log.Warn().Err(addErr).Str("title", c.Title).Msg("adding collection movie to Radarr")
+					} else {
+						e.log.Info().Str("title", c.Title).Msg("added collection movie to Radarr [will trigger search]")
+					}
+				}
+			} else if c.Season > 0 && c.TvdbID > 0 {
+				// Earlier season — trigger Sonarr search
+				existing, err := e.sonarr.Exists(ctx, c.TvdbID)
+				if err == nil && existing != nil {
+					if err := e.sonarr.TriggerSeasonSearch(ctx, existing.ID, c.Season); err != nil {
+						e.log.Warn().Err(err).Str("title", c.Title).Int("season", c.Season).Msg("triggering season search")
+					} else {
+						e.log.Info().Str("title", c.Title).Int("season", c.Season).Msg("triggered Sonarr season search")
+					}
+				}
+			}
+			continue
+		}
+
+		// Full mode: current behavior (picker + download)
 		if len(entry.Top) == 0 {
 			continue
 		}
 
-		c := entry.Candidate
 		sr := &SearchResult{
 			Event: db.EventWithTitle{
 				Title: &model.Title{
@@ -1028,78 +1063,116 @@ func (e *Executor) ProcessPhase3Pickers(ctx context.Context) {
 
 	// Handle any Phase 3 items accumulated during ProcessLibraryDecisions
 	// (collection gaps from movies newly added to Radarr in Phase 2b).
-	// These are searched on-demand since they couldn't be pre-computed.
 	if len(e.phase3Movies) > 0 {
-		fmt.Fprintln(os.Stderr, "\n── Additional collection movies (from library adds) ──")
-		for _, p3m := range e.phase3Movies {
-			title := p3m.Title
-			stripped := quality.StripSeason(title)
-			season := quality.ParseSeasonNumber(title)
+		mode := e.cfg.MediaTypeMode(model.MediaTypeMovie)
 
-			releases, err := e.searchRelease(ctx, &model.Title{
-				Title: title, Year: p3m.Year, MediaType: model.MediaTypeMovie,
-			}, stripped, season)
-			if err != nil {
-				e.log.Warn().Err(err).Str("title", title).Msg("error searching collection movie")
-				continue
+		if mode == "arr" {
+			fmt.Fprintln(os.Stderr, "\n── Adding collection movies to Radarr ──")
+			for _, p3m := range e.phase3Movies {
+				existing, err := e.radarr.Exists(ctx, p3m.TMDBID)
+				if err == nil && existing == nil {
+					if _, addErr := e.radarr.Add(ctx, p3m.TMDBID, p3m.Title, p3m.Year, library.AddMovieOptions{
+						Monitored:           e.cfg.Library.Radarr.Monitor,
+						MinimumAvailability: "released",
+						QualityProfileID:    p3m.ProfileID,
+						RootFolderPath:      e.cfg.Library.Radarr.RootFolder,
+						SearchNow:           true,
+					}); addErr != nil {
+						e.log.Warn().Err(addErr).Str("title", p3m.Title).Msg("adding collection movie to Radarr")
+					} else {
+						e.log.Info().Str("title", p3m.Title).Msg("added collection movie to Radarr [will trigger search]")
+					}
+				}
 			}
+		} else {
+			fmt.Fprintln(os.Stderr, "\n── Additional collection movies (from library adds) ──")
+			for _, p3m := range e.phase3Movies {
+				title := p3m.Title
+				stripped := quality.StripSeason(title)
+				season := quality.ParseSeasonNumber(title)
 
-			prefs := buildQualityPrefs(e.cfg, model.MediaTypeMovie)
-			top := quality.SortAndTop(releases, prefs, e.cfg.ShowTopN)
-			if len(top) == 0 {
-				continue
-			}
+				releases, err := e.searchRelease(ctx, &model.Title{
+					Title: title, Year: p3m.Year, MediaType: model.MediaTypeMovie,
+				}, stripped, season)
+				if err != nil {
+					e.log.Warn().Err(err).Str("title", title).Msg("error searching collection movie")
+					continue
+				}
 
-			sr := &SearchResult{
-				Event: db.EventWithTitle{Title: &model.Title{
+				prefs := buildQualityPrefs(e.cfg, model.MediaTypeMovie)
+				top := quality.SortAndTop(releases, prefs, e.cfg.ShowTopN)
+				if len(top) == 0 {
+					continue
+				}
+
+				sr := &SearchResult{
+					Event: db.EventWithTitle{Title: &model.Title{
+						Title: title, Year: p3m.Year, MediaType: model.MediaTypeMovie, TmdbID: p3m.TMDBID,
+					}},
+					Season: season, Top: top,
+				}
+
+				chosen, err := e.presentPicker(ctx, sr)
+				if err != nil || len(chosen) == 0 {
+					continue
+				}
+				synthEvent := db.EventWithTitle{Title: &model.Title{
 					Title: title, Year: p3m.Year, MediaType: model.MediaTypeMovie, TmdbID: p3m.TMDBID,
-				}},
-				Season: season, Top: top,
+				}}
+				e.addToClient(ctx, synthEvent, chosen)
 			}
-
-			chosen, err := e.presentPicker(ctx, sr)
-			if err != nil || len(chosen) == 0 {
-				continue
-			}
-			synthEvent := db.EventWithTitle{Title: &model.Title{
-				Title: title, Year: p3m.Year, MediaType: model.MediaTypeMovie, TmdbID: p3m.TMDBID,
-			}}
-			e.addToClient(ctx, synthEvent, chosen)
 		}
 		e.phase3Movies = nil
 	}
 
 	if len(e.phase3Seasons) > 0 {
-		fmt.Fprintln(os.Stderr, "\n── Additional earlier seasons (from library adds) ──")
-		for _, p3s := range e.phase3Seasons {
-			stripped := quality.StripSeason(p3s.SeriesTitle)
-			releases, err := e.searchRelease(ctx, &model.Title{
-				Title: p3s.SeriesTitle, MediaType: p3s.MediaType,
-			}, stripped, p3s.SeasonNumber)
-			if err != nil {
-				e.log.Warn().Err(err).Str("title", p3s.SeriesTitle).Int("season", p3s.SeasonNumber).Msg("error searching season")
-				continue
-			}
+		// Check mode from the first season entry (all should be same media type)
+		seasonMode := e.cfg.MediaTypeMode(e.phase3Seasons[0].MediaType)
 
-			prefs := buildQualityPrefs(e.cfg, p3s.MediaType)
-			top := quality.SortAndTop(releases, prefs, e.cfg.ShowTopN)
-			if len(top) == 0 {
-				continue
+		if seasonMode == "arr" {
+			fmt.Fprintln(os.Stderr, "\n── Triggering Sonarr season searches ──")
+			for _, p3s := range e.phase3Seasons {
+				existing, err := e.sonarr.Exists(ctx, p3s.SeriesID)
+				if err == nil && existing != nil {
+					if err := e.sonarr.TriggerSeasonSearch(ctx, existing.ID, p3s.SeasonNumber); err != nil {
+						e.log.Warn().Err(err).Str("title", p3s.SeriesTitle).Int("season", p3s.SeasonNumber).Msg("triggering season search")
+					} else {
+						e.log.Info().Str("title", p3s.SeriesTitle).Int("season", p3s.SeasonNumber).Msg("triggered Sonarr season search")
+					}
+				}
 			}
+		} else {
+			fmt.Fprintln(os.Stderr, "\n── Additional earlier seasons (from library adds) ──")
+			for _, p3s := range e.phase3Seasons {
+				stripped := quality.StripSeason(p3s.SeriesTitle)
+				releases, err := e.searchRelease(ctx, &model.Title{
+					Title: p3s.SeriesTitle, MediaType: p3s.MediaType,
+				}, stripped, p3s.SeasonNumber)
+				if err != nil {
+					e.log.Warn().Err(err).Str("title", p3s.SeriesTitle).Int("season", p3s.SeasonNumber).Msg("error searching season")
+					continue
+				}
 
-			sr := &SearchResult{
-				Event:  db.EventWithTitle{Title: &model.Title{Title: p3s.SeriesTitle, MediaType: p3s.MediaType}},
-				Season: p3s.SeasonNumber, Top: top,
-			}
+				prefs := buildQualityPrefs(e.cfg, p3s.MediaType)
+				top := quality.SortAndTop(releases, prefs, e.cfg.ShowTopN)
+				if len(top) == 0 {
+					continue
+				}
 
-			chosen, err := e.presentPicker(ctx, sr)
-			if err != nil || len(chosen) == 0 {
-				continue
+				sr := &SearchResult{
+					Event:  db.EventWithTitle{Title: &model.Title{Title: p3s.SeriesTitle, MediaType: p3s.MediaType}},
+					Season: p3s.SeasonNumber, Top: top,
+				}
+
+				chosen, err := e.presentPicker(ctx, sr)
+				if err != nil || len(chosen) == 0 {
+					continue
+				}
+				synthEvent := db.EventWithTitle{Title: &model.Title{
+					Title: p3s.SeriesTitle, MediaType: p3s.MediaType,
+				}}
+				e.addToClient(ctx, synthEvent, chosen)
 			}
-			synthEvent := db.EventWithTitle{Title: &model.Title{
-				Title: p3s.SeriesTitle, MediaType: p3s.MediaType,
-			}}
-			e.addToClient(ctx, synthEvent, chosen)
 		}
 		e.phase3Seasons = nil
 	}
@@ -1134,11 +1207,12 @@ func (e *Executor) ProcessLibraryDecisions(ctx context.Context, picked []PickedI
 
 	// Phase 2a: Collect and prompt for library adds
 	type addAction struct {
-		evt    db.EventWithTitle
-		season int
-		isTV   bool
-		tmdbID int
-		tvdbID int
+		evt       db.EventWithTitle
+		season    int
+		isTV      bool
+		tmdbID    int
+		tvdbID    int
+		searchNow bool
 	}
 	var addActions []addAction
 
@@ -1178,6 +1252,7 @@ func (e *Executor) ProcessLibraryDecisions(ctx context.Context, picked []PickedI
 
 processPicked:
 	for _, item := range picked {
+		searchNow := e.cfg.MediaTypeMode(item.Event.Title.MediaType) == "arr"
 		if item.Event.Title.MediaType == model.MediaTypeMovie {
 			tmdbID := item.Event.Title.TmdbID
 			if tmdbID == 0 {
@@ -1199,7 +1274,7 @@ processPicked:
 					e.log.Info().Str("title", item.Event.Title.Title).Msg("already in Radarr")
 					if e.cfg.CheckCollections && existing.Collection != nil && existing.Collection.TMDBID > 0 {
 						profileID := e.resolveProfileID(ctx, e.cfg.Library.Radarr.QualityProfile)
-						phase3FromCollection := e.checkCollectionGaps(ctx, existing.TMDBID, existing.Collection.TMDBID, profileID)
+						phase3FromCollection := e.checkCollectionGaps(ctx, existing.TMDBID, existing.Collection.TMDBID, profileID, searchNow)
 						e.phase3Movies = append(e.phase3Movies, phase3FromCollection...)
 					}
 					goto nextPicked
@@ -1235,9 +1310,10 @@ processPicked:
 			e.log.Info().Str("profile", e.cfg.Library.Radarr.QualityProfile).Str("root", e.cfg.Library.Radarr.RootFolder).Msg("Radarr config")
 			if promptYesNo(ctx, "  Add to Radarr?") {
 				addActions = append(addActions, addAction{
-					evt:    item.Event,
-					isTV:   false,
-					tmdbID: tmdbID,
+					evt:       item.Event,
+					isTV:      false,
+					tmdbID:    tmdbID,
+					searchNow: searchNow,
 				})
 			}
 		} else {
@@ -1324,10 +1400,11 @@ processPicked:
 			e.log.Info().Str("profile", e.cfg.Library.Sonarr.QualityProfile).Str("root", e.cfg.Library.Sonarr.RootFolder).Msg("Sonarr config")
 			if promptYesNo(ctx, "  Add to Sonarr?") {
 				addActions = append(addActions, addAction{
-					evt:    item.Event,
-					season: item.Season,
-					isTV:   true,
-					tvdbID: tvdbID,
+					evt:       item.Event,
+					season:    item.Season,
+					isTV:      true,
+					tvdbID:    tvdbID,
+					searchNow: searchNow,
 				})
 			}
 		}
@@ -1349,9 +1426,9 @@ processPicked:
 			var addErr error
 		actionRetry:
 			if a.isTV {
-				addErr = e.addToSonarr(ctx, a.evt, a.tvdbID, a.season, true)
+				addErr = e.addToSonarr(ctx, a.evt, a.tvdbID, a.season, true, a.searchNow)
 			} else {
-				addErr = e.addToRadarr(ctx, a.evt, true)
+				addErr = e.addToRadarr(ctx, a.evt, true, a.searchNow)
 			}
 			if addErr != nil {
 				fmt.Fprintf(os.Stderr, "  Error adding %q to library: %v\n", title, addErr)
@@ -1638,7 +1715,7 @@ func fallbackResolution(res string) string {
 
 func (e *Executor) addToLibrary(ctx context.Context, evt db.EventWithTitle, season int) error {
 	if evt.Title.MediaType == model.MediaTypeMovie {
-		return e.addToRadarr(ctx, evt, false)
+		return e.addToRadarr(ctx, evt, false, false)
 	}
 	tvdbID := evt.Title.TvdbID
 	if tvdbID == 0 && evt.Title.MediaType == model.MediaTypeAnime {
@@ -1652,7 +1729,7 @@ func (e *Executor) addToLibrary(ctx context.Context, evt db.EventWithTitle, seas
 		}
 		tvdbID = lookup.TVDBID
 	}
-	return e.addToSonarr(ctx, evt, tvdbID, season, false)
+	return e.addToSonarr(ctx, evt, tvdbID, season, false, false)
 }
 
 func (e *Executor) resolveProfileID(ctx context.Context, profileName string) int {
@@ -1681,7 +1758,7 @@ func (e *Executor) resolveSonarrProfileID(ctx context.Context, profileName strin
 	return 1
 }
 
-func (e *Executor) addToRadarr(ctx context.Context, evt db.EventWithTitle, confirmed bool) error {
+func (e *Executor) addToRadarr(ctx context.Context, evt db.EventWithTitle, confirmed bool, searchNow bool) error {
 	tmdbID := evt.Title.TmdbID
 	if tmdbID == 0 {
 		return nil
@@ -1705,7 +1782,11 @@ func (e *Executor) addToRadarr(ctx context.Context, evt db.EventWithTitle, confi
 			return fmt.Errorf("movie not found on TMDB (tmdb_id=%d)", tmdbID)
 		}
 
-		e.log.Info().Msgf("Add to Radarr? %s (%d)", lookup.Title, lookup.Year)
+		prompt := fmt.Sprintf("  Add to Radarr? %s (%d)", lookup.Title, lookup.Year)
+		if searchNow {
+			prompt += " [will trigger search]"
+		}
+		e.log.Info().Msg(prompt)
 		if lookup.Overview != "" {
 			for _, line := range formatOverview(lookup.Overview, 72) {
 				e.log.Info().Msg(line)
@@ -1726,7 +1807,7 @@ func (e *Executor) addToRadarr(ctx context.Context, evt db.EventWithTitle, confi
 		MinimumAvailability: "released",
 		QualityProfileID:    profileID,
 		RootFolderPath:      e.cfg.Library.Radarr.RootFolder,
-		SearchNow:           false,
+		SearchNow:           searchNow,
 	})
 	if err != nil {
 		return err
@@ -1736,7 +1817,7 @@ func (e *Executor) addToRadarr(ctx context.Context, evt db.EventWithTitle, confi
 	if e.cfg.CheckCollections {
 		if added.Collection != nil && added.Collection.TMDBID > 0 {
 			e.log.Info().Str("title", title).Str("collection", added.Collection.Name).Int("tmdb", added.Collection.TMDBID).Msg("checking collection gaps")
-			phase3FromCollection := e.checkCollectionGaps(ctx, tmdbID, added.Collection.TMDBID, profileID)
+			phase3FromCollection := e.checkCollectionGaps(ctx, tmdbID, added.Collection.TMDBID, profileID, searchNow)
 			e.phase3Movies = append(e.phase3Movies, phase3FromCollection...)
 		} else {
 			e.log.Info().Str("title", title).Msg("movie not part of a TMDB collection, skipping")
@@ -1746,7 +1827,7 @@ func (e *Executor) addToRadarr(ctx context.Context, evt db.EventWithTitle, confi
 	return nil
 }
 
-func (e *Executor) AddAiringAnimeToSonarr(ctx context.Context, evt db.EventWithTitle) (*library.SonarrSeries, error) {
+func (e *Executor) AddAiringAnimeToSonarr(ctx context.Context, evt db.EventWithTitle, searchNow bool) (*library.SonarrSeries, error) {
 	if e.sonarr == nil {
 		e.log.Warn().Msg("Sonarr not configured, skipping anime addition")
 		return nil, nil
@@ -1771,7 +1852,11 @@ func (e *Executor) AddAiringAnimeToSonarr(ctx context.Context, evt db.EventWithT
 		return existing, nil
 	}
 
-	e.log.Info().Msgf("Add to Sonarr? %s (%d)", lookup.Title, lookup.Year)
+	prompt := fmt.Sprintf("  Add to Sonarr? %s (%d)", lookup.Title, lookup.Year)
+	if searchNow {
+		prompt += " [will trigger search]"
+	}
+	e.log.Info().Msg(prompt)
 	if lookup.Overview != "" {
 		for _, line := range formatOverview(lookup.Overview, 72) {
 			e.log.Info().Msg(line)
@@ -1810,7 +1895,7 @@ func (e *Executor) AddAiringAnimeToSonarr(ctx context.Context, evt db.EventWithT
 		LanguageProfileID: langProfileID,
 		RootFolderPath:    e.cfg.Library.Sonarr.RootFolder,
 		Seasons:           seasons,
-		SearchForMissing:  false,
+		SearchForMissing:  searchNow,
 	}
 
 	series, err := e.sonarr.Add(ctx, lookup.TVDBID, lookup.Title, lookup.Year, opts)
@@ -1882,7 +1967,7 @@ func (e *Executor) SearchAiringAnimeEarlierSeasons(ctx context.Context, evt db.E
 	}
 }
 
-func (e *Executor) addToSonarr(ctx context.Context, evt db.EventWithTitle, tvdbID, season int, confirmed bool) error {
+func (e *Executor) addToSonarr(ctx context.Context, evt db.EventWithTitle, tvdbID, season int, confirmed bool, searchNow bool) error {
 	if tvdbID == 0 {
 		return nil
 	}
@@ -1916,7 +2001,11 @@ func (e *Executor) addToSonarr(ctx context.Context, evt db.EventWithTitle, tvdbI
 			return fmt.Errorf("series not found on TVDB (tvdb_id=%d)", tvdbID)
 		}
 
-		e.log.Info().Msgf("Add to Sonarr? %s (%d)", lookup.Title, lookup.Year)
+		prompt := fmt.Sprintf("  Add to Sonarr? %s (%d)", lookup.Title, lookup.Year)
+		if searchNow {
+			prompt += " [will trigger search]"
+		}
+		e.log.Info().Msg(prompt)
 		if lookup.Overview != "" {
 			for _, line := range formatOverview(lookup.Overview, 72) {
 				e.log.Info().Msg(line)
@@ -1966,7 +2055,7 @@ func (e *Executor) addToSonarr(ctx context.Context, evt db.EventWithTitle, tvdbI
 		LanguageProfileID: langProfileID,
 		RootFolderPath:    e.cfg.Library.Sonarr.RootFolder,
 		Seasons:           seasons,
-		SearchForMissing:  false,
+		SearchForMissing:  searchNow,
 	})
 	if err != nil {
 		return err
@@ -2025,7 +2114,7 @@ func (e *Executor) checkExistingSonarrSeasons(ctx context.Context, series *libra
 	return missing
 }
 
-func (e *Executor) checkCollectionGaps(ctx context.Context, tmdbID int, colTMDBID int, profileID int) []Phase3Movie {
+func (e *Executor) checkCollectionGaps(ctx context.Context, tmdbID int, colTMDBID int, profileID int, searchNow bool) []Phase3Movie {
 	allMovies, err := e.radarr.GetAllMovies(ctx)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "  Radarr error fetching movie list: %v\n", err)
@@ -2041,7 +2130,7 @@ func (e *Executor) checkCollectionGaps(ctx context.Context, tmdbID int, colTMDBI
 		case ans := <-ch:
 			switch strings.ToLower(strings.TrimSpace(ans)) {
 			case "r", "retry":
-				return e.checkCollectionGaps(ctx, tmdbID, colTMDBID, profileID)
+				return e.checkCollectionGaps(ctx, tmdbID, colTMDBID, profileID, searchNow)
 			case "q", "quit":
 				return nil
 			}
@@ -2071,7 +2160,7 @@ func (e *Executor) checkCollectionGaps(ctx context.Context, tmdbID int, colTMDBI
 		case ans := <-ch:
 			switch strings.ToLower(strings.TrimSpace(ans)) {
 			case "r", "retry":
-				return e.checkCollectionGaps(ctx, tmdbID, colTMDBID, profileID)
+				return e.checkCollectionGaps(ctx, tmdbID, colTMDBID, profileID, searchNow)
 			case "q", "quit":
 				return nil
 			}
@@ -2113,11 +2202,11 @@ func (e *Executor) checkCollectionGaps(ctx context.Context, tmdbID int, colTMDBI
 					MinimumAvailability: "released",
 					QualityProfileID:    profileID,
 					RootFolderPath:      e.cfg.Library.Radarr.RootFolder,
-					SearchNow:           false,
+					SearchNow:           searchNow,
 				}); err != nil {
 					e.log.Warn().Err(err).Str("title", m.Title).Msg("error adding movie to collection")
 				} else {
-					e.log.Info().Str("title", m.Title).Msg("added movie to collection (will search in Phase 3)")
+					e.log.Info().Str("title", m.Title).Msg("added movie to collection")
 					phase3 = append(phase3, Phase3Movie{
 						Title:     m.Title,
 						Year:      m.Year,

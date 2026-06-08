@@ -7,6 +7,8 @@ import (
 	"strings"
 
 	"github.com/spf13/viper"
+
+	"github.com/pdfrg/wmdl/internal/model"
 )
 
 type Config struct {
@@ -310,6 +312,23 @@ func (c *Config) UsedModes() map[string]bool {
 		modes[c.MediaTypes.Books.Mode] = true
 	}
 	return modes
+}
+
+func (c *Config) MediaTypeMode(mt model.MediaType) string {
+	switch mt {
+	case model.MediaTypeMovie:
+		return c.MediaTypes.Movies.Mode
+	case model.MediaTypeTV:
+		return c.MediaTypes.TV.Mode
+	case model.MediaTypeAnime:
+		return c.MediaTypes.Anime.Mode
+	case model.MediaTypeMusic:
+		return c.MediaTypes.Music.Mode
+	case model.MediaTypeBook:
+		return c.MediaTypes.Books.Mode
+	default:
+		return "full"
+	}
 }
 
 func (c *Config) Validate() error {
