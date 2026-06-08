@@ -73,6 +73,9 @@ func runReviewForWeek(ctx context.Context, database *db.DB, cfg *config.Config, 
 
 	year, week = target.Year, target.Week
 
+	// Auto-approve yolo-mode items before review (they skip the TUI entirely)
+	autoApproveYoloItems(ctx, database, cfg, year, week)
+
 	events, err := database.ListEventsByWeekWithTitles(ctx, year, week)
 	if err != nil {
 		return 0, fmt.Errorf("loading events: %w", err)
@@ -94,36 +97,55 @@ func runReviewForWeek(ctx context.Context, database *db.DB, cfg *config.Config, 
 		prevAnimeWeek = fmt.Sprintf("%d-W%02d", prevYear, prevWeek)
 	}
 
+	// Count total approved (including yolo auto-approvals) and check for pending
+	approved = 0
 	hasPending := false
 	for _, ev := range events {
-		if ev.Event.Status == model.StatusPending {
+		switch ev.Event.Status {
+		case model.StatusApproved:
+			approved++
+		case model.StatusPending:
 			hasPending = true
-			break
 		}
 	}
 	if !hasPending {
 		for _, ev := range albumEvents {
-			if ev.Event.Status == model.StatusPending {
+			switch ev.Event.Status {
+			case model.StatusApproved:
+				approved++
+			case model.StatusPending:
 				hasPending = true
-				break
 			}
 		}
 	}
 	if !hasPending {
 		for _, ev := range bookEvents {
-			if ev.Event.Status == model.StatusPending {
+			switch ev.Event.Status {
+			case model.StatusApproved:
+				approved++
+			case model.StatusPending:
 				hasPending = true
-				break
 			}
 		}
 	}
 
-	if !hasPending || target.Reviewed {
-		if !hasPending && !target.Reviewed {
-			fmt.Fprintf(os.Stderr, "No pending releases for %d-W%02d.\n", year, week)
+	if !hasPending {
+		if approved > 0 {
+			fmt.Fprintf(os.Stderr, "All %d items auto-approved (yolo mode) for %d-W%02d.\n", approved, year, week)
 		} else {
-			fmt.Fprintf(os.Stderr, "All releases for %d-W%02d have already been reviewed.\n", year, week)
+			fmt.Fprintf(os.Stderr, "No pending releases for %d-W%02d.\n", year, week)
 		}
+		if !target.Reviewed {
+			target.Reviewed = true
+			if err := database.UpsertWeekState(ctx, target); err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: tracking week state: %v\n", err)
+			}
+		}
+		return approved, nil
+	}
+
+	if target.Reviewed {
+		fmt.Fprintf(os.Stderr, "All releases for %d-W%02d have already been reviewed.\n", year, week)
 		for {
 			fmt.Fprintf(os.Stderr, "[r] review again  [e] export choices  [q] quit\n")
 			fmt.Fprintf(os.Stderr, "Choose: ")
@@ -242,8 +264,22 @@ func runProcessForWeek(ctx context.Context, database *db.DB, cfg *config.Config,
 
 	year, week = target.Year, target.Week
 
+	// Auto-approve yolo-mode items so they're processable without review
+	autoApproveYoloItems(ctx, database, cfg, year, week)
+
 	if !target.Reviewed {
-		return fmt.Errorf("week %d-W%02d has not been fully reviewed — run 'wmdl review' first", year, week)
+		// After auto-approval, check if any non-yolo items remain pending
+		pending, _ := database.ListEventsByWeekAndStatus(ctx, year, week, model.StatusPending)
+		pendingAlbums, _ := database.ListAlbumEventsByWeekAndStatus(ctx, year, week, model.StatusPending)
+		pendingBooks, _ := database.ListBookEventsByWeekAndStatus(ctx, year, week, model.StatusPending)
+		if len(pending) == 0 && len(pendingAlbums) == 0 && len(pendingBooks) == 0 {
+			target.Reviewed = true
+			if err := database.UpsertWeekState(ctx, target); err != nil {
+				log.Warn().Err(err).Msg("tracking week state")
+			}
+		} else {
+			return fmt.Errorf("week %d-W%02d has not been fully reviewed — run 'wmdl review' first", year, week)
+		}
 	}
 
 	allEvents, err := database.ListEventsByWeekWithTitles(ctx, year, week)
@@ -697,5 +733,74 @@ func runProcessForWeek(ctx context.Context, database *db.DB, cfg *config.Config,
 		}
 	}
 
+	// ─── Yolo notification: send summary if notifier is configured ──
+	if modes["yolo"] && cfg.Notifier.Service != "" {
+		notify, nErr := notifier.New(cfg.Notifier)
+		if nErr == nil {
+			msg := fmt.Sprintf("%d-W%02d processed", year, week)
+			if len(picked) > 0 {
+				msg += fmt.Sprintf(" · %d movies/TV added to *arr", len(picked))
+			}
+			if len(albumResults) > 0 {
+				msg += fmt.Sprintf(" · %d albums added", len(albumResults))
+			}
+			if hasBooks && len(bookResults) > 0 {
+				msg += fmt.Sprintf(" · %d books", len(bookResults))
+			}
+			if err := notify.Send("wmdl: Yolo Complete", msg, 5); err != nil {
+				log.Warn().Err(err).Msg("sending yolo complete notification")
+			}
+		}
+	}
+
 	return nil
+}
+
+// autoApproveYoloItems sets all pending events with yolo mode to approved,
+// bypassing the review TUI. Safe to call multiple times (idempotent).
+func autoApproveYoloItems(ctx context.Context, database *db.DB, cfg *config.Config, year, week int) {
+	events, err := database.ListEventsByWeekWithTitles(ctx, year, week)
+	if err != nil {
+		log.Warn().Err(err).Msg("loading events for yolo auto-approve")
+		return
+	}
+	for _, ev := range events {
+		if ev.Event.Status == model.StatusPending && cfg.MediaTypeMode(ev.Title.MediaType) == "yolo" {
+			if err := database.UpdateReleaseEventStatus(ctx, ev.Event.ID, model.StatusApproved); err != nil {
+				log.Warn().Err(err).Str("title", ev.Title.Title).Msg("yolo auto-approve failed")
+			} else {
+				log.Info().Str("title", ev.Title.Title).Msg("auto-approved (yolo mode)")
+			}
+		}
+	}
+
+	albumEvents, err := database.ListAlbumEventsByWeek(ctx, year, week)
+	if err != nil {
+		log.Warn().Err(err).Msg("loading album events for yolo auto-approve")
+		return
+	}
+	for _, ae := range albumEvents {
+		if ae.Event.Status == model.StatusPending && cfg.MediaTypeMode(model.MediaTypeMusic) == "yolo" {
+			if err := database.UpdateAlbumReleaseEventStatus(ctx, ae.Event.ID, model.StatusApproved); err != nil {
+				log.Warn().Err(err).Str("album", ae.Album.Title).Msg("yolo auto-approve failed")
+			} else {
+				log.Info().Str("album", ae.Album.Title).Str("artist", ae.Artist.Name).Msg("auto-approved (yolo mode)")
+			}
+		}
+	}
+
+	bookEvents, err := database.ListBookEventsByWeek(ctx, year, week)
+	if err != nil {
+		log.Warn().Err(err).Msg("loading book events for yolo auto-approve")
+		return
+	}
+	for _, be := range bookEvents {
+		if be.Event.Status == model.StatusPending && cfg.MediaTypeMode(model.MediaTypeBook) == "yolo" {
+			if err := database.UpdateBookReleaseEventStatus(ctx, be.Event.ID, model.StatusApproved); err != nil {
+				log.Warn().Err(err).Str("book", be.Book.Title).Msg("yolo auto-approve failed")
+			} else {
+				log.Info().Str("book", be.Book.Title).Str("author", be.Author.Name).Msg("auto-approved (yolo mode)")
+			}
+		}
+	}
 }
