@@ -40,11 +40,11 @@ func (p *BookMarksProvider) SetWeekRange(year, week int) {
 }
 
 type bmListEntry struct {
-	Slug   string
-	Title  string
-	Author string
-	Genre  string
-	Verdict string
+	Slug     string
+	Title    string
+	Author   string
+	Genre    string
+	Verdict  string
 	ImageURL string
 }
 
@@ -203,19 +203,6 @@ func (p *BookMarksProvider) Scrape() ([]ScrapedItem, error) {
 			continue
 		}
 
-		// Map verdict to a numeric score for potential filtering
-		var score float64
-		switch strings.ToLower(r.entry.Verdict) {
-		case "rave":
-			score = 4.0
-		case "positive":
-			score = 3.0
-		case "mixed":
-			score = 2.0
-		case "pan":
-			score = 1.0
-		}
-
 		overview := r.detail.Description
 		if overview == "" {
 			overview = r.entry.Title
@@ -238,7 +225,7 @@ func (p *BookMarksProvider) Scrape() ([]ScrapedItem, error) {
 			MediaType:    model.MediaTypeBook,
 			Source:       "bookmarks",
 			ImageURL:     r.entry.ImageURL,
-			ImdbRating:   score,
+			ImdbRating:   0, // Book Marks doesn't provide numeric ratings
 			RatingsCount: 0, // Book Marks doesn't provide numeric counts
 			Notes:        notes,
 			Overview:     overview,
