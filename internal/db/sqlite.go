@@ -1467,6 +1467,13 @@ func (d *DB) RequeueBookReleaseEvent(ctx context.Context, id int64, source, note
 	return err
 }
 
+func (d *DB) UpdateBookReleaseEventSourceAndNotes(ctx context.Context, id int64, source, notes string) error {
+	_, err := d.db.ExecContext(ctx,
+		`UPDATE book_release_events SET source = ?, notes = ? WHERE id = ?`,
+		source, notes, id)
+	return err
+}
+
 func (d *DB) UpdateBookReleaseEventSourceAndNotesTx(ctx context.Context, tx *sql.Tx, id int64, source, notes string) error {
 	_, err := tx.ExecContext(ctx,
 		`UPDATE book_release_events SET source = ?, notes = ? WHERE id = ?`,
@@ -2173,4 +2180,77 @@ func (d *DB) GetLibraryCacheFetchedAt(ctx context.Context, source string) (strin
 		return "", nil
 	}
 	return fetchedAt, nil
+}
+
+// BookISBNEntry pairs an event with its book's ISBN13 for dedup scanning.
+type BookISBNEntry struct {
+	ISBN    string
+	BookID  int64
+	EventID int64
+}
+
+// FindPendingBookEventsByISBN returns all pending book release events grouped
+// by ISBN13, for use in post-scrape deduplication. Only groups with more than
+// one unique book_id are returned.
+func (d *DB) FindPendingBookEventsByISBN(ctx context.Context) (map[string][]BookISBNEntry, error) {
+	rows, err := d.db.QueryContext(ctx, `
+		SELECT b.isbn13, b.id, e.id
+		FROM books b
+		JOIN book_release_events e ON e.book_id = b.id
+		WHERE b.isbn13 != '' AND e.status = 'pending'
+		ORDER BY b.isbn13, b.id, e.id
+	`)
+	if err != nil {
+		return nil, fmt.Errorf("querying pending events by isbn: %w", err)
+	}
+	defer rows.Close()
+
+	raw := make(map[string][]BookISBNEntry)
+	for rows.Next() {
+		var isbn string
+		var bookID, eventID int64
+		if err := rows.Scan(&isbn, &bookID, &eventID); err != nil {
+			return nil, fmt.Errorf("scanning pending event row: %w", err)
+		}
+		raw[isbn] = append(raw[isbn], BookISBNEntry{
+			ISBN:    isbn,
+			BookID:  bookID,
+			EventID: eventID,
+		})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	// Filter to only ISBNs with multiple distinct book_ids
+	results := make(map[string][]BookISBNEntry)
+	for isbn, entries := range raw {
+		seen := make(map[int64]bool)
+		for _, e := range entries {
+			seen[e.BookID] = true
+		}
+		if len(seen) >= 2 {
+			results[isbn] = entries
+		}
+	}
+	return results, nil
+}
+
+// DeleteBookReleaseEvent deletes a book_release_event by ID.
+func (d *DB) DeleteBookReleaseEvent(ctx context.Context, id int64) error {
+	_, err := d.db.ExecContext(ctx, `DELETE FROM book_release_events WHERE id = ?`, id)
+	if err != nil {
+		return fmt.Errorf("deleting book release event %d: %w", id, err)
+	}
+	return nil
+}
+
+// DeleteBook deletes a book by ID. Only safe to call after its release events
+// have been re-pointed or deleted.
+func (d *DB) DeleteBook(ctx context.Context, id int64) error {
+	_, err := d.db.ExecContext(ctx, `DELETE FROM books WHERE id = ?`, id)
+	if err != nil {
+		return fmt.Errorf("deleting book %d: %w", id, err)
+	}
+	return nil
 }

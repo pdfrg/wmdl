@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"html"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -650,10 +651,10 @@ func (r *Runner) Run(ctx context.Context) error {
 		uniqueMusic = append(uniqueMusic, item)
 	}
 
-	// Deduplicate book items by author+title — merge sources instead of discarding
+	// Deduplicate book items by normalized author+title — merge sources instead of discarding
 	bookMap := make(map[string]*ScrapedItem)
 	for i := range bookItems {
-		key := fmt.Sprintf("%s|%s", bookItems[i].ArtistName, bookItems[i].Title)
+		key := fmt.Sprintf("%s|%s", normalizeBookKey(bookItems[i].ArtistName), normalizeBookKey(bookItems[i].Title))
 		if existing, ok := bookMap[key]; ok {
 			mergeBookItems(existing, &bookItems[i])
 		} else {
@@ -845,6 +846,15 @@ func (r *Runner) Run(ctx context.Context) error {
 			return ctx.Err()
 		}
 		processed += bookProcessed
+	}
+
+	// Post-processing: merge duplicate book records that share an ISBN13.
+	// This catches race-condition duplicates from parallel goroutines and
+	// cross-session duplicates where enrichment produced different titles.
+	if len(bookItems) > 0 {
+		if err := r.deduplicateBookEvents(ctx); err != nil {
+			r.log.Warn().Err(err).Msg("book deduplication failed")
+		}
 	}
 
 	eventCount, _ := r.db.CountReleaseEventsByWeek(ctx, progYear, progWeek)
@@ -2032,6 +2042,91 @@ func mergeBookItems(a, b *ScrapedItem) {
 	}
 }
 
+// deduplicateBookEvents finds book records with matching ISBN13 that each have
+// separate pending release events (created by parallel scrapers or across runs)
+// and merges them into a single book+event.
+func (r *Runner) deduplicateBookEvents(ctx context.Context) error {
+	groups, err := r.db.FindPendingBookEventsByISBN(ctx)
+	if err != nil {
+		return fmt.Errorf("finding duplicate book events: %w", err)
+	}
+
+	merged := 0
+	for isbn, entries := range groups {
+		// Group entries by book_id to get per-book event lists
+		bookEvents := make(map[int64][]int64) // book_id -> event_ids
+		bookIDs := make([]int64, 0, len(entries))
+		for _, e := range entries {
+			if _, ok := bookEvents[e.BookID]; !ok {
+				bookIDs = append(bookIDs, e.BookID)
+			}
+			bookEvents[e.BookID] = append(bookEvents[e.BookID], e.EventID)
+		}
+		sort.Slice(bookIDs, func(i, j int) bool { return bookIDs[i] < bookIDs[j] })
+		survivorBookID := bookIDs[0]
+
+		for _, dupBookID := range bookIDs[1:] {
+			dupEventIDs := bookEvents[dupBookID]
+			// For each event in the duplicate book, merge source/notes
+			// into the survivor book's first event.
+			survivorEventIDs := bookEvents[survivorBookID]
+			if len(survivorEventIDs) == 0 {
+				continue
+			}
+			survivorEventID := survivorEventIDs[0]
+
+			// Fetch the existing survivor source/notes to merge in
+			survivorEvent, err := r.db.GetLatestBookReleaseEvent(ctx, survivorBookID)
+			if err != nil {
+				r.log.Warn().Err(err).Int64("survivor_event", survivorEventID).Msg("dedup: fetch survivor event failed")
+				continue
+			}
+			if survivorEvent == nil {
+				continue
+			}
+
+			for _, dupEventID := range dupEventIDs {
+				dupEvent, err := r.db.GetLatestBookReleaseEvent(ctx, dupBookID)
+				if err != nil || dupEvent == nil {
+					continue
+				}
+
+				// Merge the duplicate event's source/notes into the survivor
+				a := &ScrapedItem{Source: survivorEvent.Source, Notes: survivorEvent.Notes}
+				b := &ScrapedItem{Source: dupEvent.Source, Notes: dupEvent.Notes}
+				mergeBookItems(a, b)
+				survivorEvent.Source = a.Source
+				survivorEvent.Notes = a.Notes
+
+				// Delete the duplicate event
+				if err := r.db.DeleteBookReleaseEvent(ctx, dupEventID); err != nil {
+					r.log.Warn().Err(err).Int64("event", dupEventID).Msg("dedup: delete duplicate event failed")
+				}
+				merged++
+			}
+
+			// Update survivor event with merged source/notes
+			if err := r.db.UpdateBookReleaseEventSourceAndNotes(ctx, survivorEventID, survivorEvent.Source, survivorEvent.Notes); err != nil {
+				r.log.Warn().Err(err).Int64("event", survivorEventID).Msg("dedup: update survivor event failed")
+			}
+
+			// Delete the duplicate book (no more events pointing to it)
+			if err := r.db.DeleteBook(ctx, dupBookID); err != nil {
+				r.log.Warn().Err(err).Int64("book", dupBookID).Msg("dedup: delete duplicate book failed")
+			}
+		}
+
+		if len(bookIDs) > 1 {
+			r.log.Info().Str("isbn", isbn).Int("merged", len(bookIDs)-1).Msg("dedup: merged duplicate books by isbn13")
+		}
+	}
+
+	if merged > 0 {
+		r.log.Info().Int("events_merged", merged).Msg("book deduplication complete")
+	}
+	return nil
+}
+
 // isUpgrade checks if a new release type is an upgrade over a previous download's source type.
 // Physical (BluRay) is an upgrade over streaming (Web-DL/WebRip).
 // A higher-quality source within the same category is also an upgrade.
@@ -2072,6 +2167,8 @@ var (
 	// Strip AllMusic formatting suffixes like [2 CD], [Deluxe Edition], [Super Deluxe]
 	allMusicBracketRe = regexp.MustCompile(`\s*\[[^\]]*\]`)
 	goodreadsSizeRe   = regexp.MustCompile(`\._SX\d+_\.`)
+	bookYearParenRe   = regexp.MustCompile(`\s*\(\d{4}\)`)
+	bookSubtitleRe    = regexp.MustCompile(`\s*[;:].*`)
 )
 
 func cleanTitleForSearch(title string) string {
@@ -2166,4 +2263,23 @@ func artistNamesMatch(a, b string) bool {
 		return out.String()
 	}
 	return normalize(a) == normalize(b)
+}
+
+// normalizeBookKey normalizes a book author or title for fuzzy dedup matching.
+// It strips parenthesized years (e.g. "(2026)"), strips subtitle after colon/semicolon,
+// lowercases, trims, and normalizes unicode diacritics.
+func normalizeBookKey(s string) string {
+	s = strings.ToLower(s)
+	s = bookYearParenRe.ReplaceAllString(s, "")
+	s = bookSubtitleRe.ReplaceAllString(s, "")
+	s = strings.TrimSpace(s)
+	t := norm.NFKD.String(s)
+	var out strings.Builder
+	for _, r := range t {
+		if unicode.Is(unicode.Mn, r) {
+			continue
+		}
+		out.WriteRune(r)
+	}
+	return out.String()
 }
