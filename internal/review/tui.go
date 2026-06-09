@@ -1493,7 +1493,8 @@ func (t *TUI) buildBookContent(be *db.EventWithBook, rw int) string {
 	tagParts = append(tagParts, "[book]")
 	tagParts = append(tagParts, string(ev.FormatPref))
 	if ev.Source != "" {
-		tagParts = append(tagParts, ev.Source)
+		sources := strings.Split(ev.Source, ",")
+		tagParts = append(tagParts, strings.Join(sources, " + "))
 	}
 	b.WriteString(tagStyle.Render(strings.Join(tagParts, " · ")))
 
@@ -1511,7 +1512,7 @@ func (t *TUI) buildBookContent(be *db.EventWithBook, rw int) string {
 	}
 
 	// Book Marks critic verdict
-	if ev.Source == "bookmarks" {
+	if strings.Contains(ev.Source, "bookmarks") {
 		verdict, total := parseBmVerdict(ev.Notes)
 		if verdict != "" {
 			b.WriteString("\n")
@@ -2008,7 +2009,20 @@ func parseBmVerdict(notes string) (verdict string, total int) {
 	if notes == "" {
 		return "", 0
 	}
-	for _, part := range strings.Split(notes, "|") {
+	// Handle multi-source namespaced format: "goodreads:...||bookmarks:slug=X|url=...|verdict=Rave|total=5"
+	bmSection := notes
+	if strings.Contains(notes, "||") {
+		for _, part := range strings.Split(notes, "||") {
+			if strings.HasPrefix(part, "bookmarks:") {
+				bmSection = strings.TrimPrefix(part, "bookmarks:")
+				break
+			}
+		}
+	}
+	if bmSection == "" {
+		return "", 0
+	}
+	for _, part := range strings.Split(bmSection, "|") {
 		if strings.HasPrefix(part, "verdict=") {
 			verdict = strings.TrimPrefix(part, "verdict=")
 		}

@@ -610,18 +610,20 @@ func (r *Runner) Run(ctx context.Context) error {
 		uniqueMusic = append(uniqueMusic, item)
 	}
 
-	// Deduplicate book items by author+title
-	seenBooks := make(map[string]bool)
-	var uniqueBooks []ScrapedItem
-	for _, item := range bookItems {
-		key := fmt.Sprintf("%s|%s", item.ArtistName, item.Title)
-		if seenBooks[key] {
-			continue
+	// Deduplicate book items by author+title — merge sources instead of discarding
+	bookMap := make(map[string]*ScrapedItem)
+	for i := range bookItems {
+		key := fmt.Sprintf("%s|%s", bookItems[i].ArtistName, bookItems[i].Title)
+		if existing, ok := bookMap[key]; ok {
+			mergeBookItems(existing, &bookItems[i])
+		} else {
+			bookMap[key] = &bookItems[i]
 		}
-		seenBooks[key] = true
-		uniqueBooks = append(uniqueBooks, item)
 	}
-	bookItems = uniqueBooks
+	bookItems = make([]ScrapedItem, 0, len(bookMap))
+	for _, item := range bookMap {
+		bookItems = append(bookItems, *item)
+	}
 
 	// Filter out FlixPatrol items tagged as "Anime" genre when Jikan already
 	// tracks them. Items unknown to Jikan stay in the video pipeline as a
@@ -651,7 +653,7 @@ func (r *Runner) Run(ctx context.Context) error {
 	}
 
 	var processed int
-	totalItems := len(uniqueVideos) + len(animeItems) + len(uniqueMusic) + len(uniqueBooks)
+	totalItems := len(uniqueVideos) + len(animeItems) + len(uniqueMusic) + len(bookItems)
 
 	// Process video items (only when type filter matches)
 	if (wantMovie || wantTV) && len(uniqueVideos) > 0 {
@@ -1875,6 +1877,69 @@ func (r *Runner) processBookItem(ctx context.Context, item ScrapedItem, progYear
 	})
 
 	return err
+}
+
+// mergeBookItems merges a duplicate book ScrapedItem (from a different source) into
+// the primary item. Sources are combined, notes are namespaced, and the best data
+// from each source is preserved.
+func mergeBookItems(a, b *ScrapedItem) {
+	// Capture original sources before merging
+	aSrc := a.Source
+	bSrc := b.Source
+
+	// Merge sources (deduped, comma-separated)
+	seen := map[string]bool{}
+	for _, s := range strings.Split(aSrc, ",") {
+		seen[strings.TrimSpace(s)] = true
+	}
+	for _, s := range strings.Split(bSrc, ",") {
+		s = strings.TrimSpace(s)
+		if !seen[s] {
+			if a.Source != "" {
+				a.Source += ","
+			}
+			a.Source += s
+			seen[s] = true
+		}
+	}
+
+	// Merge notes with source prefix namespacing
+	var notesParts []string
+	if a.Notes != "" {
+		notesParts = append(notesParts, aSrc+":"+a.Notes)
+	}
+	if b.Notes != "" {
+		notesParts = append(notesParts, bSrc+":"+b.Notes)
+	}
+	if len(notesParts) > 0 {
+		a.Notes = strings.Join(notesParts, "||")
+	}
+
+	// Prefer higher rating data
+	if b.ImdbRating > a.ImdbRating {
+		a.ImdbRating = b.ImdbRating
+	}
+	if b.RatingsCount > a.RatingsCount {
+		a.RatingsCount = b.RatingsCount
+	}
+	if b.ShelvingsCount > a.ShelvingsCount {
+		a.ShelvingsCount = b.ShelvingsCount
+	}
+
+	// Prefer longer description
+	if len(b.Overview) > len(a.Overview) {
+		a.Overview = b.Overview
+	}
+
+	// Prefer non-empty release date
+	if a.ReleaseDate == "" && b.ReleaseDate != "" {
+		a.ReleaseDate = b.ReleaseDate
+	}
+
+	// Prefer non-empty image URL
+	if a.ImageURL == "" && b.ImageURL != "" {
+		a.ImageURL = b.ImageURL
+	}
 }
 
 // isUpgrade checks if a new release type is an upgrade over a previous download's source type.
