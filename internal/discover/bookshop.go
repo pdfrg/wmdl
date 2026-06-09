@@ -43,11 +43,6 @@ var (
 )
 
 func (p *BookshopProvider) Scrape() ([]ScrapedItem, error) {
-	year, week := p.targetYear, p.targetWeek
-	if !p.hasTarget {
-		year, week = time.Now().ISOWeek()
-	}
-
 	pageURL := "https://bookshop.org/lists/new-books"
 
 	req, err := http.NewRequest(http.MethodGet, pageURL, nil)
@@ -90,10 +85,6 @@ func (p *BookshopProvider) Scrape() ([]ScrapedItem, error) {
 			return nil, fmt.Errorf("bookshop: parse date %q: %w", releaseDateStr, err)
 		}
 	}
-
-	// The release date is typically a Tuesday (WMDL anchor).
-	// Compute the ISO week from this date to compare with target.
-	pageYear, pageWeek := releaseDate.ISOWeek()
 
 	// Extract all book title blocks (appear twice: mobile + desktop)
 	titleMatches := bsBookBlock.FindAllStringSubmatch(html, -1)
@@ -203,30 +194,30 @@ func (p *BookshopProvider) Scrape() ([]ScrapedItem, error) {
 		}
 	}
 
+	releaseDateStrFormatted := releaseDate.Format("January 2, 2006")
 	var result []ScrapedItem
-	if pageYear == year && pageWeek == week {
-		for _, b := range books {
-			info, ok := bookMap[b.Title]
-			if !ok {
-				continue
-			}
-			result = append(result, ScrapedItem{
-				Title:      b.Title,
-				ArtistName: info.Author,
-				MediaType:  model.MediaTypeBook,
-				Source:     "bookshop",
-				ImageURL:   info.ImageURL,
-				Notes:      fmt.Sprintf("url=%s|ean=%s", info.URL, info.EAN),
-				Overview:   info.Desc,
-			})
+	for _, b := range books {
+		info, ok := bookMap[b.Title]
+		if !ok {
+			continue
 		}
+		result = append(result, ScrapedItem{
+			Title:       b.Title,
+			ArtistName:  info.Author,
+			MediaType:   model.MediaTypeBook,
+			Source:      "bookshop",
+			ImageURL:    info.ImageURL,
+			Notes:       fmt.Sprintf("url=%s|ean=%s", info.URL, info.EAN),
+			Overview:    info.Desc,
+			ReleaseDate: releaseDateStrFormatted,
+		})
 	}
 
 	if len(result) == 0 {
-		return nil, fmt.Errorf("bookshop: no books found for %d-W%02d", year, week)
+		return nil, fmt.Errorf("bookshop: no books found on page")
 	}
 
-	log.Info().Int("count", len(result)).Int("year", year).Int("week", week).Msg("bookshop: found books")
+	log.Info().Int("count", len(result)).Str("release_date", releaseDateStrFormatted).Msg("bookshop: found books")
 	return result, nil
 }
 

@@ -49,6 +49,26 @@ All discovery, review, and processing is scoped to a single **WMDL atomic week**
 
 **Example:** On Thursday June 4, the most recent Tuesday is June 2, so the current atomic week is **Wed May 27 – Tue June 2**. Timeshifting 1 week for books targets **Wed May 20 – Tue May 26**.
 
+## Bookshop Week Assignment
+
+Bookshop.org only shows the current week's new releases — no archive URLs exist for past weeks. The bookshop scraper always targets the **current real ISO week** (ignoring `initial_timeshift_weeks`).
+
+Each scraped book is stored under its **actual release week**, computed from the enrichment-provided release date (falling back to the page header date). The storage week is `t.ISOWeek()` of that date — NOT the runner's target week and NOT the timeshifted book week.
+
+Since `parseWeekFlag("")` anchors to the most recent completed Tuesday:
+  - On Tuesday: the reference Tuesday is the *previous* Tuesday (offset = 7 days)
+  - On Wednesday: the reference Tuesday is *yesterday*
+
+A bookshop item discovered during a timeshifted run is stored for the week of its actual release, not the timeshifted target. It sits in `book_release_events` with no corresponding `week_state` row. The user discovers the week naturally later when `wmdl discover` is run for it.
+
+**Dedup merge:** When a different scraper later finds the same book, `GetLatestBookReleaseEventTx` finds the existing bookshop event. Instead of silently skipping, the event's `source` and `notes` fields are extended via `mergeBookItems` — e.g. `source="bookshop"` becomes `"bookshop,goodreads"`, and notes carry data from both sources (bookshop URLs + bookmarks critic summaries).
+
+**Example log on Tuesday June 9 (timeshift_weeks=1, book targets May 20-26):**
+```
+INFO[0002] found items                                   count=15 provider=bookshop
+INFO[0003] bookshop: future week pre-population           count=15 release_date=2026-06-08 stored_under=2026-W24 timeshift_weeks=1 review_from=2026-06-10
+```
+
 ## Key Dependencies
 
 - `spf13/cobra` + `spf13/viper` — CLI + config
@@ -84,3 +104,6 @@ SQLite at `~/.local/share/wmdl/wmdl.db`. Key tables: `titles`, `release_events`,
 - **Config validation** — validate config at startup with clear error messages, not mid-operation panics.
 - **Compile-time interface checks** — use `var _ Client = (*Impl)(nil)` to verify implementations satisfy interfaces.
 - **Graceful shutdown** — handle SIGINT/SIGTERM for clean exits, especially during TUI sessions.
+- **NEVER REVERT FROM GIT WITHOUT EXPLICIT USER AGREEMENT** — numerous desired changes have been lost this way.
+Do not revert, delete, or do any destructive file actions (other than on /tmp files) without ASKING FOR
+CONFIRMATION FIRST!

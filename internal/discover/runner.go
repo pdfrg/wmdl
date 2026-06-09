@@ -504,7 +504,8 @@ func (r *Runner) Run(ctx context.Context) error {
 				providers = append(providers, gr)
 			case "bookshop":
 				bs := NewBookshopProvider()
-				bs.SetWeekRange(bookScrapeYear, bookScrapeWeek)
+				realYear, realWeek := time.Now().ISOWeek()
+				bs.SetWeekRange(realYear, realWeek)
 				providers = append(providers, bs)
 			case "bookmarks":
 				bm := NewBookMarksProvider()
@@ -563,6 +564,45 @@ func (r *Runner) Run(ctx context.Context) error {
 		}
 		r.log.Info().Int("count", len(items)).Str("provider", p.Name()).Msg("found items")
 		allItems = append(allItems, items...)
+	}
+
+	// Log bookshop pre-population detail (items stored under a different week)
+	if r.cfg.MediaTypes.Books.Enabled {
+		var bsCount int
+		var bsReleaseDate string
+		for _, item := range allItems {
+			if item.Source == "bookshop" || strings.Contains(item.Source, "bookshop") {
+				if bsCount == 0 {
+					bsReleaseDate = item.ReleaseDate
+				}
+				bsCount++
+			}
+		}
+		if bsCount > 0 && bsReleaseDate != "" {
+			if d, err := time.Parse("January 2, 2006", bsReleaseDate); err == nil {
+				storeYear, storeWeek := d.ISOWeek()
+				reviewStart := tuesdayOfISOWeek(storeYear, storeWeek).AddDate(0, 0, 1)
+				ts := r.cfg.MediaTypes.Books.InitialTimeshiftWeeks
+				r.log.Info().
+					Int("count", bsCount).
+					Str("release_date", d.Format("2006-01-02")).
+					Str("stored_under", fmt.Sprintf("%d-W%02d", storeYear, storeWeek)).
+					Int("timeshift_weeks", ts).
+					Str("review_from", reviewStart.Format("2006-01-02")).
+					Msg("bookshop: future week pre-population")
+			} else if d, err := time.Parse("Jan 2, 2006", bsReleaseDate); err == nil {
+				storeYear, storeWeek := d.ISOWeek()
+				reviewStart := tuesdayOfISOWeek(storeYear, storeWeek).AddDate(0, 0, 1)
+				ts := r.cfg.MediaTypes.Books.InitialTimeshiftWeeks
+				r.log.Info().
+					Int("count", bsCount).
+					Str("release_date", d.Format("2006-01-02")).
+					Str("stored_under", fmt.Sprintf("%d-W%02d", storeYear, storeWeek)).
+					Int("timeshift_weeks", ts).
+					Str("review_from", reviewStart.Format("2006-01-02")).
+					Msg("bookshop: future week pre-population")
+			}
+		}
 	}
 
 	if len(allItems) == 0 {
@@ -1734,6 +1774,18 @@ func (r *Runner) processBookItem(ctx context.Context, item ScrapedItem, progYear
 		}
 	}
 
+	// Bookshop: fall back to page header date if enrichment didn't provide one
+	if releaseDate == "" && (item.Source == "bookshop" || strings.Contains(item.Source, "bookshop")) {
+		if item.ReleaseDate != "" {
+			for _, f := range []string{"January 2, 2006", "Jan 2, 2006"} {
+				if t, err := time.Parse(f, item.ReleaseDate); err == nil {
+					releaseDate = t.Format("2006-01-02")
+					break
+				}
+			}
+		}
+	}
+
 	// Step 4: Filter by score/rating (with override for matching genres)
 	rating := item.ImdbRating         // from Goodreads
 	ratingsCount := item.RatingsCount // from Goodreads
@@ -1771,7 +1823,7 @@ func (r *Runner) processBookItem(ctx context.Context, item ScrapedItem, progYear
 		return nil
 	}
 
-	// Filter: only keep books whose release date falls in the target ISO week
+	// Parse release date for week assignment and filtering
 	var t time.Time
 	var parseErr error
 	for _, f := range []string{"2006-01-02", "January 2, 2006", "Jan 2, 2006"} {
@@ -1780,10 +1832,20 @@ func (r *Runner) processBookItem(ctx context.Context, item ScrapedItem, progYear
 			break
 		}
 	}
-	if parseErr == nil {
+
+	// Storage week: bookshop items go to their actual release week;
+	// non-bookshop items use progYear/progWeek set below.
+	var storeYear, storeWeek int
+
+	isBookshop := item.Source == "bookshop" || strings.Contains(item.Source, "bookshop")
+
+	if isBookshop && parseErr == nil {
+		// Bookshop items: store under the book's actual release week
+		// (ignore timeshift — bookshop always returns current-week data)
+		storeYear, storeWeek = t.ISOWeek()
+	} else if !isBookshop && parseErr == nil {
+		// Non-bookshop items: apply the timeshift window filter
 		scrapeYear, scrapeWeek := r.bookTargetWeekFrom(progYear, progWeek)
-		// WMDL week runs Wednesday–Tuesday. Compute the Wed–Tue range
-		// from the scrape target's Tuesday boundary.
 		scrapeEnd := tuesdayOfISOWeek(scrapeYear, scrapeWeek)
 		scrapeStart := scrapeEnd.AddDate(0, 0, -6)
 		if t.Before(scrapeStart) || t.After(scrapeEnd) {
@@ -1849,7 +1911,29 @@ func (r *Runner) processBookItem(ctx context.Context, item ScrapedItem, progYear
 		if existing != nil {
 			switch existing.Status {
 			case model.StatusPending:
-				return nil // already in review queue
+				// Merge source and notes if a different source found this book
+				if existing.Source != item.Source {
+					existingSrcSet := make(map[string]bool)
+					for _, s := range strings.Split(existing.Source, ",") {
+						existingSrcSet[strings.TrimSpace(s)] = true
+					}
+					needsMerge := false
+					for _, s := range strings.Split(item.Source, ",") {
+						if !existingSrcSet[strings.TrimSpace(s)] {
+							needsMerge = true
+							break
+						}
+					}
+					if needsMerge {
+						a := &ScrapedItem{Source: existing.Source, Notes: existing.Notes}
+						b := &ScrapedItem{Source: item.Source, Notes: item.Notes}
+						mergeBookItems(a, b)
+						if err := r.db.UpdateBookReleaseEventSourceAndNotesTx(ctx, tx, existing.ID, a.Source, a.Notes); err != nil {
+							return fmt.Errorf("updating event source: %w", err)
+						}
+					}
+				}
+				return nil
 			case model.StatusApproved, model.StatusDownloaded:
 				return nil // already processed
 			case model.StatusRejected:
@@ -1859,6 +1943,12 @@ func (r *Runner) processBookItem(ctx context.Context, item ScrapedItem, progYear
 
 		formatPref := model.BookFormat(r.cfg.MediaTypes.Books.DefaultFormat)
 
+		// Bookshop items: store under the book's actual release week.
+		// Non-bookshop items: store under the current target week.
+		evtYear, evtWeek := progYear, progWeek
+		if isBookshop && storeYear > 0 {
+			evtYear, evtWeek = storeYear, storeWeek
+		}
 		evt := &model.BookReleaseEvent{
 			BookID:      bookID,
 			Source:      item.Source,
@@ -1866,8 +1956,8 @@ func (r *Runner) processBookItem(ctx context.Context, item ScrapedItem, progYear
 			FormatPref:  formatPref,
 			Notes:       item.Notes,
 			Status:      model.StatusPending,
-			ISOYear:     progYear,
-			ISOWeek:     progWeek,
+			ISOYear:     evtYear,
+			ISOWeek:     evtWeek,
 		}
 		if _, err := r.db.CreateBookReleaseEventTx(ctx, tx, evt); err != nil {
 			return fmt.Errorf("saving book release event: %w", err)

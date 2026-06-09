@@ -1467,6 +1467,13 @@ func (d *DB) RequeueBookReleaseEvent(ctx context.Context, id int64, source, note
 	return err
 }
 
+func (d *DB) UpdateBookReleaseEventSourceAndNotesTx(ctx context.Context, tx *sql.Tx, id int64, source, notes string) error {
+	_, err := tx.ExecContext(ctx,
+		`UPDATE book_release_events SET source = ?, notes = ? WHERE id = ?`,
+		source, notes, id)
+	return err
+}
+
 func (d *DB) ListPendingBookEventsWithBooks(ctx context.Context) ([]EventWithBook, error) {
 	rows, err := d.db.QueryContext(ctx, `
 		SELECT e.id, e.book_id, e.source, e.release_date, e.format_pref,
