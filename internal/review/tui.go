@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os/exec"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -268,6 +269,16 @@ func NewReviewTUIWithEvents(events []db.EventWithTitle, albumEvents []db.EventWi
 
 	items := make([]itemState, totalItems)
 	idx := 0
+
+	mediaTypeOrder := map[model.MediaType]int{
+		model.MediaTypeMovie: 0,
+		model.MediaTypeTV:    1,
+		model.MediaTypeAnime: 2,
+	}
+	slices.SortStableFunc(events, func(a, b db.EventWithTitle) int {
+		return mediaTypeOrder[a.Title.MediaType] - mediaTypeOrder[b.Title.MediaType]
+	})
+
 	for _, e := range events {
 		items[idx] = itemState{event: e, decision: decisionForStatus(e.Event.Status)}
 		idx++
@@ -1112,6 +1123,18 @@ func (t *TUI) rightWidth() int {
 	return right
 }
 
+func (t *TUI) availableContentLines() int {
+	reserved := 4 // header + blank + blank-before-footer + footer
+	if t.flashMsg != "" {
+		reserved += 2 // blank + flash message
+	}
+	avail := t.height - reserved
+	if avail < 5 {
+		avail = 5
+	}
+	return avail
+}
+
 func (t *TUI) shouldPadForPoster() bool {
 	switch t.posterMode {
 	case PosterOff:
@@ -1141,7 +1164,7 @@ func (t *TUI) buildReviewContent() string {
 		if t.shouldPadForPoster() {
 			posterBlock := t.buildPosterBlock()
 			posterLines := strings.Split(posterBlock, "\n")
-			musicContent := t.buildMusicContent(it.albumEvent, rw)
+			musicContent := t.buildMusicContent(it.albumEvent, rw, t.availableContentLines())
 			musicLines := strings.Split(musicContent, "\n")
 
 			maxLines := len(posterLines)
@@ -1170,7 +1193,7 @@ func (t *TUI) buildReviewContent() string {
 				}
 			}
 		} else {
-			b.WriteString(t.buildMusicContent(it.albumEvent, rw))
+			b.WriteString(t.buildMusicContent(it.albumEvent, rw, t.availableContentLines()))
 		}
 		return b.String()
 	}
@@ -1179,7 +1202,7 @@ func (t *TUI) buildReviewContent() string {
 		if t.shouldPadForPoster() {
 			posterBlock := t.buildPosterBlock()
 			posterLines := strings.Split(posterBlock, "\n")
-			bookContent := t.buildBookContent(it.bookEvent, rw)
+			bookContent := t.buildBookContent(it.bookEvent, rw, t.availableContentLines())
 			bookLines := strings.Split(bookContent, "\n")
 
 			maxLines := len(posterLines)
@@ -1208,7 +1231,7 @@ func (t *TUI) buildReviewContent() string {
 				}
 			}
 		} else {
-			b.WriteString(t.buildBookContent(it.bookEvent, rw))
+			b.WriteString(t.buildBookContent(it.bookEvent, rw, t.availableContentLines()))
 		}
 		return b.String()
 	}
@@ -1219,7 +1242,7 @@ func (t *TUI) buildReviewContent() string {
 	if t.shouldPadForPoster() {
 		posterBlock := t.buildPosterBlock()
 		posterLines := strings.Split(posterBlock, "\n")
-		rightContent := t.buildRightContent(tl, ev, rw)
+		rightContent := t.buildRightContent(tl, ev, rw, t.availableContentLines())
 		rightLines := strings.Split(rightContent, "\n")
 
 		maxLines := len(posterLines)
@@ -1248,13 +1271,13 @@ func (t *TUI) buildReviewContent() string {
 			}
 		}
 	} else {
-		b.WriteString(t.buildRightContent(tl, ev, rw))
+		b.WriteString(t.buildRightContent(tl, ev, rw, t.availableContentLines()))
 	}
 
 	return b.String()
 }
 
-func (t *TUI) buildMusicContent(ae *db.EventWithAlbum, rw int) string {
+func (t *TUI) buildMusicContent(ae *db.EventWithAlbum, rw int, maxLines int) string {
 	var b strings.Builder
 
 	al := ae.Album
@@ -1377,8 +1400,18 @@ func (t *TUI) buildMusicContent(ae *db.EventWithAlbum, rw int) string {
 
 	// Overview/blurb from AllMusic (or AOTY)
 	if al.Overview != "" {
-		b.WriteString("\n\n")
-		b.WriteString(overviewStyle.Width(rw).Render(al.Overview))
+		curLines := strings.Count(b.String(), "\n") + 1
+		remaining := maxLines - curLines - 2 // \n\n separator
+		if remaining > 0 {
+			wrapped := overviewStyle.Width(rw).Render(al.Overview)
+			lines := strings.Split(wrapped, "\n")
+			if len(lines) > remaining {
+				lines = lines[:remaining]
+				lines[remaining-1] = strings.TrimRight(lines[remaining-1], " ") + " …"
+			}
+			b.WriteString("\n\n")
+			b.WriteString(strings.Join(lines, "\n"))
+		}
 	}
 
 	// Only show artist data for MB-matched items
@@ -1445,7 +1478,7 @@ func (t *TUI) buildMusicContent(ae *db.EventWithAlbum, rw int) string {
 	return b.String()
 }
 
-func (t *TUI) buildBookContent(be *db.EventWithBook, rw int) string {
+func (t *TUI) buildBookContent(be *db.EventWithBook, rw int, maxLines int) string {
 	var b strings.Builder
 
 	book := be.Book
@@ -1590,8 +1623,18 @@ func (t *TUI) buildBookContent(be *db.EventWithBook, rw int) string {
 	}
 
 	if book.Description != "" {
-		b.WriteString("\n\n")
-		b.WriteString(overviewStyle.Width(rw).Render(book.Description))
+		curLines := strings.Count(b.String(), "\n") + 1
+		remaining := maxLines - curLines - 2 // \n\n separator
+		if remaining > 0 {
+			wrapped := overviewStyle.Width(rw).Render(book.Description)
+			lines := strings.Split(wrapped, "\n")
+			if len(lines) > remaining {
+				lines = lines[:remaining]
+				lines[remaining-1] = strings.TrimRight(lines[remaining-1], " ") + " …"
+			}
+			b.WriteString("\n\n")
+			b.WriteString(strings.Join(lines, "\n"))
+		}
 	}
 
 	return b.String()
@@ -1652,7 +1695,7 @@ func (t *TUI) posterHeight() int {
 	return h
 }
 
-func (t *TUI) buildRightContent(tl *model.Title, ev *model.ReleaseEvent, rw int) string {
+func (t *TUI) buildRightContent(tl *model.Title, ev *model.ReleaseEvent, rw int, maxLines int) string {
 	var b strings.Builder
 
 	title := tl.Title
@@ -1862,8 +1905,18 @@ func (t *TUI) buildRightContent(tl *model.Title, ev *model.ReleaseEvent, rw int)
 
 	// Overview
 	if tl.Overview != "" {
-		b.WriteString("\n\n")
-		b.WriteString(overviewStyle.Width(rw).Render(tl.Overview))
+		curLines := strings.Count(b.String(), "\n") + 1
+		remaining := maxLines - curLines - 2 // \n\n separator
+		if remaining > 0 {
+			wrapped := overviewStyle.Width(rw).Render(tl.Overview)
+			lines := strings.Split(wrapped, "\n")
+			if len(lines) > remaining {
+				lines = lines[:remaining]
+				lines[remaining-1] = strings.TrimRight(lines[remaining-1], " ") + " …"
+			}
+			b.WriteString("\n\n")
+			b.WriteString(strings.Join(lines, "\n"))
+		}
 	}
 
 	// RT URL status (skip for anime)
