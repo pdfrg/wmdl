@@ -1057,6 +1057,8 @@ func (r *Runner) processItem(ctx context.Context, item ScrapedItem, progYear, pr
 	originalLanguage := ""
 	originCountry := ""
 	tmdbTitle := ""
+	collectionID := 0
+	collectionName := ""
 	if enrich != nil {
 		tvdbID = enrich.TVDBID
 		tmdbTitle = enrich.Title
@@ -1066,6 +1068,8 @@ func (r *Runner) processItem(ctx context.Context, item ScrapedItem, progYear, pr
 		posterPath = enrich.PosterPath
 		originalLanguage = enrich.OriginalLanguage
 		originCountry = enrich.OriginCountry
+		collectionID = enrich.CollectionID
+		collectionName = enrich.CollectionName
 	}
 
 	title := &model.Title{
@@ -1090,8 +1094,8 @@ func (r *Runner) processItem(ctx context.Context, item ScrapedItem, progYear, pr
 		PosterPath:       posterPath,
 		OriginalLanguage: originalLanguage,
 		OriginCountry:    originCountry,
-		CollectionID:     enrich.CollectionID,
-		CollectionName:   enrich.CollectionName,
+		CollectionID:     collectionID,
+		CollectionName:   collectionName,
 	}
 
 	// Content filter
