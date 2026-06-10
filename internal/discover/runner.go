@@ -698,7 +698,6 @@ func (r *Runner) Run(ctx context.Context) error {
 	}
 
 	var processed int
-	totalItems := len(uniqueVideos) + len(animeItems) + len(uniqueMusic) + len(bookItems)
 
 	// Process video items (only when type filter matches)
 	if (wantMovie || wantTV) && len(uniqueVideos) > 0 {
@@ -866,13 +865,8 @@ func (r *Runner) Run(ctx context.Context) error {
 	bookEventCount, _ := r.db.CountBookReleaseEventsByWeek(ctx, progYear, progWeek)
 	totalEvents := eventCount + albumCount + bookEventCount
 	skipped := processed - totalEvents
-	if skipped > 0 {
-		r.log.Info().Msgf("Processed %d/%d items (%d events created, %d duplicate%s skipped)",
-			processed, totalItems, totalEvents, skipped, map[bool]string{true: "s", false: ""}[skipped != 1])
-	} else {
-		r.log.Info().Msgf("Processed %d/%d items (%d events created)",
-			processed, totalItems, totalEvents)
-	}
+	r.log.Info().Msgf("Created %d events from %d items (%d filtered/skipped)",
+		totalEvents, processed, skipped)
 
 	// Track week state — use target week when set, never derive from
 	// streaming items (which can be 2 months in the past).
@@ -902,8 +896,8 @@ func (r *Runner) Run(ctx context.Context) error {
 	}
 
 	// Send notification (up to 5 items, from all media types)
-	if r.notify != nil && processed > 0 {
-		msg := fmt.Sprintf("**%d new release%s** ready for review:\n", processed, map[bool]string{true: "s", false: ""}[processed != 1])
+	if r.notify != nil && totalEvents > 0 {
+		msg := fmt.Sprintf("**%d new release%s** ready for review:\n", totalEvents, map[bool]string{true: "s", false: ""}[totalEvents != 1])
 		type namedItem struct {
 			title string
 			year  int
@@ -924,7 +918,7 @@ func (r *Runner) Run(ctx context.Context) error {
 		count := 0
 		for _, item := range notifyItems {
 			if count >= 5 {
-				msg += fmt.Sprintf("\n+ %d more", processed-count)
+				msg += fmt.Sprintf("\n+ %d more", totalEvents-count)
 				break
 			}
 			if item.year > 0 {
