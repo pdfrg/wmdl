@@ -66,17 +66,30 @@ func (p *GoodreadsBlogProvider) Scrape() ([]ScrapedItem, error) {
 	monday := isoWeekToDate(year, week)
 	wedStart := monday.AddDate(0, 0, -5)
 	tueEnd := tuesdayOfISOWeek(year, week)
+	targetMonths := computeTargetMonths(wedStart, tueEnd)
 
 	var matched []grBlogPost
+	foundWeekly := false
+	foundMonths := make(map[int]bool)
+
 	for page := 1; page <= grBlogMaxPages; page++ {
 		url := fmt.Sprintf(grBlogNewsURL, page)
-		posts, done, err := p.fetchNewsPage(url, wedStart, tueEnd)
+		posts, err := p.fetchNewsPage(url, wedStart, tueEnd, targetMonths)
 		if err != nil {
 			log.Warn().Err(err).Int("page", page).Msg("goodreads_blog: news page fetch failed")
 			continue
 		}
-		matched = append(matched, posts...)
-		if done {
+
+		for _, post := range posts {
+			matched = append(matched, post)
+			if post.IsEditorsPick {
+				foundMonths[post.Month] = true
+			} else {
+				foundWeekly = true
+			}
+		}
+
+		if foundWeekly && monthsCovered(foundMonths, targetMonths) {
 			break
 		}
 	}
@@ -95,7 +108,10 @@ func (p *GoodreadsBlogProvider) Scrape() ([]ScrapedItem, error) {
 			log.Warn().Err(err).Str("url", post.URL).Msg("goodreads_blog: blog post fetch failed")
 			continue
 		}
-		pt := detectPostType(post.URL)
+		pt := grBlogPostTypeWeekly
+		if post.IsEditorsPick {
+			pt = grBlogPostTypeEditors
+		}
 		for _, b := range books {
 			notes := fmt.Sprintf(grBlogNotesFmt, pt, post.URL)
 			result = append(result, ScrapedItem{
@@ -121,8 +137,9 @@ func (p *GoodreadsBlogProvider) Scrape() ([]ScrapedItem, error) {
 }
 
 type grBlogPost struct {
-	URL  string
-	Date time.Time
+	URL           string
+	IsEditorsPick bool
+	Month         int // 0 for weekly, 1-12 for editors' picks
 }
 
 type grBlogBook struct {
@@ -133,47 +150,47 @@ type grBlogBook struct {
 	BookURL     string
 }
 
-func (p *GoodreadsBlogProvider) fetchNewsPage(url string, wedStart, tueEnd time.Time) ([]grBlogPost, bool, error) {
+func (p *GoodreadsBlogProvider) fetchNewsPage(url string, wedStart, tueEnd time.Time, targetMonths []int) ([]grBlogPost, error) {
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
-		return nil, false, err
+		return nil, err
 	}
 	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
 
 	resp, err := p.client.Do(req)
 	if err != nil {
-		return nil, false, err
+		return nil, err
 	}
 	defer resp.Body.Close()
 
 	doc, err := goquery.NewDocumentFromReader(resp.Body)
 	if err != nil {
-		return nil, false, err
+		return nil, err
 	}
 
 	now := time.Now()
 	var posts []grBlogPost
-	allOlder := true
 
 	doc.Find("div.editorialCard").Each(func(_ int, card *goquery.Selection) {
-		dateStr := strings.TrimSpace(card.Find("small.editorialCard__timestamp a").Text())
-		postDate, ok := parseNewsDate(dateStr, now)
-		if !ok {
-			return
-		}
-
-		if postDate.Before(wedStart) {
-			return
-		}
-		allOlder = false
-
-		if postDate.After(tueEnd) || postDate.Before(wedStart) {
-			return
-		}
-
 		title := strings.TrimSpace(card.Find("div.editorialCard__title a").Text())
 		if !isRelevantPost(title) {
 			return
+		}
+
+		isEditors := strings.Contains(title, "Editors Share Their")
+		postMonth := 0
+
+		if isEditors {
+			postMonth = parseMonthFromTitle(title)
+			if postMonth == 0 || !monthInSlice(postMonth, targetMonths) {
+				return
+			}
+		} else {
+			dateStr := strings.TrimSpace(card.Find("small.editorialCard__timestamp a").Text())
+			postDate, ok := parseNewsDate(dateStr, now)
+			if !ok || postDate.Before(wedStart) || postDate.After(tueEnd) {
+				return
+			}
 		}
 
 		href, ok := card.Find("div.editorialCard__title a").Attr("href")
@@ -181,10 +198,14 @@ func (p *GoodreadsBlogProvider) fetchNewsPage(url string, wedStart, tueEnd time.
 			return
 		}
 
-		posts = append(posts, grBlogPost{URL: href, Date: postDate})
+		posts = append(posts, grBlogPost{
+			URL:           href,
+			IsEditorsPick: isEditors,
+			Month:         postMonth,
+		})
 	})
 
-	return posts, allOlder, nil
+	return posts, nil
 }
 
 func (p *GoodreadsBlogProvider) fetchBlogPost(url string) ([]grBlogBook, error) {
@@ -260,14 +281,6 @@ func isRelevantPost(title string) bool {
 		strings.Contains(title, "Editors Share Their")
 }
 
-func detectPostType(postURL string) string {
-	if strings.Contains(postURL, "editors-share-their") ||
-		strings.Contains(postURL, "Editors Share Their") {
-		return grBlogPostTypeEditors
-	}
-	return grBlogPostTypeWeekly
-}
-
 func parseNewsDate(dateStr string, now time.Time) (time.Time, bool) {
 	dateStr = strings.TrimSpace(dateStr)
 	if dateStr == "" {
@@ -306,4 +319,43 @@ func normalizeURL(url string) string {
 		return "https://www.goodreads.com" + url
 	}
 	return url
+}
+
+// computeTargetMonths returns the calendar month(s) the target week spans (1 or 2).
+func computeTargetMonths(wedStart, tueEnd time.Time) []int {
+	months := []int{int(wedStart.Month())}
+	if wedStart.Month() != tueEnd.Month() {
+		months = append(months, int(tueEnd.Month()))
+	}
+	return months
+}
+
+// parseMonthFromTitle extracts the month number (1-12) from an editors' picks title.
+func parseMonthFromTitle(title string) int {
+	lower := strings.ToLower(title)
+	for m := 1; m <= 12; m++ {
+		if strings.Contains(lower, strings.ToLower(time.Month(m).String())) {
+			return m
+		}
+	}
+	return 0
+}
+
+func monthInSlice(month int, months []int) bool {
+	for _, m := range months {
+		if m == month {
+			return true
+		}
+	}
+	return false
+}
+
+// monthsCovered returns true when all target months have been found.
+func monthsCovered(found map[int]bool, target []int) bool {
+	for _, m := range target {
+		if !found[m] {
+			return false
+		}
+	}
+	return true
 }
