@@ -503,6 +503,10 @@ func (r *Runner) Run(ctx context.Context) error {
 				gr := NewGoodreadsProvider(r.debugURL, r.browserCtx)
 				gr.SetWeekRange(bookScrapeYear, bookScrapeWeek)
 				providers = append(providers, gr)
+			case "goodreads_blog":
+				grb := NewGoodreadsBlogProvider()
+				grb.SetWeekRange(bookScrapeYear, bookScrapeWeek)
+				providers = append(providers, grb)
 			case "bookshop":
 				bs := NewBookshopProvider()
 				realYear, realWeek := time.Now().ISOWeek()

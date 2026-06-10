@@ -1557,6 +1557,20 @@ func (t *TUI) buildBookContent(be *db.EventWithBook, rw int, maxLines int) strin
 		}
 	}
 
+	// Curation badge for goodreads_blog posts
+	if strings.Contains(ev.Source, "goodreads_blog") {
+		var badge string
+		if strings.Contains(ev.Notes, ":weekly|") {
+			badge = "Readers' Pick"
+		} else if strings.Contains(ev.Notes, ":editors|") {
+			badge = "Editors' Pick"
+		}
+		if badge != "" {
+			b.WriteString("\n")
+			b.WriteString(ratingsLine.Render(badge))
+		}
+	}
+
 	var detailParts []string
 	if book.ReleaseDate != "" {
 		detailParts = append(detailParts, book.ReleaseDate)
