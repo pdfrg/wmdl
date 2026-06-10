@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/rs/zerolog/log"
 	"github.com/spf13/cobra"
 
 	"github.com/pdfrg/wmdl/internal/config"
@@ -59,12 +60,53 @@ and send it to the download client.`,
 				}
 			}
 
-			targetYear, targetWeek, err := resolveWeek(cmd)
-			if err != nil {
-				return err
+			ctx := cmd.Context()
+
+			var targetYear, targetWeek int
+
+			if cmd.Flags().Changed("week") {
+				targetYear, targetWeek, err = resolveWeek(cmd)
+				if err != nil {
+					return err
+				}
+			} else {
+				curYear, curWeek, err := resolveWeek(cmd)
+				if err != nil {
+					return err
+				}
+
+				state, err := database.GetWeekState(ctx, curYear, curWeek)
+				if err != nil {
+					return fmt.Errorf("checking week state: %w", err)
+				}
+
+				switch {
+				case state != nil && state.Discovered && state.Reviewed:
+					targetYear, targetWeek = curYear, curWeek
+
+				case state != nil && state.Discovered && !state.Reviewed:
+					return fmt.Errorf("week %d-W%02d has not been reviewed yet — run 'wmdl review' first", curYear, curWeek)
+
+				default:
+					states, err := database.GetWeekStates(ctx, 12)
+					if err != nil {
+						return fmt.Errorf("loading week states: %w", err)
+					}
+					found := false
+					for _, s := range states {
+						if s.Reviewed && !s.Processed {
+							log.Info().Msgf("Week %d-W%02d not discovered yet, processing %d-W%02d instead", curYear, curWeek, s.Year, s.Week)
+							targetYear, targetWeek = s.Year, s.Week
+							found = true
+							break
+						}
+					}
+					if !found {
+						return fmt.Errorf("week %d-W%02d not discovered yet and no prior weeks ready to process", curYear, curWeek)
+					}
+				}
 			}
 
-			ctx := cmd.Context()
 			return runProcessForWeek(ctx, database, cfg, targetYear, targetWeek, typeFilter)
 		},
 	}

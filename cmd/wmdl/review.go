@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/rs/zerolog/log"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 
@@ -42,6 +43,29 @@ func newReviewCmd() *cobra.Command {
 				targetYear, targetWeek, err = resolveWeek(cmd)
 				if err != nil {
 					return err
+				}
+			} else {
+				curYear, curWeek, err := resolveWeek(cmd)
+				if err != nil {
+					return err
+				}
+
+				state, err := database.GetWeekState(cmd.Context(), curYear, curWeek)
+				if err != nil {
+					return fmt.Errorf("checking week state: %w", err)
+				}
+
+				if state != nil && state.Discovered {
+					targetYear, targetWeek = curYear, curWeek
+				} else {
+					latest, err := database.GetLatestDiscoveredWeek(cmd.Context())
+					if err != nil {
+						return fmt.Errorf("finding week state: %w", err)
+					}
+					if latest != nil {
+						log.Info().Msgf("Week %d-W%02d not discovered yet, reviewing %d-W%02d instead", curYear, curWeek, latest.Year, latest.Week)
+						targetYear, targetWeek = latest.Year, latest.Week
+					}
 				}
 			}
 
