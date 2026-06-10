@@ -64,7 +64,7 @@ func (p *GoodreadsBlogProvider) Scrape() ([]ScrapedItem, error) {
 	}
 
 	monday := isoWeekToDate(year, week)
-	wedStart := monday.AddDate(0, 0, 2)
+	wedStart := monday.AddDate(0, 0, -5)
 	tueEnd := tuesdayOfISOWeek(year, week)
 
 	var matched []grBlogPost

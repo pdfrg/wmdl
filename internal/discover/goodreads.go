@@ -70,7 +70,7 @@ func (p *GoodreadsProvider) Scrape() ([]ScrapedItem, error) {
 	// ISO week runs Wednesday–Tuesday. Determine the months of both the
 	// start (Wednesday) and end (Tuesday) of the week.
 	monday := isoWeekToDate(year, week) // Monday of ISO week
-	wed := monday.AddDate(0, 0, 2)      // Wednesday = start of week
+	wed := monday.AddDate(0, 0, -5)     // Wednesday of previous week = start of week
 	tue := tuesdayOfISOWeek(year, week) // Tuesday = end of week
 
 	wedYear, wedMonth := wed.Year(), wed.Month()
