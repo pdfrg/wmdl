@@ -557,7 +557,11 @@ func setDefaults(v *viper.Viper) {
 
 	v.SetDefault("media_types.books.enabled", true)
 	v.SetDefault("media_types.books.mode", "full")
-	v.SetDefault("media_types.books.scrapers", []string{"goodreads", "bookshop", "bookmarks"})
+	// goodreads_blog — readers weekly picks + editors monthly picks, no chromedp needed
+	// goodreads       — monthly popular_by_date (includes ratings/shelvings), requires chromedp
+	// bookshop        — curated weekly list
+	// bookmarks       — LitHub-based, more "highbrow" content
+	v.SetDefault("media_types.books.scrapers", []string{"goodreads_blog", "bookshop", "bookmarks"})
 	v.SetDefault("media_types.books.initial_timeshift_weeks", 1)
 	v.SetDefault("media_types.books.default_format", "both")
 	v.SetDefault("media_types.books.filter.min_rating", 3.5)
