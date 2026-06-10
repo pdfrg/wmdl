@@ -15,7 +15,9 @@ func newStatusCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "status",
 		Short: "Show status of recent weeks",
-		Long:  "Display which weeks have been discovered, reviewed, and processed.",
+		Long: `Display which weeks have been discovered, reviewed, and processed.
+
+Use --verbose to list items that were approved but not yet downloaded.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			dbPath, err := dataDir()
 			if err != nil {
@@ -104,6 +106,32 @@ func newStatusCmd() *cobra.Command {
 				for _, r := range remaining {
 					fmt.Fprintf(os.Stderr, "  - %s\n", r)
 				}
+
+				if verbose {
+					for _, s := range display {
+						if s.Processed && s.ApprovedCount > 0 && s.DownloadedCount < s.ApprovedCount {
+							movieEvents, _ := database.ListEventsByWeekAndStatus(ctx, s.Year, s.Week, model.StatusApproved)
+							bookEvents, _ := database.ListBookEventsByWeekAndStatus(ctx, s.Year, s.Week, model.StatusApproved)
+							albumEvents, _ := database.ListAlbumEventsByWeekAndStatus(ctx, s.Year, s.Week, model.StatusApproved)
+
+							if len(movieEvents) == 0 && len(bookEvents) == 0 && len(albumEvents) == 0 {
+								continue
+							}
+
+							fmt.Fprintf(os.Stderr, "\nRemaining items for %s:\n", weekLabel(s))
+							for _, e := range movieEvents {
+								fmt.Fprintf(os.Stderr, "  • %s (%d) [%s]\n", e.Title.Title, e.Title.Year, e.Event.Source)
+							}
+							for _, e := range bookEvents {
+								fmt.Fprintf(os.Stderr, "  • %s by %s [book]\n", e.Book.Title, e.Author.Name)
+							}
+							for _, e := range albumEvents {
+								fmt.Fprintf(os.Stderr, "  • %s by %s [album]\n", e.Album.Title, e.Artist.Name)
+							}
+						}
+					}
+				}
+
 				fmt.Fprintf(os.Stderr, "\nRun the command(s) above to search and download remaining items.\n")
 			}
 
