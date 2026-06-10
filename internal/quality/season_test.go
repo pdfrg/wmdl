@@ -58,6 +58,15 @@ func TestStripSeason(t *testing.T) {
 		{"Series: Season Twenty", "Series"},
 		{"The Show (season 1)", "The Show"},
 		{"Imperfect Women (season one)", "Imperfect Women"},
+		// Short prefix before colon: don't strip, let trailing pattern handle it
+		{"Re:Zero Season 4", "Re:Zero"},
+		{"Re:Zero -Starting Life in Another World- Season 4", "Re:Zero -Starting Life in Another World-"},
+		// Short prefix before colon, no trailing season: keep full title
+		{"Re:Zero", "Re:Zero"},
+		{"It: Chapter Two", "It: Chapter Two"},
+		// Just above threshold: prefix length 4 → still strip
+		{"Beat: Season One", "Beat"},
+		{"Bleach: Complete Season 1", "Bleach"},
 		{"No Season Here", "No Season Here"},
 		{"Movie Title 2025", "Movie Title 2025"},
 		{"New Show", "New Show"},

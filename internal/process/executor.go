@@ -1700,13 +1700,18 @@ func tvSearchQueries(stripped string, season int, res, fallback string, skipSeas
 }
 
 // sanitizeSearchQuery removes characters that can interfere with
-// Newznab/Prowlarr search: / is replaced with space, and ambiguous
-// punctuation (' " ?) is stripped to avoid operator interpretation.
+// Newznab/Prowlarr search, and normalises punctuation that differs
+// between release names and metadata titles.
 func sanitizeSearchQuery(q string) string {
 	q = strings.ReplaceAll(q, "/", " ")
 	q = strings.ReplaceAll(q, "'", "")
 	q = strings.ReplaceAll(q, "\"", "")
 	q = strings.ReplaceAll(q, "?", "")
+	q = strings.ReplaceAll(q, ":", " ")
+	q = strings.ReplaceAll(q, "½", "")
+	q = strings.ReplaceAll(q, "¼", "")
+	q = strings.ReplaceAll(q, "¾", "")
+	q = strings.ReplaceAll(q, "⁄", "")
 	return strings.TrimSpace(q)
 }
 

@@ -2172,8 +2172,10 @@ var (
 func cleanTitleForSearch(title string) string {
 	cleaned := html.UnescapeString(title)
 	cleaned = metaParen.ReplaceAllString(cleaned, "")
-	// Strip colon-suffixes that look like season descriptors
-	if parts := strings.SplitN(cleaned, ":", 2); len(parts) == 2 {
+	// Strip colon-suffixes that look like season descriptors.
+	// Only strip when the prefix is ≥4 chars to avoid reducing
+	// "Re:Zero Season 4" → "Re".
+	if parts := strings.SplitN(cleaned, ":", 2); len(parts) == 2 && len(parts[0]) >= 4 {
 		suffix := strings.ToLower(strings.TrimSpace(parts[1]))
 		if strings.Contains(suffix, "season") || strings.Contains(suffix, "complete") {
 			cleaned = parts[0]

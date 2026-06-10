@@ -93,7 +93,8 @@ func StripSeason(title string) string {
 	s = stripParenPat.ReplaceAllString(s, "")
 
 	// Remove colon-separated season: "Show: Season Fifteen" → "Show"
-	if idx := strings.Index(s, ":"); idx >= 0 {
+	// Only strip when prefix is ≥4 chars to avoid reducing "Re:Zero Season 4" → "Re".
+	if idx := strings.Index(s, ":"); idx >= 4 {
 		suffix := strings.TrimSpace(s[idx+1:])
 		lower := strings.ToLower(suffix)
 		if containsSeasonKeywords(lower) {
