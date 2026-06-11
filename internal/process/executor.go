@@ -1087,6 +1087,11 @@ func (e *Executor) ProcessPhase3Pickers(ctx context.Context) {
 		} else {
 			fmt.Fprintln(os.Stderr, "\n── Additional collection movies (from library adds) ──")
 			for _, p3m := range e.phase3Movies {
+				// Skip if already handled via pre-searched phase 3
+				if e.hasPhase3Movie(p3m.TMDBID) {
+					continue
+				}
+
 				title := p3m.Title
 				stripped := quality.StripSeason(title)
 				season := quality.ParseSeasonNumber(title)
@@ -1144,6 +1149,11 @@ func (e *Executor) ProcessPhase3Pickers(ctx context.Context) {
 		} else {
 			fmt.Fprintln(os.Stderr, "\n── Additional earlier seasons (from library adds) ──")
 			for _, p3s := range e.phase3Seasons {
+				// Skip if already handled via pre-searched phase 3
+				if e.hasPhase3Season(p3s.SeriesTitle, p3s.SeasonNumber) {
+					continue
+				}
+
 				stripped := quality.StripSeason(p3s.SeriesTitle)
 				releases, err := e.searchRelease(ctx, &model.Title{
 					Title: p3s.SeriesTitle, MediaType: p3s.MediaType,
@@ -1179,6 +1189,25 @@ func (e *Executor) ProcessPhase3Pickers(ctx context.Context) {
 
 	// Reset for next run
 	e.phase3SearchPhase = nil
+}
+
+func (e *Executor) hasPhase3Movie(tmdbID int) bool {
+	for i := range e.phase3SearchPhase {
+		if e.phase3SearchPhase[i].Candidate.TmdbID == tmdbID {
+			return true
+		}
+	}
+	return false
+}
+
+func (e *Executor) hasPhase3Season(title string, season int) bool {
+	for i := range e.phase3SearchPhase {
+		c := &e.phase3SearchPhase[i].Candidate
+		if c.Title == title && c.Season == season {
+			return true
+		}
+	}
+	return false
 }
 
 // ProcessLibraryDecisions implements Phase 2 + Phase 3, shared by both
