@@ -1992,11 +1992,16 @@ func (r *Runner) processBookItem(ctx context.Context, item ScrapedItem, progYear
 
 		formatPref := model.BookFormat(r.cfg.MediaTypes.Books.DefaultFormat)
 
-		// Bookshop items: store under the book's actual release week.
 		// Non-bookshop items: store under the current target week.
+		// Bookshop items: apply the negative timeshift so they're stored under
+		// the review week (not the raw release week), matching other scrapers.
 		evtYear, evtWeek := progYear, progWeek
 		if isBookshop && storeYear > 0 {
-			evtYear, evtWeek = storeYear, storeWeek
+			ts := r.cfg.MediaTypes.Books.InitialTimeshiftWeeks
+			if ts <= 0 {
+				ts = 1
+			}
+			evtYear, evtWeek = addISOWeekOffset(storeYear, storeWeek, -ts)
 		}
 		evt := &model.BookReleaseEvent{
 			BookID:      bookID,
