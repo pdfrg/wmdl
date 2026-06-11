@@ -79,6 +79,34 @@ const hardcoverAPI = "https://api.hardcover.app/v1/graphql"
 // Hardcover API rate limit: 60 requests/minute.
 var hcLimiter = time.NewTicker(time.Second)
 
+func (c *HardcoverClient) Ping(ctx context.Context) error {
+	body := `{"query":"query { me { id } }"}`
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, hardcoverAPI, strings.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("hardcover: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+c.apiKey)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return fmt.Errorf("hardcover unreachable: %w", err)
+	}
+	defer resp.Body.Close()
+	io.Copy(io.Discard, resp.Body)
+
+	switch resp.StatusCode {
+	case http.StatusOK:
+		return nil
+	case http.StatusUnauthorized:
+		return fmt.Errorf("hardcover: API key rejected (HTTP 401) — check hardcover.api_key in config (tokens expire annually)")
+	case http.StatusTooManyRequests:
+		return fmt.Errorf("hardcover: rate limited (HTTP 429)")
+	default:
+		return fmt.Errorf("hardcover: unexpected HTTP %d", resp.StatusCode)
+	}
+}
+
 func (c *HardcoverClient) query(ctx context.Context, query string, vars map[string]any) ([]byte, error) {
 	body := map[string]any{"query": query, "variables": vars}
 	b, err := json.Marshal(body)

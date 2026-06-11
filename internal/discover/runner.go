@@ -317,6 +317,19 @@ func (r *Runner) Run(ctx context.Context) error {
 	wantMusic := r.mediaTypeFilter == "" || r.mediaTypeFilter == model.MediaTypeMusic
 	wantBooks := r.mediaTypeFilter == "" || r.mediaTypeFilter == model.MediaTypeBook
 
+	// Pre-flight healthchecks for enrichment services.
+	// Network errors are warnings (may be transient), auth failures surface in the error text.
+	if wantMovie || wantTV {
+		if err := r.tmdb.Ping(ctx); err != nil {
+			r.log.Warn().Err(err).Msg("tmdb healthcheck failed — enrichment will be degraded")
+		}
+	}
+	if wantBooks && r.hc != nil {
+		if err := r.hc.Ping(ctx); err != nil {
+			r.log.Warn().Err(err).Msg("hardcover healthcheck failed — will fall back to OpenLibrary")
+		}
+	}
+
 	// Kick off *arr library fetches in background so they run during scraping.
 	if r.sonarr != nil {
 		r.sonarrRes = newAsyncResult[[]library.SonarrSeries]()
