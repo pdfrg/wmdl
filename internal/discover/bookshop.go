@@ -1,18 +1,21 @@
 package discover
 
 import (
+	"context"
 	"fmt"
-	"io"
-	"net/http"
 	"regexp"
 	"strings"
 	"time"
 
+	"github.com/chromedp/chromedp"
 	"github.com/pdfrg/wmdl/internal/model"
 	"github.com/rs/zerolog/log"
 )
 
 type BookshopProvider struct {
+	debugURL string
+	allocCtx context.Context
+
 	targetYear int
 	targetWeek int
 	hasTarget  bool
@@ -23,8 +26,11 @@ var (
 	_ WeekSettable    = (*BookshopProvider)(nil)
 )
 
-func NewBookshopProvider() *BookshopProvider {
-	return &BookshopProvider{}
+func NewBookshopProvider(debugURL string, allocCtx context.Context) *BookshopProvider {
+	return &BookshopProvider{
+		debugURL: debugURL,
+		allocCtx: allocCtx,
+	}
 }
 
 func (p *BookshopProvider) Name() string {
@@ -45,30 +51,10 @@ var (
 func (p *BookshopProvider) Scrape() ([]ScrapedItem, error) {
 	pageURL := "https://bookshop.org/lists/new-books"
 
-	req, err := http.NewRequest(http.MethodGet, pageURL, nil)
+	html, err := p.fetchPage(pageURL)
 	if err != nil {
-		return nil, fmt.Errorf("bookshop: request: %w", err)
+		return nil, fmt.Errorf("bookshop: %w", err)
 	}
-	req.Header.Set("User-Agent", "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36")
-
-	client := &http.Client{
-		Timeout: 30 * time.Second,
-		Transport: &http.Transport{
-			ForceAttemptHTTP2: false, // Cloudflare blocks Go HTTP/2
-		},
-	}
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("bookshop: http: %w", err)
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("bookshop: read: %w", err)
-	}
-
-	html := string(body)
 
 	// Parse the "New Releases: June 2, 2026" date from the page
 	dateMatch := bsNewReleasesDate.FindStringSubmatch(html)
@@ -219,6 +205,65 @@ func (p *BookshopProvider) Scrape() ([]ScrapedItem, error) {
 
 	log.Info().Int("count", len(result)).Str("release_date", releaseDateStrFormatted).Msg("bookshop: found books")
 	return result, nil
+}
+
+func (p *BookshopProvider) fetchPage(url string) (string, error) {
+	if p.allocCtx == nil {
+		return "", fmt.Errorf("chromedp allocator not available")
+	}
+
+	ct, cancel := chromedp.NewContext(p.allocCtx)
+	defer cancel()
+
+	pageCtx, pageCancel := context.WithTimeout(ct, 90*time.Second)
+	defer pageCancel()
+
+	log.Info().Str("provider", "bookshop").Msg("navigating to new books page")
+	if err := chromedp.Run(pageCtx,
+		chromedp.Navigate(url),
+		chromedp.WaitReady("body"),
+	); err != nil {
+		return "", fmt.Errorf("navigating to %s: %w", url, err)
+	}
+
+	// Wait for Cloudflare challenge to pass (title will be "Just a moment..." initially)
+	if err := waitForBookshopPage(ct); err != nil {
+		return "", fmt.Errorf("page load: %w", err)
+	}
+
+	var html string
+	if err := chromedp.Run(ct, chromedp.OuterHTML("html", &html)); err != nil {
+		return "", fmt.Errorf("getting page HTML: %w", err)
+	}
+
+	return html, nil
+}
+
+// waitForBookshopPage polls the page title until the real page loads
+// (Cloudflare challenge passes). Times out after 90 seconds.
+func waitForBookshopPage(ct context.Context) error {
+	waitCtx, waitCancel := context.WithTimeout(ct, 90*time.Second)
+	defer waitCancel()
+
+	var title string
+	for i := 0; i < 45; i++ {
+		if err := chromedp.Run(waitCtx, chromedp.Title(&title)); err != nil {
+			return err
+		}
+
+		if !strings.Contains(title, "Just a moment") &&
+			!strings.Contains(title, "503") &&
+			title != "" {
+			return nil
+		}
+
+		select {
+		case <-waitCtx.Done():
+			return waitCtx.Err()
+		case <-time.After(2 * time.Second):
+		}
+	}
+	return fmt.Errorf("timed out waiting for real page, last title: %q", title)
 }
 
 func extractEANFromHref(href string) string {

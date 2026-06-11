@@ -508,7 +508,11 @@ func (r *Runner) Run(ctx context.Context) error {
 				grb.SetWeekRange(bookScrapeYear, bookScrapeWeek)
 				providers = append(providers, grb)
 			case "bookshop":
-				bs := NewBookshopProvider()
+				if r.browserCtx == nil {
+					r.log.Warn().Msg("bookshop: browser unavailable, skipping")
+					continue
+				}
+				bs := NewBookshopProvider(r.debugURL, r.browserCtx)
 				realYear, realWeek := time.Now().ISOWeek()
 				bs.SetWeekRange(realYear, realWeek)
 				providers = append(providers, bs)
