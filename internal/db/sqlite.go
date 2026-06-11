@@ -1129,9 +1129,33 @@ type EventWithBook struct {
 }
 
 func (d *DB) upsertAuthor(ctx context.Context, q querier, a *model.Author) (int64, error) {
-	// When we have a real OLID, use it directly via the UNIQUE constraint.
-	// This avoids conflating same-named authors (e.g. two "John Smith"s).
+	// When we have a real OLID, prefer it for dedup, but also check by
+	// name first. Different sources (Hardcover vs Open Library) may map
+	// the same author to different Open Library IDs (e.g. duplicate OL
+	// records for the same person). Checking by name catches these
+	// cross-source duplicates.
 	if a.OLID != "" && !strings.HasPrefix(a.OLID, "_nm_") {
+		existing, err := d.getAuthorByName(ctx, q, a.Name)
+		if err != nil {
+			return 0, fmt.Errorf("checking existing author by name: %w", err)
+		}
+		if existing != nil {
+			// Found by name — update the existing row with the new
+			// OLID and data. This merges the same person across
+			// different OL records (e.g. HC's OL3173592A vs OL's
+			// own OL1412763A for Maggie O'Farrell).
+			_, err := q.ExecContext(ctx, `
+				UPDATE authors SET
+					hardcover_id = ?, olid = ?, bio = ?, born_date = ?, death_date = ?,
+					image_url = ?, identifiers = ?, links = ?
+				WHERE id = ?
+			`, a.HardcoverID, a.OLID, a.Bio, a.BornDate, a.DeathDate, a.ImageURL, a.Identifiers, a.Links, existing.ID)
+			if err != nil {
+				return 0, fmt.Errorf("updating existing author by name: %w", err)
+			}
+			return existing.ID, nil
+		}
+
 		res, err := q.ExecContext(ctx, `
 			INSERT INTO authors (hardcover_id, olid, name, bio, born_date, death_date, image_url, identifiers, links, created_at)
 			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
@@ -1271,9 +1295,13 @@ func (d *DB) upsertBook(ctx context.Context, q querier, b *model.Book) (int64, e
 			return 0, fmt.Errorf("checking existing book by isbn: %w", err)
 		}
 		if existing != nil {
+			// Preserve the existing author_id — ISBN identifies the
+			// work, not the author. Different sources may enrich with
+			// different authors for the same ISBN (e.g. duplicate
+			// OpenLibrary records), so we trust the first binding.
 			_, err := q.ExecContext(ctx, `
 				UPDATE books SET
-					author_id = ?, title = ?, subtitle = ?, hardcover_id = ?,
+					title = ?, subtitle = ?, hardcover_id = ?,
 					hardcover_slug = ?, olid = ?, isbn10 = ?, asin = ?,
 					pages = ?, audio_seconds = ?, description = ?,
 					release_date = ?, release_year = ?,
@@ -1281,7 +1309,7 @@ func (d *DB) upsertBook(ctx context.Context, q querier, b *model.Book) (int64, e
 					language = ?, publisher = ?, tags = ?, literary_type = ?,
 					series_id = ?, series_name = ?
 				WHERE id = ?
-			`, b.AuthorID, b.Title, b.Subtitle, b.HardcoverID,
+			`, b.Title, b.Subtitle, b.HardcoverID,
 				b.HardcoverSlug, b.OLID, b.ISBN10, b.ASIN,
 				b.Pages, b.AudioSeconds, b.Description,
 				b.ReleaseDate, b.ReleaseYear,
@@ -1732,6 +1760,40 @@ func (d *DB) GetArtistByName(ctx context.Context, name string) (*model.Artist, e
 }
 
 func (d *DB) UpsertAlbum(ctx context.Context, a *model.Album) (int64, error) {
+	// When MBID is known, prefer it for dedup. Different scrapers may
+	// associate the same release group with different artists (e.g. a
+	// listing page error). MBID is the canonical identifier, so if an
+	// album with the same MBID already lives under a different artist,
+	// update that row rather than creating a second album.
+	if a.MBID != "" {
+		existing, err := d.GetAlbumByMBID(ctx, a.MBID)
+		if err != nil {
+			return 0, fmt.Errorf("checking existing album by mbid: %w", err)
+		}
+		if existing != nil {
+			_, err := d.db.ExecContext(ctx, `
+				UPDATE albums SET
+					artist_id = ?, title = ?, year = ?, album_type = ?,
+					release_date = ?, genres = ?, overview = ?, poster_path = ?,
+					aoty_url = ?, allmusic_url = ?,
+					aoty_critic_score = ?, aoty_critic_count = ?,
+					aoty_user_score = ?, aoty_user_count = ?,
+					aoty_must_hear = ?, allmusic_rating = ?, mb_rating = ?
+				WHERE id = ?
+			`, a.ArtistID, a.Title, a.Year, string(a.AlbumType),
+				a.ReleaseDate, a.Genres, a.Overview, a.PosterPath,
+				a.AOTYURL, a.AllMusicURL,
+				a.AOTYCriticScore, a.AOTYCriticCount,
+				a.AOTYUserScore, a.AOTYUserCount,
+				boolToInt(a.AOTYMustHear), a.AllMusicRating, a.MBRating,
+				existing.ID)
+			if err != nil {
+				return 0, fmt.Errorf("updating existing album by mbid: %w", err)
+			}
+			return existing.ID, nil
+		}
+	}
+
 	res, err := d.db.ExecContext(ctx, `
 		INSERT INTO albums (artist_id, title, year, mbid, album_type,
 		                    release_date, genres, overview, poster_path,

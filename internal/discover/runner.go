@@ -1674,7 +1674,7 @@ func (r *Runner) processBookItem(ctx context.Context, item ScrapedItem, progYear
 		hcAuthorID = hcResult.Author.ID
 	} else if olResult != nil && olResult.Author != nil {
 		authorName = olResult.Author.Name
-		authorOLID = strings.TrimPrefix(olResult.Author.OLID, "/authors/")
+		authorOLID = olResult.Author.OLID
 
 		// Fetch author detail for bio/image (its own timeout so the OL search doesn't eat the budget)
 		if olResult.Author.OLID != "" {

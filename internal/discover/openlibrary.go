@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 )
 
@@ -192,6 +193,11 @@ func (c *OLClient) decodeSearchResult(raw json.RawMessage) (*OLBookResult, error
 		authorOLID := ""
 		if len(d.AuthorKey) > 0 {
 			authorOLID = d.AuthorKey[0]
+			// Open Library search returns author_key without the /authors/
+			// prefix, but GetAuthor and the stored olid column expect it.
+			if !strings.HasPrefix(authorOLID, "/") {
+				authorOLID = "/authors/" + authorOLID
+			}
 		}
 		res.Author = &OLAuthorResult{
 			Name: d.AuthorName[0],
