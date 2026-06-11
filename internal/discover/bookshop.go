@@ -165,6 +165,23 @@ func (p *BookshopProvider) Scrape() ([]ScrapedItem, error) {
 		}
 	}
 
+	// Fallback: extract image URLs from plain src attributes (no srcSet)
+	imgSrcBlock := regexp.MustCompile(`<img[^>]*src="([^"]+)"[^>]*alt="bookcover for ([^"]+)"`)
+	for _, m := range imgSrcBlock.FindAllStringSubmatch(html, -1) {
+		if len(m) < 3 {
+			continue
+		}
+		imgURL := m[1]
+		if imgURL == "" {
+			continue
+		}
+		altTitle := htmlUnescape(strings.TrimSpace(m[2]))
+		if e, ok := bookMap[altTitle]; ok && e.ImageURL == "" {
+			e.ImageURL = imgURL
+			bookMap[altTitle] = e
+		}
+	}
+
 	// Extract descriptions — they appear after the desktop title block
 	descPattern := regexp.MustCompile(`<h1 class="title">([^<]+)</h1>.*?<p class="text-sm lg:text-base">([^<]+)`)
 	descMatches := descPattern.FindAllStringSubmatch(html, -1)

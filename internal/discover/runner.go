@@ -1827,6 +1827,9 @@ func (r *Runner) processBookItem(ctx context.Context, item ScrapedItem, progYear
 	// Upgrade Goodreads thumbnail to 500px for faster loading and consistent quality
 	imageURL = upgradeGoodreadsImage(imageURL)
 
+	// Strip WordPress thumbnail size suffixes from bookmarks images
+	imageURL = upgradeBookmarksImage(imageURL)
+
 	// Skip books without a verified release date — we can't confirm they
 	// belong in the target week, and they'd appear in review with missing data.
 	if releaseDate == "" {
@@ -2168,8 +2171,9 @@ var (
 	trailingFmt = regexp.MustCompile(`(?i)\s+(season\s+\d+|dvd|blu-ray|4k)\s*$`)
 	// Strip AllMusic formatting suffixes like [2 CD], [Deluxe Edition], [Super Deluxe]
 	allMusicBracketRe = regexp.MustCompile(`\s*\[[^\]]*\]`)
-	goodreadsSizeRe   = regexp.MustCompile(`\._SX\d+_\.`)
-	bookYearParenRe   = regexp.MustCompile(`\s*\(\d{4}\)`)
+	goodreadsSizeRe    = regexp.MustCompile(`\._SX\d+_\.`)
+	bookmarksWpSizeRe  = regexp.MustCompile(`(-\d+x\d+)(\.[a-zA-Z]+)$`)
+	bookYearParenRe    = regexp.MustCompile(`\s*\(\d{4}\)`)
 	bookSubtitleRe    = regexp.MustCompile(`\s*[;:].*`)
 )
 
@@ -2248,6 +2252,15 @@ func upgradeGoodreadsImage(url string) string {
 		return strings.Replace(url, ".jpg", "._SX500_.jpg", 1)
 	}
 	return url
+}
+
+// upgradeBookmarksImage strips WordPress thumbnail size suffixes from bookmarks.reviews images.
+// e.g. "image-200x300.gif" → "image.gif" to get the full-size original.
+func upgradeBookmarksImage(url string) string {
+	if !strings.Contains(url, "s26162.pcdn.co") {
+		return url
+	}
+	return bookmarksWpSizeRe.ReplaceAllString(url, "$2")
 }
 
 // artistNamesMatch does a fuzzy comparison of two artist names,
