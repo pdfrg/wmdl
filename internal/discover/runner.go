@@ -283,12 +283,9 @@ func (r *Runner) cacheLibraryData(ctx context.Context) error {
 			if t.MediaType != model.MediaTypeAnime || t.TvdbID != 0 || t.MalID == 0 {
 				continue
 			}
-			matchTitle := strings.ToLower(strings.TrimSpace(t.Title))
-			if idx := strings.Index(matchTitle, "(season"); idx > 0 {
-				matchTitle = strings.TrimSpace(matchTitle[:idx])
-			}
+			matchTitle := normalizeAnimeTitle(t.Title)
 			for _, s := range sonarrSeries {
-				seriesTitle := strings.ToLower(strings.TrimSpace(s.Title))
+				seriesTitle := normalizeAnimeTitle(s.Title)
 				if matchTitle == seriesTitle || strings.HasPrefix(seriesTitle, matchTitle) || strings.HasPrefix(matchTitle, seriesTitle) {
 					r.log.Info().Str("anime", t.Title).Int("tvdb_id", s.TVDBID).Str("sonarr_title", s.Title).Msg("matched anime to Sonarr series")
 					if err := r.db.UpdateTitleTvdbID(ctx, t.ID, s.TVDBID); err != nil {
@@ -2171,11 +2168,22 @@ var (
 	trailingFmt = regexp.MustCompile(`(?i)\s+(season\s+\d+|dvd|blu-ray|4k)\s*$`)
 	// Strip AllMusic formatting suffixes like [2 CD], [Deluxe Edition], [Super Deluxe]
 	allMusicBracketRe = regexp.MustCompile(`\s*\[[^\]]*\]`)
-	goodreadsSizeRe    = regexp.MustCompile(`\._SX\d+_\.`)
-	bookmarksWpSizeRe  = regexp.MustCompile(`(-\d+x\d+)(\.[a-zA-Z]+)$`)
-	bookYearParenRe    = regexp.MustCompile(`\s*\(\d{4}\)`)
+	goodreadsSizeRe   = regexp.MustCompile(`\._SX\d+_\.`)
+	bookmarksWpSizeRe = regexp.MustCompile(`(-\d+x\d+)(\.[a-zA-Z]+)$`)
+	bookYearParenRe   = regexp.MustCompile(`\s*\(\d{4}\)`)
 	bookSubtitleRe    = regexp.MustCompile(`\s*[;:].*`)
 )
+
+// normalizeAnimeTitle normalizes an anime title for Sonarr comparison:
+// lowercases, replaces punctuation separators with spaces, collapses
+// whitespace, and strips trailing/copyrighted season suffixes.
+func normalizeAnimeTitle(s string) string {
+	v := strings.ToLower(strings.TrimSpace(s))
+	v = strings.NewReplacer("-", " ", ":", " ", ",", " ", ".", " ", "_", " ").Replace(v)
+	v = metaParen.ReplaceAllString(v, "")
+	v = trailingFmt.ReplaceAllString(v, "")
+	return strings.TrimSpace(strings.Join(strings.Fields(v), " "))
+}
 
 func cleanTitleForSearch(title string) string {
 	cleaned := html.UnescapeString(title)
