@@ -46,6 +46,7 @@ func (p *BookshopProvider) SetWeekRange(year, week int) {
 var (
 	bsNewReleasesDate = regexp.MustCompile(`New Releases:\s*(\w+\s+\d+,\s*\d{4})`)
 	bsBookBlock       = regexp.MustCompile(`<h1[^>]*class="[^"]*title[^"]*"[^>]*>(.*?)</h1>`)
+	whitespaceRe      = regexp.MustCompile(`\s+`)
 )
 
 func (p *BookshopProvider) Scrape() ([]ScrapedItem, error) {
@@ -139,22 +140,39 @@ func (p *BookshopProvider) Scrape() ([]ScrapedItem, error) {
 		bookMap[title] = entry
 	}
 
-	// Extract image URLs from srcSet attributes
+	// Extract image URLs: parse full <img> tag (multi-line safe), then extract
+	// srcSet/src and alt attributes independently (order-independent).
 	type imgEntry struct {
 		url   string
 		title string
 	}
 	var imgEntries []imgEntry
-	imgBlock := regexp.MustCompile(`<img[^>]*srcSet="([^"]+)"[^>]*alt="bookcover for ([^"]+)"`)
-	for _, m := range imgBlock.FindAllStringSubmatch(html, -1) {
-		if len(m) < 3 {
+	imgTagRe := regexp.MustCompile(`(?s)<img\s[^>]+>`)
+	srcSetRe := regexp.MustCompile(`src[Ss]et="([^"]+)"`)
+	altRe := regexp.MustCompile(`alt="bookcover\s+for\s+([^"]+)"`)
+	srcRe := regexp.MustCompile(`src="([^"]+)"`)
+
+	for _, tag := range imgTagRe.FindAllString(html, -1) {
+		altMatch := altRe.FindStringSubmatch(tag)
+		if altMatch == nil {
 			continue
 		}
-		imgURL := m[1]
-		if idx := strings.Index(imgURL, " "); idx > 0 {
-			imgURL = imgURL[:idx]
+
+		var imgURL string
+		if m := srcSetRe.FindStringSubmatch(tag); m != nil {
+			imgURL = m[1]
+			if idx := strings.Index(imgURL, " "); idx > 0 {
+				imgURL = imgURL[:idx]
+			}
+		} else if m := srcRe.FindStringSubmatch(tag); m != nil {
+			imgURL = m[1]
 		}
-		altTitle := htmlUnescape(strings.TrimSpace(m[2]))
+		if imgURL == "" {
+			continue
+		}
+
+		altTitle := htmlUnescape(strings.TrimSpace(altMatch[1]))
+		altTitle = whitespaceRe.ReplaceAllString(altTitle, " ")
 		imgEntries = append(imgEntries, imgEntry{imgURL, altTitle})
 	}
 
@@ -162,23 +180,6 @@ func (p *BookshopProvider) Scrape() ([]ScrapedItem, error) {
 		if e, ok := bookMap[ie.title]; ok {
 			e.ImageURL = ie.url
 			bookMap[ie.title] = e
-		}
-	}
-
-	// Fallback: extract image URLs from plain src attributes (no srcSet)
-	imgSrcBlock := regexp.MustCompile(`<img[^>]*src="([^"]+)"[^>]*alt="bookcover for ([^"]+)"`)
-	for _, m := range imgSrcBlock.FindAllStringSubmatch(html, -1) {
-		if len(m) < 3 {
-			continue
-		}
-		imgURL := m[1]
-		if imgURL == "" {
-			continue
-		}
-		altTitle := htmlUnescape(strings.TrimSpace(m[2]))
-		if e, ok := bookMap[altTitle]; ok && e.ImageURL == "" {
-			e.ImageURL = imgURL
-			bookMap[altTitle] = e
 		}
 	}
 

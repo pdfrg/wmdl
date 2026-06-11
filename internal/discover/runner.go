@@ -1775,7 +1775,7 @@ func (r *Runner) processBookItem(ctx context.Context, item ScrapedItem, progYear
 		if hcResult.Description != "" {
 			description = hcResult.Description
 		}
-		if hcResult.ImageURL != "" && strings.Contains(hcResult.ImageURL, "/edition/") {
+		if hcResult.ImageURL != "" {
 			imageURL = hcResult.ImageURL
 		}
 		if hcResult.ReleaseDate != "" {
