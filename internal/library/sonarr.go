@@ -99,7 +99,7 @@ func (s *SonarrClient) Ping(ctx context.Context) error {
 
 func (s *SonarrClient) retry(ctx context.Context, fn func() error) error {
 	var err error
-	delays := []time.Duration{time.Second, 3 * time.Second, 9 * time.Second}
+	delays := []time.Duration{5 * time.Second, 30 * time.Second, 120 * time.Second}
 	for i := 0; i <= len(delays); i++ {
 		if i > 0 {
 			select {

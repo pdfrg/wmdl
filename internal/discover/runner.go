@@ -157,8 +157,13 @@ func (r *Runner) cacheLibraryData(ctx context.Context) error {
 		r.log.Info().Msg("waiting for Sonarr library...")
 		series, err := r.sonarrRes.wait(ctx)
 		if err != nil {
-			r.log.Warn().Err(err).Msg("failed to fetch Sonarr library")
-		} else {
+			r.log.Warn().Err(err).Msg("background Sonarr fetch failed, retrying synchronously...")
+			series, err = r.sonarr.GetAllSeries(ctx)
+			if err != nil {
+				r.log.Warn().Err(err).Msg("failed to fetch Sonarr library")
+			}
+		}
+		if err == nil {
 			sonarrSeries = series
 			var entries []db.LibraryCache
 			for _, s := range series {
@@ -180,8 +185,13 @@ func (r *Runner) cacheLibraryData(ctx context.Context) error {
 		r.log.Info().Msg("waiting for Radarr library...")
 		movies, err := r.radarrRes.wait(ctx)
 		if err != nil {
-			r.log.Warn().Err(err).Msg("failed to fetch Radarr library")
-		} else {
+			r.log.Warn().Err(err).Msg("background Radarr fetch failed, retrying synchronously...")
+			movies, err = r.radarr.GetAllMovies(ctx)
+			if err != nil {
+				r.log.Warn().Err(err).Msg("failed to fetch Radarr library")
+			}
+		}
+		if err == nil {
 			var entries []db.LibraryCache
 			for _, m := range movies {
 				details, _ := json.Marshal(m)
@@ -202,8 +212,22 @@ func (r *Runner) cacheLibraryData(ctx context.Context) error {
 		r.log.Info().Msg("waiting for Lidarr library...")
 		result, err := r.lidarrRes.wait(ctx)
 		if err != nil {
-			r.log.Warn().Err(err).Msg("failed to fetch Lidarr library")
-		} else {
+			r.log.Warn().Err(err).Msg("background Lidarr fetch failed, retrying synchronously...")
+			artists, aErr := r.lidarr.GetAllArtists(ctx)
+			albums, alErr := r.lidarr.GetAllAlbums(ctx)
+			if aErr != nil {
+				r.log.Warn().Err(aErr).Msg("failed to fetch Lidarr artists")
+			} else if alErr != nil {
+				r.log.Warn().Err(alErr).Msg("failed to fetch Lidarr albums")
+			} else {
+				result = struct {
+					artists []library.LidarrArtist
+					albums  []library.LidarrAlbum
+				}{artists, albums}
+				err = nil
+			}
+		}
+		if err == nil {
 			{
 				var entries []db.LibraryCache
 				for _, a := range result.artists {
