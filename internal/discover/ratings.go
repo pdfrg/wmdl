@@ -156,7 +156,7 @@ func SearchRTSite(ctx context.Context, allocCtx context.Context, title string, y
 		byType = results
 	}
 
-	// Pick best by year proximity (prefer exact, then ±1)
+	// Pick best by title similarity + year proximity
 	searchTitle := strings.ToLower(title)
 	best := byType[0]
 	bestScore := scoreSearchResult(best, year, searchTitle)
@@ -165,6 +165,11 @@ func SearchRTSite(ctx context.Context, allocCtx context.Context, title string, y
 			best = r
 			bestScore = s
 		}
+	}
+
+	// Reject if even the best match has insufficient title overlap
+	if bestScore < 0 {
+		return ""
 	}
 
 	// Only return if it's a reasonable match (year within ±1, or any year if
@@ -182,20 +187,17 @@ func SearchRTSite(ctx context.Context, allocCtx context.Context, title string, y
 	return best.URL
 }
 
-// scoreSearchResult scores an RT search result by year proximity and title
-// match. Returns a large negative score if there's no meaningful title overlap
-// (at least one word longer than 3 chars in common), to prevent returning
-// completely unrelated results.
+// scoreSearchResult scores an RT search result by word-order-sensitive title
+// similarity and year proximity. Returns a large negative score if there's no
+// meaningful title overlap (insufficient LCS of significant words).
 func scoreSearchResult(r RTSearchResult, searchYear int, searchTitle string) int {
-	// Require at least one significant word overlap between search and result
-	title := strings.ToLower(r.Title)
-	if !hasWordOverlap(searchTitle, title) {
+	ts, sufficient := titleMatchScore(searchTitle, r.Title)
+	if !sufficient {
 		return -100000
 	}
 
-	score := 0
+	score := ts * 20
 
-	// Year score
 	if searchYear > 0 && r.Year > 0 {
 		diff := searchYear - r.Year
 		if diff < 0 {
@@ -203,34 +205,109 @@ func scoreSearchResult(r RTSearchResult, searchYear int, searchTitle string) int
 		}
 		switch diff {
 		case 0:
-			score += 5
+			score += 50
 		case 1:
-			score += 2
+			score += 20
+		default:
+			score -= 30
 		}
 	}
 
-	// Title match bonus
-	if strings.Contains(title, searchTitle) {
-		score += 2
+	searchLower := strings.ToLower(searchTitle)
+	resultLower := strings.ToLower(r.Title)
+	if strings.Contains(resultLower, searchLower) {
+		score += 100
 	}
 
 	return score
 }
 
-// hasWordOverlap checks if two strings share at least one word longer than 3
-// characters. This prevents RT search from matching completely unrelated titles.
-func hasWordOverlap(a, b string) bool {
-	wordsA := strings.Fields(a)
-	wordsB := strings.Fields(b)
-	for _, wa := range wordsA {
-		if len(wa) <= 3 {
+// stopWords are common English words (>3 chars) that shouldn't count as
+// significant for title matching, to prevent false positives like "this".
+var stopWords = map[string]bool{
+	"this": true, "that": true, "with": true, "from": true,
+	"what": true, "where": true, "when": true, "which": true,
+	"their": true, "they": true, "have": true, "been": true,
+	"were": true, "will": true, "would": true, "could": true,
+	"there": true, "also": true, "than": true, "then": true,
+	"very": true, "just": true, "like": true, "more": true,
+	"some": true, "them": true, "into": true, "over": true,
+	"such": true, "each": true, "other": true, "about": true,
+	"your": true,
+}
+
+var wordSplit = regexp.MustCompile(`[^a-z0-9]+`)
+
+// significantWords extracts meaningful words from a title, excluding short
+// words (≤3 chars) and common stop words.
+func significantWords(title string) []string {
+	title = strings.ToLower(title)
+	parts := wordSplit.Split(title, -1)
+	var out []string
+	for _, p := range parts {
+		if len(p) <= 3 {
 			continue
 		}
-		for _, wb := range wordsB {
-			if strings.EqualFold(wa, wb) {
-				return true
+		if stopWords[p] {
+			continue
+		}
+		out = append(out, p)
+	}
+	return out
+}
+
+// lcsLen returns the length of the longest common subsequence between two
+// string slices, preserving element order.
+func lcsLen(a, b []string) int {
+	m, n := len(a), len(b)
+	dp := make([][]int, m+1)
+	for i := range dp {
+		dp[i] = make([]int, n+1)
+	}
+	for i := 1; i <= m; i++ {
+		for j := 1; j <= n; j++ {
+			if a[i-1] == b[j-1] {
+				dp[i][j] = dp[i-1][j-1] + 1
+			} else {
+				dp[i][j] = max(dp[i-1][j], dp[i][j-1])
 			}
 		}
 	}
-	return false
+	return dp[m][n]
+}
+
+// titleMatchScore evaluates whether an RT search result title sufficiently
+// matches the search title using order-aware word matching (LCS).
+// Returns a similarity score (0-100) and whether the match is sufficient.
+//
+// Rules:
+//   - Single significant search word: sufficient if it appears in the result.
+//   - Multiple search words: sufficient if LCS ≥ 2 AND LCS ≥ 50% of search words.
+func titleMatchScore(searchTitle, resultTitle string) (int, bool) {
+	sWords := significantWords(searchTitle)
+	rWords := significantWords(resultTitle)
+
+	if len(sWords) == 0 || len(rWords) == 0 {
+		return 0, false
+	}
+
+	lcs := lcsLen(sWords, rWords)
+
+	if len(sWords) == 1 {
+		if lcs >= 1 {
+			return 100, true
+		}
+		return 0, false
+	}
+
+	ratio := float64(lcs) / float64(len(sWords))
+	sufficient := lcs >= 2 && ratio >= 0.5
+	if !sufficient {
+		return 0, false
+	}
+	score := int(ratio * 100)
+	if score > 100 {
+		score = 100
+	}
+	return score, true
 }
