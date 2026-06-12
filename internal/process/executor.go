@@ -2469,6 +2469,32 @@ func (e *Executor) PickMusicResults(ctx context.Context, results []*MusicSearchR
 	return albumResults
 }
 
+// ProcessMusicAlbumsInteractive processes music albums one at a time in
+// interactive mode: for each event, searches Prowlarr, shows picker, downloads,
+// and returns the results for library processing.
+func (e *Executor) ProcessMusicAlbumsInteractive(ctx context.Context, events []db.EventWithAlbum) []MusicAlbumResult {
+	e.log.Info().Msgf("Processing %d music album(s) interactively...", len(events))
+	var albumResults []MusicAlbumResult
+	for _, ae := range events {
+		select {
+		case <-ctx.Done():
+			return albumResults
+		default:
+		}
+		e.log.Info().Str("artist", ae.Artist.Name).Str("album", ae.Album.Title).Msgf("processing album")
+		sr, err := e.SearchMusicRelease(ctx, ae)
+		if err != nil {
+			e.log.Warn().Err(err).Str("album", ae.Album.Title).Str("artist", ae.Artist.Name).Msg("error searching music")
+			continue
+		}
+		result := e.PickMusicAlbum(ctx, sr)
+		if result != nil {
+			albumResults = append(albumResults, *result)
+		}
+	}
+	return albumResults
+}
+
 func (e *Executor) ProcessMusicAlbum(ctx context.Context, ae db.EventWithAlbum) (*MusicAlbumResult, error) {
 	sr, err := e.SearchMusicRelease(ctx, ae)
 	if err != nil {

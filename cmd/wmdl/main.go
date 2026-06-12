@@ -89,6 +89,8 @@ weekly DVD/streaming releases via Prowlarr, your preferred torrent client, and R
 	cmd.AddCommand(newStatusCmd())
 	cmd.AddCommand(newCatchupCmd())
 	cmd.AddCommand(newMarkDownloadedCmd())
+	cmd.AddCommand(searchCmd)
+	cmd.AddCommand(addCmd)
 
 	if err := cmd.Execute(); err != nil {
 		log.Fatal().Err(err).Msg("command failed")

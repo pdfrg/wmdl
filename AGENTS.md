@@ -86,6 +86,48 @@ SQLite at `~/.local/share/wmdl/wmdl.db`. Key tables: `titles`, `release_events`,
 
 `~/.config/wmdl/config.yaml` — server URLs, tokens, quality prefs.
 
+## Book Integration
+
+Books use a separate pipeline from movies/TV (separate tables: `authors`, `books`, `book_release_events`, `book_downloads`).
+
+### Book Backend Architecture
+
+Book library management is abstracted behind a `BookClient` interface (see `internal/library/book_client.go`). The `book_backend` config key selects the implementation:
+
+| Backend | Type | Ebooks | Audiobooks | Config Key |
+|---------|------|--------|------------|------------|
+| **LazyLibrarian** | *arr-style (monitored) | ✅ | ✅ | `lazylibrarian` |
+| **Shelfarr** | Request-based | ✅ | ✅ | `shelfarr` |
+| **Audiobookshelf** | Media server (scan only) | ✅ | ✅ | `audiobookshelf` |
+| **Grimmory** | Media server (BookDrop import) | ✅ | ✅ | `grimmory` |
+| **BookOrbit** | Media server (Book Dock import) | ✅ | ✅ | `bookorbit` |
+
+### LazyLibrarian Integration
+
+LL is the primary *arr-style backend for books. Key patterns:
+
+- **Adding books:** `addAuthorID?&id=AUTHORID&books=true` adds author + all books with status `Skipped` (unmonitored). No search is triggered for `Skipped` books.
+- **Triggering search:** `queueBook?&id=BOOKID&type=eBook` sets status to `Wanted`, which triggers LL to search via its configured Torznab providers (Prowlarr).
+- **Post-process (wmdl-driven search):** After wmdl downloads, rename the file to include `LL.(bookid)` in the filename, place in LL's download dir, then call `forceProcess?&dir=/path/to/downloads`. LL's Pass 2 handles `LL.(bookid)` named files.
+- **Status values:** `Wanted` (searching), `Skipped` (in library, no search), `Have` (on disk), `Snatched` (downloading), `Failed`.
+- **Series:** LL has full series support. `getSeriesMembers` returns all books in a series for Phase 3 gap checking.
+- **Dual-format:** Separate `Status` (ebook) and `AudioStatus` (audiobook) per book.
+
+### Book Client Interface
+
+```go
+type BookClient interface {
+    Ping(ctx context.Context) error
+    AddAuthor(ctx context.Context, authorID string, fetchBooks bool) (*AuthorResult, error)
+    AddBook(ctx context.Context, bookID string) (*BookResult, error)
+    QueueBook(ctx context.Context, bookID string, format BookFormat) error
+    UnqueueBook(ctx context.Context, bookID string, format BookFormat) error
+    GetBookStatus(ctx context.Context, bookID string) (*BookStatus, error)
+    GetSeriesMembers(ctx context.Context, seriesID string) ([]*SeriesMember, error)
+    TriggerImport(ctx context.Context, dir string) error
+}
+```
+
 ## Conventions
 
 - Go 1.22+ stdlib patterns

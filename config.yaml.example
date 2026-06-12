@@ -1,3 +1,8 @@
+# ─── Logging ───────────────────────────────────────────────
+# log:
+#   level: info  # debug, info, warn, error
+
+# ─── Notifications ─────────────────────────────────────────
 notifier:
   # Supported services: gotify, slack, discord, ntfy, webhook
   service: gotify
@@ -6,12 +11,21 @@ notifier:
   # Optional: override the built-in JSON template for this service.
   # Available template fields: {{.Title}}, {{.Message}}, {{.Priority}}
   # custom_template: '{"text":"{{.Title}}\n{{.Message}}"}'
+  # Send notification when batch search completes (default: false)
+  search_complete_notify: false
 
+# ─── Hardcover API (optional, enriches book metadata) ─────
+# Get a free API key at https://hardcover.app/developers
+# hardcover:
+#   api_key: ""
+
+# ─── Browser (chromedp) ───────────────────────────────────
 browser:
   binary: "brave"          # google-chrome, chromium, brave, microsoft-edge, vivaldi, opera
   debug_port: 9222
   profile: "wmd-review"
 
+# ─── Prowlarr ──────────────────────────────────────────────
 prowlarr:
   url: "http://prowlarr.local:9696"
   api_key: ""
@@ -22,16 +36,19 @@ prowlarr:
   # Set to 0 (or omit) to search all indexers for that category.
   # Uses Prowlarr API /api/v1/search with indexerIds param.
   indexer_id:
-    videos: 0   # movies + TV
-    music: 0    # music
-    anime: 0    # anime
-    books: 0    # ebooks + audiobooks
+    videos: 0       # movies + TV
+    music: 0        # music
+    anime: 0        # anime
+    ebooks: 0       # ebooks
+    audiobooks: 0   # audiobooks
 
+# ─── TMDB ──────────────────────────────────────────────────
 tmdb:
   # Get a free API key at https://www.themoviedb.org/settings/api
   api_key: ""
   access_token: ""
 
+# ─── Download Client ───────────────────────────────────────
 downloader:
   type: "qbittorrent"  # qbittorrent, transmission, deluge
   qbittorrent:
@@ -45,11 +62,16 @@ downloader:
   deluge:
     url: "http://deluge.local:8112"
     password: ""
+  # Per-media-type categories sent to the download client
   categories:
     movies: "Movies"
     tv: "TV"
     music: "Music"
+    anime: "Anime"
+    ebooks: "Ebooks"
+    audiobooks: "Audiobooks"
 
+# ─── Library Managers ─────────────────────────────────────
 library:
   radarr:
     url: "http://radarr.local:7878"
@@ -72,18 +94,89 @@ library:
     metadata_profile: "Standard"
     monitor: "all"
     monitor_new_albums: true
+  audiobookshelf:
+    url: "http://abs.local:13378"
+    api_key: ""
+    library_id: ""
+    timeout: 60
 
+# ─── Quality Preferences ───────────────────────────────────
+quality:
+  movies:
+    resolution: "2160p"             # target: 2160p, 1080p, 720p
+    prefer_hdr: true                # bonus for HDR at target resolution
+    source_priority: ["bluray", "web-dl", "webrip", "hdtv"]
+    codec_priority: ["h265", "x265", "h264", "av1"]
+  tv:
+    resolution: "1080p"
+    prefer_hdr: false
+    source_priority: ["web-dl", "bluray", "webrip", "hdtv"]
+    codec_priority: ["h265", "x265", "h264", "av1"]
+  anime:
+    resolution: "1080p"
+    prefer_hdr: false
+    source_priority: ["bluray", "web-dl", "webrip"]
+    codec_priority: ["h265", "h264", "av1"]
+  music:
+    format_priority: ["flac", "mp3", "aac"]
+    bitrate_priority: ["lossless", "320", "v0", "v2"]
+  books:
+    ebooks:
+      format_priority: ["epub", "mobi", "azw3", "pdf"]
+    audiobooks:
+      format_priority: ["m4b", "mp3", "flac", "aac", "opus"]
+
+# ─── Media Types ───────────────────────────────────────────
 media_types:
-  movies: true
-  tv: true
+  movies:
+    enabled: true
+    # Pipeline mode per media type (see config.go for full docs):
+    #   full          — wmdl searches, downloads, adds to *arr
+    #   prowlarr-grab — wmdl searches, Prowlarr handles download
+    #   arr           — add to *arr as monitored, *arr searches
+    #   auto          — like arr but auto-yes for prompts
+    #   yolo          — fully automatic, no TUI, cron-friendly
+    mode: "full"
+    scrapers: ["dvdsreleasedates", "tmdb-discover", "flixpatrol"]
+    filter:
+      # Block releases from specific origin languages
+      # blocked_languages: ["hi", "te", "ta"]
+      # Block releases from specific origin countries
+      # blocked_countries: ["IN"]
+      # Block specific genres
+      # blocked_genres: ["Documentary", "Musical"]
+      # Only allow releases from these languages (empty = allow all)
+      # allowed_languages: ["en"]
+      # Genres that skip all filter checks
+      # override_genres: ["Animation", "Documentary"]
+
+  tv:
+    enabled: true
+    mode: "full"
+    scrapers: ["dvdsreleasedates", "tmdb-discover", "flixpatrol"]
+    filter:
+      # blocked_languages: []
+      # blocked_countries: []
+      # blocked_genres: []
+      # allowed_languages: []
+      # override_genres: []
+
   music:
     enabled: true
+    mode: "full"
+    scrapers: ["albumoftheyear", "allmusic"]
     # Initial offset for the FIRST music discovery run only.
     # After the first run, music advances 1 wmdl week per run sequentially,
     # just like movies/TV. Changing this value later has NO effect unless
     # you delete the database to restart discovery.
     initial_timeshift_weeks: 1
     filter:
+      # Blocked/origin filters (same keys as movies/tv)
+      # blocked_languages: []
+      # blocked_countries: []
+      # blocked_genres: []
+      # allowed_languages: []
+      # override_genres: []
       # Standard releases (LP, EP, soundtrack): require BOTH score AND review count
       min_critic_score: 75
       min_critic_reviews: 5
@@ -92,24 +185,46 @@ media_types:
       # Special releases (live, remix, box set): score only, no review count needed
       include_must_hear: true
 
-quality:
-  movies:
-    resolution: "2160p"
-    prefer_hdr: true
-    source_priority: ["bluray", "web-dl", "webrip"]
-    codec_priority: ["h265", "h264", "av1"]  # h265 also matches x265/hevc, h264 also matches x264
-  tv:
-    resolution: "1080p"
-    prefer_hdr: false
-    source_priority: ["bluray", "web-dl", "webrip"]
-    codec_priority: ["h265", "h264", "av1"]  # h265 also matches x265/hevc, h264 also matches x264
-  music:
-    format_priority: ["flac", "mp3", "aac"]
-    bitrate_priority: ["lossless", "320", "v0", "v2"]
+  anime:
+    enabled: true
+    mode: "full"
+    min_score: 7.0          # minimum MAL score
+    min_members: 50000      # minimum MAL member count
+    # Phase B: currently-airing anime (adds directly to Sonarr, no Prowlarr search)
+    phase_b_enabled: true
+    phase_b_min_score: 7.5
+    phase_b_min_members: 100000
+    min_phase_b_results: 3
+    # If true, skip FlixPatrol items that are also found by Jikan
+    filter_flixpatrol_anime: false
+    filter:
+      # blocked_languages: []
+      # blocked_countries: []
+      # blocked_genres: []
+      # allowed_languages: []
+      # override_genres: []
 
-show_top_n: 10
-min_seeders: 3
-preferred_release_groups: []
-# process_mode: "batch" searches all items before opening TUI (recommended)
-# process_mode: "interactive" searches each item just-in-time (original behavior)
-process_mode: batch
+  books:
+    enabled: true
+    mode: "full"
+    scrapers: ["goodreads_blog", "bookshop", "bookmarks"]
+    initial_timeshift_weeks: 1
+    default_format: "both"  # ebook, audiobook, or both
+    filter:
+      # blocked_languages: []
+      # blocked_countries: []
+      # blocked_genres: []
+      # allowed_languages: []
+      # override_genres: []
+      min_rating: 3.5       # minimum average rating
+      min_ratings: 100      # minimum number of ratings
+
+# ─── Global Display & Behavior ────────────────────────────
+show_top_n: 10              # max releases shown per picker
+min_seeders: 3              # reject releases below this seeder count
+preferred_release_groups: []  # bonus score for these groups (e.g. ["NTb", "FLUX"])
+poster_mode: "auto"         # auto, kitty, text, off
+process_mode: "batch"       # batch — search all items before TUI (recommended)
+                            # interactive — search each item just-in-time
+check_collections: true     # check Radarr collections for gap movies (Phase 3)
+cache_ttl_hours: 48         # how long *arr/ABS library caches live in DB

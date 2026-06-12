@@ -661,8 +661,12 @@ func runProcessForWeek(ctx context.Context, database *db.DB, cfg *config.Config,
 	// ─── ALL PICKERS (continuous user attention) ─────────────────
 	var albumResults []process.MusicAlbumResult
 
-	if hasAlbums && (cfg.ProcessMode == "batch" || cfg.ProcessMode == "") {
-		albumResults = exec.PickMusicResults(ctx, musicResults)
+	if hasAlbums {
+		if cfg.ProcessMode == "batch" || cfg.ProcessMode == "" {
+			albumResults = exec.PickMusicResults(ctx, musicResults)
+		} else {
+			albumResults = exec.ProcessMusicAlbumsInteractive(ctx, albumEventsForProcess)
+		}
 	}
 
 	if hasBooks && (cfg.ProcessMode == "batch" || cfg.ProcessMode == "") {

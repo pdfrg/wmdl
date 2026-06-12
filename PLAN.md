@@ -239,3 +239,77 @@ preferred_release_groups: []
 - [ ] Upgrade detection (streaming → bluray)
 - [ ] Error handling, retries, logging
 - [ ] AUR package, systemd timer
+
+### Phase 7: Book Integration — LazyLibrarian Backend
+
+Goal: Replace the current "download → ABS scan" pipeline with proper *arr-style library management using LazyLibrarian.
+
+**Architecture:**
+```
+wmdl discover → review → addToLL (unmonitored) → queueBook → LL searches via Torznab/Prowlarr → download → auto-import+rename
+
+                    OR (wmdl-drives-search):
+
+wmdl discover → review → addToLL (unmonitored) → wmdl searches Prowlarr → download → forceProcess (LL imports+renames)
+```
+
+**7.1 — LazyLibrarian Client** (`internal/library/lazylibrarian.go`)
+- [ ] `LazyLibrarianClient` struct following same pattern as `radarr.go`/`sonarr.go`
+- [ ] `Ping()` — health check
+- [ ] `AddAuthor(authorID, fetchBooks)` — add author with all books as `Skipped` (unmonitored)
+- [ ] `AddBook(bookID)` — add individual book to DB as `Skipped`
+- [ ] `QueueBook(bookID, format)` — set `Wanted` (triggers LL search)
+- [ ] `UnqueueBook(bookID, format)` — set `Skipped`
+- [ ] `GetBookStatus(bookID)` — get current status (Skipped/Wanted/Have/Snatched/Failed)
+- [ ] `GetSeriesMembers(seriesID)` — series membership for Phase 3
+- [ ] `TriggerImport(dir)` — call `forceProcess` on completed download dir
+- [ ] `SearchBook(bookID, format)` — trigger specific book search
+- [ ] Compile-time interface check: `var _ Client = (*LazyLibrarianClient)(nil)`
+
+**7.2 — Config** (`internal/config/config.go`)
+- [ ] `LazyLibrarianConfig` struct: URL, APIKey, RootFolder, QualityProfile, Timeout
+- [ ] Validation rules (non-empty URL, API key)
+- [ ] Config defaults
+- [ ] `book_backend: "lazylibrarian"` top-level config
+
+**7.3 — Pipeline Integration** (`internal/process/executor.go`)
+- [ ] `addToLazyLibrarian()` — called from book processing pipeline
+- [ ] For arr/auto/yolo modes: `queueBook` after add → LL handles search
+- [ ] For interactive mode: add as `Skipped`, wmdl handles Prowlarr, then call LL import
+- [ ] Replace `UploadToAudiobookshelf()` with LL import flow
+- [ ] Keep ABS as optional scan trigger alongside LL
+
+**7.4 — Review TUI Enhancement** (`internal/review/tui.go`)
+- [ ] Display series info for book items (already stored in `Book.SeriesID`/`SeriesName`)
+- [ ] Show LL library status (Have/Wanted/Skipped) similar to ABS cache
+
+**7.5 — Phase 3: Book Series Gap Detection**
+- [ ] After adding a book, call `GetSeriesMembers` to find other books in series
+- [ ] Check if earlier books are in LL's library
+- [ ] Pre-queue search for missing series entries
+- [ ] Handle dual-format (ebook + audiobook) for series entries
+
+### Phase 8: Book Backend Interface (Flexibility)
+
+Goal: Abstract book backend behind a common interface so users can choose their preferred stack.
+
+**8.1 — Interface Definition**
+- [ ] Extract `BookClient` interface from LL implementation in `internal/library/book_client.go`
+- [ ] Methods: `Ping`, `AddAuthor`, `AddBook`, `QueueBook`, `UnqueueBook`, `GetBookStatus`, `GetSeriesMembers`, `TriggerImport`, `SearchBook`
+- [ ] Factory function: `NewBookClient(config)` based on `book_backend` type
+
+**8.2 — Shelfarr Backend** (`internal/library/shelfarr.go`)
+- [ ] Implement `BookClient` interface using Shelfarr REST API
+- [ ] Map Shelfarr request lifecycle to `BookClient` methods
+- [ ] Note: Shelfarr is request-based, not monitor-based — `QueueBook` creates a request, no "unmonitored add" concept
+
+**8.3 — Grimmory/BookOrbit Backends** (stretch)
+- [ ] Implement `BookClient` for media-server import pattern
+- [ ] `AddBook` = copy file to BookDrop/Book Dock + finalize via API
+- [ ] No search/queue functionality (media servers only)
+
+### Phase 9: Dual-Format Polish
+- [ ] Proper ebook+audiobook dual-format handling across all backends
+- [ ] Upgrade detection for books (similar to streaming→bluray)
+- [ ] Config validation per backend
+- [ ] Documentation for each supported backend

@@ -217,9 +217,26 @@ func (c *TMDBClient) discoverStream(ctx context.Context, u *url.URL, mediaType s
 	return items, nil
 }
 
+type TMDBTVSeason struct {
+	SeasonNumber int    `json:"season_number"`
+	AirDate      string `json:"air_date"`
+	EpisodeCount int    `json:"episode_count"`
+}
+
+func (s *TMDBTVSeason) AirDatePassed() bool {
+	if s.AirDate == "" {
+		return false
+	}
+	return s.AirDate <= time.Now().Format("2006-01-02")
+}
+
 type TMDBDetails struct {
-	Overview string `json:"overview"`
-	Genres   []struct {
+	Title        string `json:"title,omitempty"`
+	Name         string `json:"name,omitempty"`
+	ReleaseDate  string `json:"release_date,omitempty"`
+	FirstAirDate string `json:"first_air_date,omitempty"`
+	Overview     string `json:"overview"`
+	Genres       []struct {
 		ID   int    `json:"id"`
 		Name string `json:"name"`
 	} `json:"genres"`
@@ -232,6 +249,27 @@ type TMDBDetails struct {
 		ID   int    `json:"id"`
 		Name string `json:"name"`
 	} `json:"belongs_to_collection"`
+	Seasons []TMDBTVSeason `json:"seasons,omitempty"`
+}
+
+func (d *TMDBDetails) DisplayTitle() string {
+	if d.Title != "" {
+		return d.Title
+	}
+	return d.Name
+}
+
+func (d *TMDBDetails) DisplayYear() int {
+	date := d.ReleaseDate
+	if date == "" {
+		date = d.FirstAirDate
+	}
+	if len(date) >= 4 {
+		var y int
+		fmt.Sscanf(date[:4], "%d", &y)
+		return y
+	}
+	return 0
 }
 
 type TMDBCollectionPart struct {

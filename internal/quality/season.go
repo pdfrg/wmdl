@@ -1,6 +1,7 @@
 package quality
 
 import (
+	"fmt"
 	"regexp"
 	"strconv"
 	"strings"
@@ -30,6 +31,48 @@ var seasonWordMap = map[string]int{
 	"eleven": 11, "twelve": 12, "thirteen": 13, "fourteen": 14,
 	"fifteen": 15, "sixteen": 16, "seventeen": 17, "eighteen": 18,
 	"nineteen": 19, "twenty": 20,
+}
+
+// ParseSeasonRange parses a season flag value into a list of season numbers.
+//
+//	""        → []int{1}, false  (default to S01)
+//	"4"       → []int{4}, false
+//	"1-3"     → []int{1,2,3}, false
+//	"S01-S03" → []int{1,2,3}, false
+//	"S01-03"  → []int{1,2,3}, false
+//	"all"     → nil, true (caller should fetch from TMDB)
+func ParseSeasonRange(s string) ([]int, bool, error) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return []int{1}, false, nil
+	}
+	if strings.EqualFold(s, "all") {
+		return nil, true, nil
+	}
+
+	// Strip optional "S" prefix for range parsing
+	clean := strings.TrimLeft(strings.ToUpper(s), "S")
+
+	// Single number: "4" or "S4"
+	if n, err := strconv.Atoi(clean); err == nil && n >= 1 && n <= 100 {
+		return []int{n}, false, nil
+	}
+
+	// Range: "1-3", "01-03", "S01-S03", "S01-03"
+	parts := strings.SplitN(clean, "-", 2)
+	if len(parts) != 2 {
+		return nil, false, fmt.Errorf("invalid season format %q: use N, N-M, S01-S03, or all", s)
+	}
+	start, err1 := strconv.Atoi(strings.TrimPrefix(parts[0], "S"))
+	end, err2 := strconv.Atoi(strings.TrimPrefix(parts[1], "S"))
+	if err1 != nil || err2 != nil || start < 1 || end > 100 || start > end {
+		return nil, false, fmt.Errorf("invalid season range %q", s)
+	}
+	seasons := make([]int, 0, end-start+1)
+	for i := start; i <= end; i++ {
+		seasons = append(seasons, i)
+	}
+	return seasons, false, nil
 }
 
 func ParseSeasonNumber(title string) int {
