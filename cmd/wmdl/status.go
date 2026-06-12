@@ -120,10 +120,21 @@ Use --verbose to list items that were approved but not yet downloaded.`,
 
 							fmt.Fprintf(os.Stderr, "\nRemaining items for %s:\n", weekLabel(s))
 							for _, e := range movieEvents {
-								fmt.Fprintf(os.Stderr, "  • %s (%d) [%s]\n", e.Title.Title, e.Title.Year, e.Event.Source)
+								fmt.Fprintf(os.Stderr, "  • %s (%d) [%s]\n", e.Title.Title, e.Title.Year, e.Title.MediaType)
 							}
 							for _, e := range bookEvents {
-								fmt.Fprintf(os.Stderr, "  • %s by %s [book]\n", e.Book.Title, e.Author.Name)
+								formatLabel := string(e.Event.FormatPref)
+								if e.Event.FormatPref == model.BookFormatBoth {
+									switch {
+									case e.Event.EbookProcessed && !e.Event.AudiobookProcessed:
+										formatLabel = "audiobook"
+									case !e.Event.EbookProcessed && e.Event.AudiobookProcessed:
+										formatLabel = "ebook"
+									default:
+										formatLabel = "ebook + audiobook"
+									}
+								}
+								fmt.Fprintf(os.Stderr, "  • %s by %s [%s]\n", e.Book.Title, e.Author.Name, formatLabel)
 							}
 							for _, e := range albumEvents {
 								fmt.Fprintf(os.Stderr, "  • %s by %s [album]\n", e.Album.Title, e.Artist.Name)
