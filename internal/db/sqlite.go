@@ -1058,7 +1058,7 @@ func (d *DB) GetReleaseEventWithTitle(ctx context.Context, id int64) (*EventWith
 		FROM release_events e
 		JOIN titles t ON t.id = e.title_id
 		WHERE e.id = ?
-	`)
+	`, id)
 	var ev model.ReleaseEvent
 	var tl model.Title
 	var evRelType, evStatus, evPrevStatus, evCreated string
@@ -1654,7 +1654,7 @@ func (d *DB) GetBookReleaseEventWithBook(ctx context.Context, id int64) (*EventW
 		JOIN books b ON b.id = e.book_id
 		JOIN authors a ON a.id = b.author_id
 		WHERE e.id = ?
-	`)
+	`, id)
 	var ev model.BookReleaseEvent
 	var b model.Book
 	var a model.Author
@@ -2116,7 +2116,7 @@ func (d *DB) GetAlbumReleaseEventWithAlbum(ctx context.Context, id int64) (*Even
 		JOIN albums a ON a.id = e.album_id
 		JOIN artists ar ON ar.id = a.artist_id
 		WHERE e.id = ?
-	`)
+	`, id)
 	var ev model.AlbumReleaseEvent
 	var al model.Album
 	var ar model.Artist
