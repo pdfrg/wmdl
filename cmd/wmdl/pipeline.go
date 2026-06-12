@@ -725,16 +725,7 @@ func runProcessForWeek(ctx context.Context, database *db.DB, cfg *config.Config,
 		if bookMode == "arr" || bookMode == "auto" || bookMode == "yolo" {
 			// Already logged "skipping" in search phase
 		} else if cfg.ProcessMode == "batch" || cfg.ProcessMode == "" {
-			bookDownloaded := false
-			for _, sre := range bookResults {
-				if sre != nil && len(sre.Top) > 0 {
-					bookDownloaded = true
-					break
-				}
-			}
-			if bookDownloaded {
-				exec.UploadToAudiobookshelf(ctx)
-			}
+			// batch mode — no media server scan needed
 		} else {
 			exec.ProcessBooks(ctx, bookEventsForProcess)
 		}

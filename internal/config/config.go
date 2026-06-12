@@ -108,17 +108,9 @@ type CategoryConfig struct {
 }
 
 type LibraryConfig struct {
-	Radarr         RadarrConfig         `mapstructure:"radarr"`
-	Sonarr         SonarrConfig         `mapstructure:"sonarr"`
-	Lidarr         LidarrConfig         `mapstructure:"lidarr"`
-	Audiobookshelf AudiobookshelfConfig `mapstructure:"audiobookshelf"`
-}
-
-type AudiobookshelfConfig struct {
-	URL       string `mapstructure:"url"`
-	APIKey    string `mapstructure:"api_key"`
-	LibraryID string `mapstructure:"library_id"`
-	Timeout   int    `mapstructure:"timeout"`
+	Radarr RadarrConfig `mapstructure:"radarr"`
+	Sonarr SonarrConfig `mapstructure:"sonarr"`
+	Lidarr LidarrConfig `mapstructure:"lidarr"`
 }
 
 type LidarrConfig struct {
@@ -442,14 +434,6 @@ func (c *Config) Validate() error {
 		errs = append(errs, "library.lidarr.api_key is required when library.lidarr.url is set")
 	}
 
-	// Validate Audiobookshelf config if URL is set (partially configured)
-	if c.Library.Audiobookshelf.URL != "" && c.Library.Audiobookshelf.APIKey == "" {
-		errs = append(errs, "library.audiobookshelf.api_key is required when library.audiobookshelf.url is set")
-	}
-	if c.Library.Audiobookshelf.URL != "" && c.Library.Audiobookshelf.LibraryID == "" {
-		errs = append(errs, "library.audiobookshelf.library_id is required when library.audiobookshelf.url is set")
-	}
-
 	// Validate book config
 	if c.MediaTypes.Books.Enabled {
 		switch c.MediaTypes.Books.DefaultFormat {
@@ -570,7 +554,6 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("media_types.books.filter.min_rating", 3.5)
 	v.SetDefault("media_types.books.filter.min_ratings", 100)
 
-	v.SetDefault("library.audiobookshelf.timeout", 60)
 	v.SetDefault("hardcover.api_key", "")
 	v.SetDefault("notifier.search_complete_notify", false)
 }

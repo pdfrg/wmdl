@@ -65,7 +65,6 @@ type Runner struct {
 	radarr          *library.RadarrClient
 	sonarr          *library.SonarrClient
 	lidarr          *library.LidarrClient
-	abs             *library.AudiobookshelfClient
 	notify          notifier.Notifier
 	debugURL        string
 	allocCtx        context.Context
@@ -133,20 +132,11 @@ func NewRunner(logger zerolog.Logger, cfg *config.Config, database *db.DB, headl
 		r.lidarr = library.NewLidarrClient(cfg.Library.Lidarr.URL, cfg.Library.Lidarr.APIKey, cfg.Library.Lidarr.Timeout)
 	}
 
-	if cfg.Library.Audiobookshelf.URL != "" && cfg.Library.Audiobookshelf.APIKey != "" {
-		r.abs = library.NewAudiobookshelfClient(
-			cfg.Library.Audiobookshelf.URL,
-			cfg.Library.Audiobookshelf.APIKey,
-			cfg.Library.Audiobookshelf.LibraryID,
-			cfg.Library.Audiobookshelf.Timeout,
-		)
-	}
-
 	return r
 }
 
 func (r *Runner) cacheLibraryData(ctx context.Context) error {
-	if r.radarrRes == nil && r.sonarrRes == nil && r.lidarrRes == nil && r.abs == nil {
+	if r.radarrRes == nil && r.sonarrRes == nil && r.lidarrRes == nil {
 		return nil
 	}
 	r.log.Info().Msg("persisting library cache from background fetches")
@@ -256,40 +246,6 @@ func (r *Runner) cacheLibraryData(ctx context.Context) error {
 					r.log.Warn().Err(err).Msg("failed to save Lidarr album cache")
 				} else {
 					r.log.Info().Int("count", len(result.albums)).Msg("cached Lidarr albums")
-				}
-			}
-		}
-	}
-
-	// Cache Audiobookshelf library items by ISBN/ASIN for library status display
-	if r.abs != nil {
-		r.log.Info().Msg("fetching Audiobookshelf library...")
-		items, err := r.abs.GetLibraryItems(ctx)
-		if err != nil {
-			r.log.Warn().Err(err).Msg("failed to fetch Audiobookshelf library")
-		} else {
-			var entries []db.LibraryCache
-			for _, item := range items {
-				meta := item.Media.Metadata
-				details, _ := json.Marshal(item)
-				if meta.ISBN != "" {
-					entries = append(entries, db.LibraryCache{
-						Source: "abs", ExtID: meta.ISBN,
-						ArrID: 0, ArrTitle: meta.Title, Details: string(details),
-					})
-				}
-				if meta.ASIN != "" && meta.ASIN != meta.ISBN {
-					entries = append(entries, db.LibraryCache{
-						Source: "abs", ExtID: meta.ASIN,
-						ArrID: 0, ArrTitle: meta.Title, Details: string(details),
-					})
-				}
-			}
-			if len(entries) > 0 {
-				if err := r.db.BulkUpsertLibraryCache(ctx, entries); err != nil {
-					r.log.Warn().Err(err).Msg("failed to save Audiobookshelf library cache")
-				} else {
-					r.log.Info().Int("count", len(items)).Msg("cached Audiobookshelf library")
 				}
 			}
 		}

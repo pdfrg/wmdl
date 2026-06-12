@@ -102,11 +102,6 @@ library:
     monitor_new_albums: true
     # Request timeout in seconds (default: 300)
     # timeout: 300
-  audiobookshelf:
-    url: "http://abs.local:13378"
-    api_key: ""
-    library_id: ""
-    timeout: 60
 
 # ─── Quality Preferences ───────────────────────────────────
 quality:

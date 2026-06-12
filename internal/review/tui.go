@@ -94,20 +94,6 @@ type libInfo struct {
 
 func (it *itemState) libraryInfo(dbCache map[string]*db.LibraryCache) libInfo {
 	if it.bookEvent != nil {
-		isbnKey := "abs:" + it.bookEvent.Book.ISBN13
-		asinKey := "abs:" + it.bookEvent.Book.ASIN
-		if c := dbCache[isbnKey]; c != nil {
-			return libInfo{
-				label:  fmt.Sprintf("✓ Audiobookshelf — %s", c.ArrTitle),
-				status: libFull,
-			}
-		}
-		if c := dbCache[asinKey]; c != nil {
-			return libInfo{
-				label:  fmt.Sprintf("✓ Audiobookshelf — %s", c.ArrTitle),
-				status: libFull,
-			}
-		}
 		return libInfo{status: libNone}
 	}
 	if it.albumEvent != nil {

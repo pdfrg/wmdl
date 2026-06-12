@@ -69,7 +69,6 @@ type Executor struct {
 	radarr *library.RadarrClient
 	sonarr *library.SonarrClient
 	lidarr *library.LidarrClient
-	abs    *library.AudiobookshelfClient
 
 	Unfound           []string
 	Skipped           []string
@@ -98,16 +97,6 @@ func NewExecutor(logger zerolog.Logger, cfg *config.Config, database *db.DB) *Ex
 		"ebooks":     cfg.Prowlarr.IndexerIDs.Ebooks,
 		"audiobooks": cfg.Prowlarr.IndexerIDs.Audiobooks,
 	}
-	var abs *library.AudiobookshelfClient
-	if cfg.Library.Audiobookshelf.URL != "" && cfg.Library.Audiobookshelf.APIKey != "" {
-		abs = library.NewAudiobookshelfClient(
-			cfg.Library.Audiobookshelf.URL,
-			cfg.Library.Audiobookshelf.APIKey,
-			cfg.Library.Audiobookshelf.LibraryID,
-			cfg.Library.Audiobookshelf.Timeout,
-		)
-	}
-
 	return &Executor{
 		log:    logger,
 		cfg:    cfg,
@@ -117,7 +106,6 @@ func NewExecutor(logger zerolog.Logger, cfg *config.Config, database *db.DB) *Ex
 		radarr: radarr,
 		sonarr: sonarr,
 		lidarr: lidarr,
-		abs:    abs,
 	}
 }
 
@@ -3061,22 +3049,6 @@ func (e *Executor) addBookToClient(ctx context.Context, evt db.EventWithBook, ch
 	return added
 }
 
-func (e *Executor) UploadToAudiobookshelf(ctx context.Context) {
-	if e.abs == nil {
-		e.log.Info().Msg("Audiobookshelf not configured, skipping upload")
-		return
-	}
-
-	// For now, trigger a library scan so Audiobookshelf picks up files
-	// from the download category folders (which should be in ABS watched folders).
-	// In the future, this could use the Upload API with direct file paths.
-	if err := e.abs.TriggerScan(ctx); err != nil {
-		e.log.Warn().Err(err).Msg("triggering audiobookshelf scan")
-	} else {
-		e.log.Info().Msg("triggered audiobookshelf library scan")
-	}
-}
-
 func (e *Executor) markBookDownloaded(ctx context.Context, evt db.EventWithBook) {
 	if err := e.db.UpdateBookReleaseEventStatus(ctx, evt.Event.ID, model.StatusDownloaded); err != nil {
 		e.log.Warn().Err(err).Msg("marking book as downloaded")
@@ -3183,7 +3155,6 @@ func (e *Executor) ProcessBooks(ctx context.Context, events []db.EventWithBook) 
 
 	fmt.Fprintln(os.Stderr, "\n── Book Processing ──")
 
-	downloaded := false
 	for _, evt := range events {
 		title := evt.Book.Title
 		author := evt.Author.Name
@@ -3215,7 +3186,6 @@ func (e *Executor) ProcessBooks(ctx context.Context, events []db.EventWithBook) 
 						e.log.Warn().Err(err).Msg("marking ebook processed")
 					}
 					ebookDone = true
-					downloaded = true
 					fmt.Fprintf(os.Stderr, "  ✓ %s by %s [ebook] (%d added)\n", title, author, n)
 				} else {
 					fmt.Fprintf(os.Stderr, "  %s by %s [ebook]: skipped\n", title, author)
@@ -3242,7 +3212,6 @@ func (e *Executor) ProcessBooks(ctx context.Context, events []db.EventWithBook) 
 						e.log.Warn().Err(err).Msg("marking audiobook processed")
 					}
 					audiobookDone = true
-					downloaded = true
 					fmt.Fprintf(os.Stderr, "  ✓ %s by %s [audiobook] (%d added)\n", title, author, n)
 				} else {
 					fmt.Fprintf(os.Stderr, "  %s by %s [audiobook]: skipped\n", title, author)
@@ -3267,10 +3236,6 @@ func (e *Executor) ProcessBooks(ctx context.Context, events []db.EventWithBook) 
 		if allDone {
 			e.markBookDownloaded(ctx, evt)
 		}
-	}
-
-	if downloaded {
-		e.UploadToAudiobookshelf(ctx)
 	}
 }
 
