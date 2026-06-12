@@ -2750,6 +2750,25 @@ func bookSearchQueries(evt db.EventWithBook) []string {
 	}
 	add(evt.Book.Title)
 
+	// Fallback: strip subtitle (after ": ") — many torrents omit the subtitle
+	// so the extra words can prevent finding results.
+	mainTitle := evt.Book.Title
+	if idx := strings.Index(mainTitle, ": "); idx > 0 {
+		mainTitle = strings.TrimSpace(mainTitle[:idx])
+	}
+	if mainTitle != evt.Book.Title {
+		if evt.Author.Name != "" {
+			if evt.Book.ReleaseYear > 0 {
+				add(fmt.Sprintf("%s %s %d", evt.Author.Name, mainTitle, evt.Book.ReleaseYear))
+			}
+			add(fmt.Sprintf("%s %s", evt.Author.Name, mainTitle))
+		}
+		if evt.Book.ReleaseYear > 0 {
+			add(fmt.Sprintf("%s %d", mainTitle, evt.Book.ReleaseYear))
+		}
+		add(mainTitle)
+	}
+
 	return queries
 }
 
