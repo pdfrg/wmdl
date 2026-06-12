@@ -1,6 +1,6 @@
 # ─── Logging ───────────────────────────────────────────────
 # log:
-#   level: info  # debug, info, warn, error
+#   level: info  # debug, info, warn, error (default: info)
 
 # ─── Notifications ─────────────────────────────────────────
 notifier:
@@ -16,6 +16,8 @@ notifier:
 
 # ─── Hardcover API (optional, enriches book metadata) ─────
 # Get a free API key at https://hardcover.app/developers
+# You can use the bare token or the full "Bearer <token>" string —
+# wmdl handles both forms.
 # hardcover:
 #   api_key: ""
 
@@ -77,8 +79,10 @@ library:
     url: "http://radarr.local:7878"
     api_key: ""
     root_folder: "/media/movies"
-    quality_profile: "1080p"
+    quality_profile: "2160p"
     monitor: false
+    # Request timeout in seconds (default: 300)
+    # timeout: 300
   sonarr:
     url: "http://sonarr.local:8989"
     api_key: ""
@@ -86,6 +90,8 @@ library:
     quality_profile: "1080p"
     monitor_new_episodes: true
     season_folders: true
+    # Request timeout in seconds (default: 300)
+    # timeout: 300
   lidarr:
     url: "http://lidarr.local:8686"
     api_key: ""
@@ -94,6 +100,8 @@ library:
     metadata_profile: "Standard"
     monitor: "all"
     monitor_new_albums: true
+    # Request timeout in seconds (default: 300)
+    # timeout: 300
   audiobookshelf:
     url: "http://abs.local:13378"
     api_key: ""
@@ -105,17 +113,20 @@ quality:
   movies:
     resolution: "2160p"             # target: 2160p, 1080p, 720p
     prefer_hdr: true                # bonus for HDR at target resolution
-    source_priority: ["bluray", "web-dl", "webrip", "hdtv"]
-    codec_priority: ["h265", "x265", "h264", "av1"]
+    source_priority: ["bluray", "web-dl", "webrip"]
+    # h265 matches x265 and hevc; h264 matches x264
+    codec_priority: ["h265", "h264", "av1"]
   tv:
     resolution: "1080p"
     prefer_hdr: false
-    source_priority: ["web-dl", "bluray", "webrip", "hdtv"]
-    codec_priority: ["h265", "x265", "h264", "av1"]
+    source_priority: ["bluray", "web-dl", "webrip"]
+    # h265 matches x265 and hevc; h264 matches x264
+    codec_priority: ["h265", "h264", "av1"]
   anime:
     resolution: "1080p"
     prefer_hdr: false
     source_priority: ["bluray", "web-dl", "webrip"]
+    # h265 matches x265 and hevc; h264 matches x264
     codec_priority: ["h265", "h264", "av1"]
   music:
     format_priority: ["flac", "mp3", "aac"]

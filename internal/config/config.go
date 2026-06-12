@@ -474,6 +474,9 @@ func (c *Config) Validate() error {
 	return fmt.Errorf("config validation failed:\n  - %s", strings.Join(errs, "\n  - "))
 }
 
+// setDefaults registers programmatic default values for every config key.
+// When adding or changing defaults here, also update config.yaml.example
+// so the two stay in sync.
 func setDefaults(v *viper.Viper) {
 	v.SetDefault("browser.debug_port", 9222)
 	v.SetDefault("browser.profile", "wmd-review")
@@ -494,11 +497,11 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("quality.movies.resolution", "2160p")
 	v.SetDefault("quality.movies.prefer_hdr", true)
 	v.SetDefault("quality.movies.source_priority", []string{"bluray", "web-dl", "webrip"})
-	v.SetDefault("quality.movies.codec_priority", []string{"h265", "x265", "h264", "av1"})
+	v.SetDefault("quality.movies.codec_priority", []string{"h265", "h264", "av1"})
 	v.SetDefault("quality.tv.resolution", "1080p")
 	v.SetDefault("quality.tv.prefer_hdr", false)
 	v.SetDefault("quality.tv.source_priority", []string{"bluray", "web-dl", "webrip"})
-	v.SetDefault("quality.tv.codec_priority", []string{"h265", "x265", "h264", "av1"})
+	v.SetDefault("quality.tv.codec_priority", []string{"h265", "h264", "av1"})
 	v.SetDefault("prowlarr.timeout", 120)
 	v.SetDefault("prowlarr.indexer_id.videos", 0)
 	v.SetDefault("prowlarr.indexer_id.music", 0)
