@@ -1044,6 +1044,56 @@ func (d *DB) ListEventsByWeekAndStatus(ctx context.Context, year, week int, stat
 	return scanEventWithTitleRows(rows)
 }
 
+func (d *DB) GetReleaseEventWithTitle(ctx context.Context, id int64) (*EventWithTitle, error) {
+	row := d.db.QueryRowContext(ctx, `
+		SELECT e.id, e.title_id, e.source, e.release_type, e.release_date,
+		       e.status, e.previous_status, e.notes, e.created_at, e.iso_year, e.iso_week,
+		t.id, t.tmdb_id, t.tvdb_id, t.mal_id, t.title, t.tmdb_title, t.year, t.media_type, t.imdb_id,
+		       t.imdb_rating, t.rt_url, t.rt_critics_score, t.rt_audience_score,
+		       t.tmdb_rating, t.metacritic_score, t.us_rating,
+		       t.original_language, t.origin_country,
+		       t.yt_trailer_views, t.overview, t.genres, t.runtime, t.poster_path, t.created_at,
+		       t.anime_type, t.anime_episodes, t.anime_status, t.anime_members, t.anime_rank,
+		       t.anime_source, t.anime_studio, t.themes, t.demographics, t.streaming, t.collection_id, t.collection_name
+		FROM release_events e
+		JOIN titles t ON t.id = e.title_id
+		WHERE e.id = ?
+	`)
+	var ev model.ReleaseEvent
+	var tl model.Title
+	var evRelType, evStatus, evPrevStatus, evCreated string
+	var tlMediaType, tlCreated string
+
+	err := row.Scan(
+		&ev.ID, &ev.TitleID, &ev.Source, &evRelType, &ev.ReleaseDate,
+		&evStatus, &evPrevStatus, &ev.Notes, &evCreated, &ev.ISOYear, &ev.ISOWeek,
+		&tl.ID, &tl.TmdbID, &tl.TvdbID, &tl.MalID, &tl.Title, &tl.TmdbTitle, &tl.Year, &tlMediaType,
+		&tl.ImdbID, &tl.ImdbRating, &tl.RTURL, &tl.RTCriticsScore, &tl.RTAudienceScore,
+		&tl.TmdbRating, &tl.MetacriticScore, &tl.USRating,
+		&tl.OriginalLanguage, &tl.OriginCountry,
+		&tl.YoutubeViews, &tl.Overview, &tl.Genres, &tl.Runtime, &tl.PosterPath, &tlCreated,
+		&tl.AnimeType, &tl.AnimeEpisodes, &tl.AnimeStatus, &tl.AnimeMembers, &tl.AnimeRank,
+		&tl.AnimeSource, &tl.AnimeStudio, &tl.Themes, &tl.Demographics, &tl.Streaming,
+		&tl.CollectionID, &tl.CollectionName,
+	)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("querying release event %d: %w", id, err)
+	}
+
+	ev.ReleaseType = model.ReleaseType(evRelType)
+	ev.Status = model.ReleaseStatus(evStatus)
+	ev.PreviousStatus = model.ReleaseStatus(evPrevStatus)
+	ev.CreatedAt = evCreated
+
+	tl.MediaType = model.MediaType(tlMediaType)
+	tl.CreatedAt = tlCreated
+
+	return &EventWithTitle{Event: &ev, Title: &tl}, nil
+}
+
 func (d *DB) GetWeekProcessCounts(ctx context.Context, year, week int) (downloaded, approved int, err error) {
 	err = d.db.QueryRowContext(ctx, `
 		SELECT COUNT(*) FROM release_events
@@ -1590,6 +1640,59 @@ func (d *DB) ListBookEventsByWeekAndStatus(ctx context.Context, year, week int, 
 	return scanEventWithBookRows(rows)
 }
 
+func (d *DB) GetBookReleaseEventWithBook(ctx context.Context, id int64) (*EventWithBook, error) {
+	row := d.db.QueryRowContext(ctx, `
+		SELECT e.id, e.book_id, e.source, e.release_date, e.format_pref,
+		       e.status, e.previous_status, e.notes, e.created_at, e.iso_year, e.iso_week,
+		       e.ebook_processed, e.audiobook_processed,
+		       b.id, b.author_id, b.title, b.subtitle, b.hardcover_id, b.hardcover_slug, b.olid,
+		       b.isbn10, b.isbn13, b.asin,
+		       b.pages, b.audio_seconds, b.description, b.release_date, b.release_year,
+		       b.rating, b.ratings_count, b.shelvings_count, b.image_url, b.language, b.publisher, b.tags, b.literary_type, b.series_id, b.series_name, b.created_at,
+		       a.id, a.hardcover_id, a.olid, a.name, a.bio, a.born_date, a.death_date, a.image_url, a.identifiers, a.links, a.created_at
+		FROM book_release_events e
+		JOIN books b ON b.id = e.book_id
+		JOIN authors a ON a.id = b.author_id
+		WHERE e.id = ?
+	`)
+	var ev model.BookReleaseEvent
+	var b model.Book
+	var a model.Author
+	var evStatus, evPrevStatus, evFormatPref, evCreated string
+	var bCreated, aCreated string
+	var ebookProc, audiobookProc int
+
+	err := row.Scan(
+		&ev.ID, &ev.BookID, &ev.Source, &ev.ReleaseDate, &evFormatPref,
+		&evStatus, &evPrevStatus, &ev.Notes, &evCreated, &ev.ISOYear, &ev.ISOWeek,
+		&ebookProc, &audiobookProc,
+		&b.ID, &b.AuthorID, &b.Title, &b.Subtitle, &b.HardcoverID, &b.HardcoverSlug, &b.OLID,
+		&b.ISBN10, &b.ISBN13, &b.ASIN,
+		&b.Pages, &b.AudioSeconds, &b.Description, &b.ReleaseDate, &b.ReleaseYear,
+		&b.Rating, &b.RatingsCount, &b.ShelvingsCount, &b.ImageURL, &b.Language, &b.Publisher, &b.Tags, &b.LiteraryType, &bCreated,
+		&b.SeriesID, &b.SeriesName,
+		&a.ID, &a.HardcoverID, &a.OLID, &a.Name, &a.Bio, &a.BornDate, &a.DeathDate, &a.ImageURL, &a.Identifiers, &a.Links, &aCreated,
+	)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("querying book release event %d: %w", id, err)
+	}
+
+	ev.FormatPref = model.BookFormat(evFormatPref)
+	ev.Status = model.ReleaseStatus(evStatus)
+	ev.PreviousStatus = model.ReleaseStatus(evPrevStatus)
+	ev.CreatedAt = evCreated
+	ev.EbookProcessed = ebookProc != 0
+	ev.AudiobookProcessed = audiobookProc != 0
+
+	b.CreatedAt = bCreated
+	a.CreatedAt = aCreated
+
+	return &EventWithBook{Event: &ev, Book: &b, Author: &a}, nil
+}
+
 func (d *DB) CountBookReleaseEventsByWeek(ctx context.Context, year, week int) (int, error) {
 	var count int
 	err := d.db.QueryRowContext(ctx, `
@@ -1997,6 +2100,59 @@ func (d *DB) ListAlbumEventsByWeekAndStatus(ctx context.Context, year, week int,
 	}
 	defer rows.Close()
 	return scanEventWithAlbumRows(rows)
+}
+
+func (d *DB) GetAlbumReleaseEventWithAlbum(ctx context.Context, id int64) (*EventWithAlbum, error) {
+	row := d.db.QueryRowContext(ctx, `
+		SELECT e.id, e.album_id, e.source, e.release_date,
+		       e.status, e.previous_status, e.notes, e.created_at, e.iso_year, e.iso_week,
+		       a.id, a.artist_id, a.title, a.year, a.mbid, a.album_type,
+		       a.release_date, a.genres, a.overview, a.poster_path, a.aoty_url, a.allmusic_url,
+		       a.aoty_critic_score, a.aoty_critic_count, a.aoty_user_score, a.aoty_user_count,
+		       a.aoty_must_hear, a.allmusic_rating, a.mb_rating, a.created_at,
+		       ar.id, ar.mbid, ar.name, ar.lidarr_id,
+		       ar.country, ar.artist_type, ar.begin_date, ar.end_date, ar.begin_area, ar.area, ar.disambiguation, ar.tags, ar.genres, ar.mb_rating, ar.created_at
+		FROM album_release_events e
+		JOIN albums a ON a.id = e.album_id
+		JOIN artists ar ON ar.id = a.artist_id
+		WHERE e.id = ?
+	`)
+	var ev model.AlbumReleaseEvent
+	var al model.Album
+	var ar model.Artist
+	var evStatus, evPrevStatus, evCreated string
+	var alAlbumType, alCreated string
+	var alMustHear int
+	var arCreated string
+
+	err := row.Scan(
+		&ev.ID, &ev.AlbumID, &ev.Source, &ev.ReleaseDate,
+		&evStatus, &evPrevStatus, &ev.Notes, &evCreated, &ev.ISOYear, &ev.ISOWeek,
+		&al.ID, &al.ArtistID, &al.Title, &al.Year, &al.MBID, &alAlbumType,
+		&al.ReleaseDate, &al.Genres, &al.Overview, &al.PosterPath, &al.AOTYURL, &al.AllMusicURL,
+		&al.AOTYCriticScore, &al.AOTYCriticCount, &al.AOTYUserScore, &al.AOTYUserCount,
+		&alMustHear, &al.AllMusicRating, &al.MBRating, &alCreated,
+		&ar.ID, &ar.MBID, &ar.Name, &ar.LidarrID,
+		&ar.Country, &ar.ArtistType, &ar.BeginDate, &ar.EndDate, &ar.BeginArea, &ar.Area, &ar.Disambiguation, &ar.Tags, &ar.Genres, &ar.MBRating, &arCreated,
+	)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("querying album release event %d: %w", id, err)
+	}
+
+	ev.Status = model.ReleaseStatus(evStatus)
+	ev.PreviousStatus = model.ReleaseStatus(evPrevStatus)
+	ev.CreatedAt = evCreated
+
+	al.AlbumType = model.AlbumType(alAlbumType)
+	al.AOTYMustHear = alMustHear > 0
+	al.CreatedAt = alCreated
+
+	ar.CreatedAt = arCreated
+
+	return &EventWithAlbum{Event: &ev, Album: &al, Artist: &ar}, nil
 }
 
 func (d *DB) SetSetting(ctx context.Context, key, value string) error {
