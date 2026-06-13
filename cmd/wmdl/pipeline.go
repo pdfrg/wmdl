@@ -19,13 +19,13 @@ import (
 	"github.com/pdfrg/wmdl/internal/review"
 )
 
-func runDiscoverForWeek(ctx context.Context, database *db.DB, cfg *config.Config, year, week int, headless bool, typeFilter model.MediaType) (discovered bool, err error) {
+func runDiscoverForWeek(ctx context.Context, database *db.DB, cfg *config.Config, year, week int, headless bool, typeFilter model.MediaType, lookbackOverrides discover.LookbackOverrides) (discovered bool, err error) {
 	ws, err := database.GetWeekState(ctx, year, week)
 	if err != nil {
 		return false, fmt.Errorf("checking week state: %w", err)
 	}
 
-	if ws != nil && ws.Discovered {
+	if ws != nil && ws.Discovered && len(lookbackOverrides) == 0 {
 		fmt.Fprintf(os.Stderr, "Week %d-W%02d already discovered.\n", year, week)
 		if !promptYesNo(ctx, "Continue anyway?") {
 			return false, nil
@@ -35,6 +35,9 @@ func runDiscoverForWeek(ctx context.Context, database *db.DB, cfg *config.Config
 	runner := discover.NewRunner(log.Logger, cfg, database, headless)
 	if typeFilter != "" {
 		runner.SetMediaTypeFilter(typeFilter)
+	}
+	if len(lookbackOverrides) > 0 {
+		runner.SetLookbackOverrides(lookbackOverrides)
 	}
 	if year != 0 && week != 0 {
 		runner.SetTargetWeek(year, week)

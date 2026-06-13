@@ -52,6 +52,12 @@ func (a *asyncResult[T]) wait(ctx context.Context) (T, error) {
 	}
 }
 
+type LookbackRange struct {
+	Min, Max int
+}
+
+type LookbackOverrides map[string]LookbackRange
+
 type Runner struct {
 	log             zerolog.Logger
 	cfg             *config.Config
@@ -77,6 +83,8 @@ type Runner struct {
 	killBrave       func() error
 	mediaTypeFilter model.MediaType // "" = all types
 
+	lookbackOverrides LookbackOverrides
+
 	radarrRes *asyncResult[[]library.RadarrMovie]
 	sonarrRes *asyncResult[[]library.SonarrSeries]
 	lidarrRes *asyncResult[struct {
@@ -93,6 +101,27 @@ func (r *Runner) SetTargetWeek(year, week int) {
 	r.targetYear = year
 	r.targetWeek = week
 	r.hasTargetWeek = true
+}
+
+func (r *Runner) SetLookbackOverrides(ov LookbackOverrides) {
+	r.lookbackOverrides = ov
+}
+
+func (r *Runner) hasLookbackOverride(key string) bool {
+	if r.lookbackOverrides == nil {
+		return false
+	}
+	_, ok := r.lookbackOverrides[key]
+	return ok
+}
+
+// lookbackRange returns the (min, max) lookback range for a given key.
+// If an override is present, it takes precedence. Otherwise returns (val, val).
+func (r *Runner) lookbackRange(key string, cfgVal int) (int, int) {
+	if ov, ok := r.lookbackOverrides[key]; ok {
+		return ov.Min, ov.Max
+	}
+	return cfgVal, cfgVal
 }
 
 func NewRunner(logger zerolog.Logger, cfg *config.Config, database *db.DB, headless bool) *Runner {
@@ -424,39 +453,56 @@ func (r *Runner) Run(ctx context.Context) error {
 		for scraperName, types := range typeReq {
 			switch scraperName {
 			case "dvdsreleasedates":
-				dvd := NewDVDReleaseDates()
-				if len(types) == 1 {
-					for mt := range types {
-						dvd.SetMediaTypeFilter(mt)
+				lo, hi := r.lookbackRange("physical", r.cfg.MediaTypes.PhysicalLookbackWeeks)
+				for wk := lo; wk <= hi; wk++ {
+					dvd := NewDVDReleaseDates()
+					if len(types) == 1 {
+						for mt := range types {
+							dvd.SetMediaTypeFilter(mt)
+						}
 					}
+					if r.hasTargetWeek {
+						py, pw := addISOWeekOffset(r.targetYear, r.targetWeek, wk)
+						dvd.SetWeekRange(py, pw)
+					}
+					providers = append(providers, dvd)
 				}
-				if r.hasTargetWeek {
-					py, pw := r.physicalWeek()
-					dvd.SetWeekRange(py, pw)
-				}
-				providers = append(providers, dvd)
 
 			case "tmdb-discover", "flixpatrol":
 				for mt := range types {
-					var (
-						p   ReleaseProvider
-						ws  WeekSettable
-					)
-					switch scraperName {
-					case "tmdb-discover":
-						tmdb := NewTMDBDiscoverProvider(r.tmdb)
-						tmdb.SetMediaTypeFilter(mt)
-						p, ws = tmdb, tmdb
-					case "flixpatrol":
-						fp := NewFlixPatrolProvider(r.debugURL)
-						fp.SetMediaTypeFilter(mt)
-						p, ws = fp, fp
+					var cfgVal int
+					var key string
+					switch mt {
+					case model.MediaTypeMovie:
+						cfgVal = r.cfg.MediaTypes.Movies.StreamingLookbackWeeks
+						key = "movie"
+					case model.MediaTypeTV:
+						cfgVal = r.cfg.MediaTypes.TV.StreamingLookbackWeeks
+						key = "tv"
 					}
-					if r.hasTargetWeek {
-						sy, sw := r.streamingWeekForType(mt)
-						ws.SetWeekRange(sy, sw)
+					if cfgVal <= 0 {
+						cfgVal = 8
 					}
-					providers = append(providers, p)
+					lo, hi := r.lookbackRange(key, cfgVal)
+					for wk := lo; wk <= hi; wk++ {
+						sy, sw := addISOWeekOffset(r.targetYear, r.targetWeek, wk)
+						switch scraperName {
+						case "tmdb-discover":
+							tmdb := NewTMDBDiscoverProvider(r.tmdb)
+							tmdb.SetMediaTypeFilter(mt)
+							if r.hasTargetWeek {
+								tmdb.SetWeekRange(sy, sw)
+							}
+							providers = append(providers, tmdb)
+						case "flixpatrol":
+							fp := NewFlixPatrolProvider(r.debugURL)
+							fp.SetMediaTypeFilter(mt)
+							if r.hasTargetWeek {
+								fp.SetWeekRange(sy, sw)
+							}
+							providers = append(providers, fp)
+						}
+					}
 				}
 
 			default:
@@ -467,12 +513,15 @@ func (r *Runner) Run(ctx context.Context) error {
 
 	// Anime provider (gated on config and type filter)
 	if wantAnime && r.cfg.MediaTypes.Anime.Enabled {
-		jikan := NewJikanAnimeProvider(r.cfg.MediaTypes.Anime)
-		if r.hasTargetWeek {
-			animeYear, animeWeek := r.animeTargetWeek()
-			jikan.SetWeekRange(animeYear, animeWeek)
+		lo, hi := r.lookbackRange("anime", r.cfg.MediaTypes.Anime.LookbackWeeks)
+		for wk := lo; wk <= hi; wk++ {
+			jikan := NewJikanAnimeProvider(r.cfg.MediaTypes.Anime)
+			if r.hasTargetWeek {
+				animeYear, animeWeek := addISOWeekOffset(r.targetYear, r.targetWeek, wk)
+				jikan.SetWeekRange(animeYear, animeWeek)
+			}
+			providers = append(providers, jikan)
 		}
-		providers = append(providers, jikan)
 	}
 
 	// Book providers (gated on config and type filter)
@@ -481,66 +530,91 @@ func (r *Runner) Run(ctx context.Context) error {
 		if !r.hasTargetWeek {
 			bookYear, bookWeek = time.Now().ISOWeek()
 		}
-		bookScrapeYear, bookScrapeWeek := r.bookTargetWeekFrom(bookYear, bookWeek)
 
-		for _, name := range r.cfg.MediaTypes.Books.Scrapers {
-			switch name {
-			case "goodreads":
-				if r.browserCtx == nil {
-					r.log.Warn().Msg("goodreads: browser unavailable, skipping")
-					continue
+		hasBookshop := false
+		for _, n := range r.cfg.MediaTypes.Books.Scrapers {
+			if n == "bookshop" {
+				hasBookshop = true
+				break
+			}
+		}
+
+		bookLo, bookHi := r.lookbackRange("book", r.cfg.MediaTypes.Books.InitialTimeshiftWeeks)
+		for wk := bookLo; wk <= bookHi; wk++ {
+			scrapeYear, scrapeWeek := addISOWeekOffset(bookYear, bookWeek, wk)
+			for _, name := range r.cfg.MediaTypes.Books.Scrapers {
+				switch name {
+				case "bookshop":
+					continue // handled separately below
+				case "goodreads":
+					if r.browserCtx == nil {
+						r.log.Warn().Msg("goodreads: browser unavailable, skipping")
+						continue
+					}
+					gr := NewGoodreadsProvider(r.debugURL, r.browserCtx)
+					gr.SetWeekRange(scrapeYear, scrapeWeek)
+					providers = append(providers, gr)
+				case "goodreads_blog":
+					grb := NewGoodreadsBlogProvider()
+					grb.SetWeekRange(scrapeYear, scrapeWeek)
+					providers = append(providers, grb)
+				case "bookmarks":
+					bm := NewBookMarksProvider()
+					bm.SetWeekRange(scrapeYear, scrapeWeek)
+					providers = append(providers, bm)
+				default:
+					r.log.Warn().Str("scraper", name).Msg("unknown book scraper configured")
 				}
-				gr := NewGoodreadsProvider(r.debugURL, r.browserCtx)
-				gr.SetWeekRange(bookScrapeYear, bookScrapeWeek)
-				providers = append(providers, gr)
-			case "goodreads_blog":
-				grb := NewGoodreadsBlogProvider()
-				grb.SetWeekRange(bookScrapeYear, bookScrapeWeek)
-				providers = append(providers, grb)
-			case "bookshop":
-				if r.browserCtx == nil {
-					r.log.Warn().Msg("bookshop: browser unavailable, skipping")
-					continue
-				}
+			}
+		}
+
+		if hasBookshop {
+			if r.hasLookbackOverride("book") {
+				r.log.Info().Msg("bookshop: does not support lookback, scraping current real week as usual")
+			}
+			if r.browserCtx == nil {
+				r.log.Warn().Msg("bookshop: browser unavailable, skipping")
+			} else {
 				bs := NewBookshopProvider(r.debugURL, r.browserCtx)
 				realYear, realWeek := time.Now().ISOWeek()
 				bs.SetWeekRange(realYear, realWeek)
 				providers = append(providers, bs)
-			case "bookmarks":
-				bm := NewBookMarksProvider()
-				bm.SetWeekRange(bookScrapeYear, bookScrapeWeek)
-				providers = append(providers, bm)
-			default:
-				r.log.Warn().Str("scraper", name).Msg("unknown book scraper configured")
 			}
 		}
 	}
 
 	// Music providers (gated on config and type filter)
 	if wantMusic && r.cfg.MediaTypes.Music.Enabled {
-		for _, name := range r.cfg.MediaTypes.Music.Scrapers {
-			switch name {
-			case "albumoftheyear":
-				aoty := NewAOTYProvider(r.cfg.MediaTypes.Music.Filter)
-				if r.hasTargetWeek {
-					musicYear, musicWeek := r.musicTargetWeek()
-					aoty.SetWeekRange(musicYear, musicWeek)
-				}
-				providers = append(providers, aoty)
+		cfgVal := r.cfg.MediaTypes.Music.InitialTimeshiftWeeks
+		if cfgVal <= 0 {
+			cfgVal = 1
+		}
+		lo, hi := r.lookbackRange("music", cfgVal)
+		for wk := lo; wk <= hi; wk++ {
+			musicYear, musicWeek := addISOWeekOffset(r.targetYear, r.targetWeek, wk)
+			for _, name := range r.cfg.MediaTypes.Music.Scrapers {
+				switch name {
+				case "albumoftheyear":
+					aoty := NewAOTYProvider(r.cfg.MediaTypes.Music.Filter)
+					if r.hasTargetWeek {
+						aoty.SetWeekRange(musicYear, musicWeek)
+					}
+					providers = append(providers, aoty)
 
-			case "allmusic":
-				if r.browserCtx == nil {
-					r.log.Warn().Msg("allmusic: browser unavailable, skipping")
-					continue
-				}
-				allmusic := NewAllMusicProvider(r.debugURL, r.browserCtx)
-				if r.hasTargetWeek {
-					allmusic.SetWeekRange(r.targetYear, r.targetWeek)
-				}
-				providers = append(providers, allmusic)
+				case "allmusic":
+					if r.browserCtx == nil {
+						r.log.Warn().Msg("allmusic: browser unavailable, skipping")
+						continue
+					}
+					allmusic := NewAllMusicProvider(r.debugURL, r.browserCtx)
+					if r.hasTargetWeek {
+						allmusic.SetWeekRange(musicYear, musicWeek)
+					}
+					providers = append(providers, allmusic)
 
-			default:
-				r.log.Warn().Str("scraper", name).Msg("unknown music scraper configured")
+				default:
+					r.log.Warn().Str("scraper", name).Msg("unknown music scraper configured")
+				}
 			}
 		}
 	}
@@ -1273,68 +1347,12 @@ func (r *Runner) processItem(ctx context.Context, item ScrapedItem, progYear, pr
 	return nil
 }
 
-// animeTargetWeek returns the week to scrape for anime,
-// applying the configured LookbackWeeks offset.
-func (r *Runner) animeTargetWeek() (int, int) {
-	lookback := r.cfg.MediaTypes.Anime.LookbackWeeks
-	if lookback > 0 {
-		return addISOWeekOffset(r.targetYear, r.targetWeek, lookback)
-	}
-	return r.targetYear, r.targetWeek
-}
-
-// streamingWeekForType returns the streaming target week for the given media type,
-// applying the configured StreamingLookbackWeeks offset from the runner's target week.
-func (r *Runner) streamingWeekForType(mt model.MediaType) (int, int) {
-	var lookback int
-	switch mt {
-	case model.MediaTypeMovie:
-		lookback = r.cfg.MediaTypes.Movies.StreamingLookbackWeeks
-	case model.MediaTypeTV:
-		lookback = r.cfg.MediaTypes.TV.StreamingLookbackWeeks
-	default:
-		return r.targetYear, r.targetWeek
-	}
-	if lookback <= 0 {
-		lookback = 8
-	}
-	return addISOWeekOffset(r.targetYear, r.targetWeek, lookback)
-}
-
-// physicalWeek returns the target week for DVD/BluRay physical media,
-// applying the configured shared PhysicalLookbackWeeks offset.
-func (r *Runner) physicalWeek() (int, int) {
-	lookback := r.cfg.MediaTypes.PhysicalLookbackWeeks
-	if lookback <= 0 {
-		return r.targetYear, r.targetWeek
-	}
-	return addISOWeekOffset(r.targetYear, r.targetWeek, lookback)
-}
-
 // addISOWeekOffset adds an offset (positive = past) to an ISO week/year pair,
 // properly wrapping across year boundaries.
 func addISOWeekOffset(year, week, offset int) (int, int) {
 	t := tuesdayOfISOWeek(year, week)
 	t = t.AddDate(0, 0, -7*offset)
 	return t.ISOWeek()
-}
-
-// musicTargetWeek returns the release week to scrape for music.
-// Applies the configured InitialTimeshiftWeeks offset from the runner's
-// target week. Consistent with video/movie/TV physical media discovery.
-func (r *Runner) musicTargetWeek() (int, int) {
-	timeshiftWeeks := r.cfg.MediaTypes.Music.InitialTimeshiftWeeks
-	if timeshiftWeeks <= 0 {
-		timeshiftWeeks = 1
-	}
-
-	return addISOWeekOffset(r.targetYear, r.targetWeek, timeshiftWeeks)
-}
-
-// bookTargetWeek returns the release week to scrape for books,
-// offset from the runner's target week by InitialTimeshiftWeeks.
-func (r *Runner) bookTargetWeek() (int, int) {
-	return r.bookTargetWeekFrom(r.targetYear, r.targetWeek)
 }
 
 // bookTargetWeekFrom applies the book timeshift to an arbitrary year/week.
