@@ -164,3 +164,97 @@ func TestFilterRelease(t *testing.T) {
 		})
 	}
 }
+
+func TestParseGroup(t *testing.T) {
+	tests := []struct {
+		raw  string
+		want string
+	}{
+		// Dash-separated group (existing behavior)
+		{"Show.1080p.WEB-DL.x264-GROUP", "GROUP"},
+		// Space-separated group after resolution/source/codec
+		{"Show.1080p.WEB-DL.x265.5.1 BONE", "BONE"},
+		// Space-separated group without audio channels
+		{"Movie.2025.1080p.WEB-DL.x264 BONE", "BONE"},
+		// Dash-separated group with brackets (anime)
+		{"Show.1080p.WEB-DL.x264-GROUP[1]", "GROUP[1]"},
+		// No group — ends with codec
+		{"Show.1080p.WEB-DL.x264", ""},
+		// No group — ends with known non-group word (HEVC)
+		{"Show.1080p.WEB-DL.HEVC", ""},
+		// No group — ends with known non-group word (HDR)
+		{"Show.1080p.WEB-DL.HDR", ""},
+		// No group — last word is lowercase (codec)
+		{"Show.1080p.WEB-DL.x265", ""},
+		// Space-separated group with dot-separated audio
+		{"Show.1080p.WEB-DL.x265.5.1.AC3.FLUX", "FLUX"},
+		// Group not detected for known audio keyword
+		{"Show.1080p.WEB-DL.x265.5.1.AC3.DTS", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.raw, func(t *testing.T) {
+			got := Parse(tt.raw).ReleaseGroup
+			if got != tt.want {
+				t.Errorf("Parse(%q).ReleaseGroup = %q, want %q", tt.raw, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestParseSource(t *testing.T) {
+	tests := []struct {
+		raw  string
+		want string
+	}{
+		// Standard WEB-DL
+		{"Show.1080p.WEB-DL.x264", "web-dl"},
+		// WEB.DL (dots → spaces in clean)
+		{"Show.1080p.WEB.DL.x264", "web-dl"},
+		// WEB DL with space in raw title
+		{"Show.1080p WEB DL x264", "web-dl"},
+		// BluRay
+		{"Movie.1080p.BluRay.x264", "bluray"},
+		// WebRip
+		{"Show.1080p.WebRip.x264", "webrip"},
+		// HDTV
+		{"Show.1080p.HDTV.x264", "hdtv"},
+		// No source
+		{"Show.1080p.x264", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.raw, func(t *testing.T) {
+			got := Parse(tt.raw).Source
+			if got != tt.want {
+				t.Errorf("Parse(%q).Source = %q, want %q", tt.raw, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestParseHDR(t *testing.T) {
+	tests := []struct {
+		raw  string
+		want bool
+	}{
+		// HDRip should NOT be detected as HDR
+		{"Movie.2025.1080p.HDRip.x264-GROUP", false},
+		// HDRip with dots
+		{"Movie.2025.1080p.HD.Rip.x264-GROUP", false},
+		// Actual HDR
+		{"Movie.2025.2160p.WEB-DL.DV.HDR10.HEVC-GROUP", true},
+		// HDR10
+		{"Show.2160p.WEB-DL.HDR10.x265", true},
+		// Dolby Vision
+		{"Show.2160p.WEB-DL.DolbyVision.HEVC-GROUP", true},
+		// No HDR
+		{"Show.1080p.WEB-DL.x264", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.raw, func(t *testing.T) {
+			got := Parse(tt.raw).HDR
+			if got != tt.want {
+				t.Errorf("Parse(%q).HDR = %v, want %v", tt.raw, got, tt.want)
+			}
+		})
+	}
+}

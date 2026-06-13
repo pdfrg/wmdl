@@ -39,9 +39,9 @@ type QualityPrefs struct {
 
 var (
 	resPattern     = regexp.MustCompile(`(?i)(\d{3,4}p|4k|uhd)`)
-	srcPattern     = regexp.MustCompile(`(?i)(BluRay|WEB-DL|WebRip|WEBRip|HDTV|REMUX|BDRip|BRRip)`)
+	srcPattern     = regexp.MustCompile(`(?i)(BluRay|WEB[-.\s]?DL|WebRip|WEBRip|HDTV|REMUX|BDRip|BRRip)`)
 	codecPattern   = regexp.MustCompile(`(?i)(x265|x264|h\.?265|h\.?264|hevc|av1)`)
-	hdrPattern     = regexp.MustCompile(`(?i)(HDR(?:10)?|Dolby[.\s]?Vision|DV[.\s]?HDR|DoVi|HLG)`)
+	hdrPattern     = regexp.MustCompile(`(?i)(\bHDR(?:10)?\b|Dolby[.\s]?Vision|DV[.\s]?HDR|DoVi|HLG)`)
 	groupPattern   = regexp.MustCompile(`-([a-zA-Z0-9]+(?:\[[^\]]+\])?)$`)
 	groupPrefixPat = regexp.MustCompile(`^\[[^\]]+\]\s*`)
 )
@@ -92,7 +92,9 @@ func parseSource(s string) string {
 	if m == "" {
 		return ""
 	}
-	switch strings.ToLower(m) {
+	norm := strings.ToLower(strings.ReplaceAll(m, " ", "-"))
+	norm = strings.ReplaceAll(norm, ".", "-")
+	switch norm {
 	case "bluray", "bdrip", "brrip":
 		return "bluray"
 	case "web-dl":
@@ -104,7 +106,7 @@ func parseSource(s string) string {
 	case "remux":
 		return "remux"
 	}
-	return m
+	return norm
 }
 
 func parseCodec(s string) string {
@@ -131,10 +133,35 @@ func parseCodec(s string) string {
 
 func parseGroup(s string) string {
 	m := groupPattern.FindString(s)
-	if m == "" {
-		return ""
+	if m != "" {
+		return strings.TrimPrefix(m, "-")
 	}
-	return strings.TrimPrefix(m, "-")
+
+	// Fallback: space-separated group at end of title
+	clean := strings.ReplaceAll(s, ".", " ")
+	words := strings.Fields(clean)
+	if len(words) > 0 {
+		last := words[len(words)-1]
+		if len(last) >= 2 && last[0] >= 'A' && last[0] <= 'Z' && !isNonGroupWord(last) {
+			return last
+		}
+	}
+	return ""
+}
+
+// isNonGroupWord checks if a word is a known metadata keyword that appears at
+// the end of a release title but is NOT a release group.
+func isNonGroupWord(w string) bool {
+	switch strings.ToLower(w) {
+	case "hevc", "avc", "aac", "ac3", "dts", "truehd", "atmos",
+		"hdr", "hdr10", "dovi", "hlg", "dv",
+		"bluray", "web-dl", "webdl", "webrip", "hdtv", "remux", "bdrip", "brrip",
+		"x264", "x265", "h264", "h265", "av1",
+		"multi", "complete", "proper", "repack", "real", "internal",
+		"uhd", "4k", "1080p", "720p", "480p", "2160p":
+		return true
+	}
+	return false
 }
 
 func Score(r ParsedRelease, prefs QualityPrefs) int {

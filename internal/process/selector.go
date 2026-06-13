@@ -11,12 +11,14 @@ import (
 )
 
 type colWidths struct {
-	resolution int
-	hdr        int
-	source     int
-	codec      int
-	seeders    int
-	size       int
+	resolution    int
+	hdr           int
+	source        int
+	codec         int
+	seeders       int
+	size          int
+	releaseGroup  int
+	indexerName   int
 }
 
 type Selector struct {
@@ -60,6 +62,12 @@ func NewSelector(title string, releases []quality.ParsedRelease) *Selector {
 		}
 		if w := len(fmtSize(r.SizeBytes)); w > s.colWidths.size {
 			s.colWidths.size = w
+		}
+		if len(r.ReleaseGroup) > s.colWidths.releaseGroup {
+			s.colWidths.releaseGroup = len(r.ReleaseGroup)
+		}
+		if len(r.IndexerName) > s.colWidths.indexerName {
+			s.colWidths.indexerName = len(r.IndexerName)
 		}
 	}
 	return s
@@ -173,11 +181,13 @@ func (s *Selector) View() tea.View {
 			hdrStr = "HDR"
 		}
 
-		attrs := fmt.Sprintf("%-*s ┃ %-*s ┃ %-*s ┃ %-*s",
+		attrs := fmt.Sprintf("%-*s ┃ %-*s ┃ %-*s ┃ %-*s ┃ %-*s ┃ %-*s",
 			s.colWidths.resolution, resStr,
 			s.colWidths.hdr, hdrStr,
 			s.colWidths.source, r.Source,
 			s.colWidths.codec, r.Codec,
+			s.colWidths.releaseGroup, r.ReleaseGroup,
+			s.colWidths.indexerName, r.IndexerName,
 		)
 
 		line := fmt.Sprintf("%s[%s] %-4s %s\n     %s  S: %*d  %-*s",
@@ -189,13 +199,6 @@ func (s *Selector) View() tea.View {
 			s.colWidths.seeders, r.Seeders,
 			s.colWidths.size, fmtSize(r.SizeBytes),
 		)
-
-		if r.ReleaseGroup != "" {
-			line += fmt.Sprintf("  ┃  %s", r.ReleaseGroup)
-		}
-		if r.IndexerName != "" {
-			line += fmt.Sprintf("  ┃  %s", r.IndexerName)
-		}
 
 		if idx == s.cursor {
 			b.WriteString(selSelectedStyle.Render(line))
