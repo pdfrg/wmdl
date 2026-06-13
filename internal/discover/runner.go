@@ -431,7 +431,8 @@ func (r *Runner) Run(ctx context.Context) error {
 					}
 				}
 				if r.hasTargetWeek {
-					dvd.SetWeekRange(r.targetYear, r.targetWeek)
+					py, pw := r.physicalWeek()
+					dvd.SetWeekRange(py, pw)
 				}
 				providers = append(providers, dvd)
 
@@ -1272,10 +1273,13 @@ func (r *Runner) processItem(ctx context.Context, item ScrapedItem, progYear, pr
 	return nil
 }
 
-// animeTargetWeek returns the week to scrape for anime.
-// Uses the runner's target week directly (no timeshift), consistent
-// with video/movie/TV physical media discovery.
+// animeTargetWeek returns the week to scrape for anime,
+// applying the configured LookbackWeeks offset.
 func (r *Runner) animeTargetWeek() (int, int) {
+	lookback := r.cfg.MediaTypes.Anime.LookbackWeeks
+	if lookback > 0 {
+		return addISOWeekOffset(r.targetYear, r.targetWeek, lookback)
+	}
 	return r.targetYear, r.targetWeek
 }
 
@@ -1293,6 +1297,16 @@ func (r *Runner) streamingWeekForType(mt model.MediaType) (int, int) {
 	}
 	if lookback <= 0 {
 		lookback = 8
+	}
+	return addISOWeekOffset(r.targetYear, r.targetWeek, lookback)
+}
+
+// physicalWeek returns the target week for DVD/BluRay physical media,
+// applying the configured shared PhysicalLookbackWeeks offset.
+func (r *Runner) physicalWeek() (int, int) {
+	lookback := r.cfg.MediaTypes.PhysicalLookbackWeeks
+	if lookback <= 0 {
+		return r.targetYear, r.targetWeek
 	}
 	return addISOWeekOffset(r.targetYear, r.targetWeek, lookback)
 }

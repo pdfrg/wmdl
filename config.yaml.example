@@ -134,6 +134,8 @@ quality:
 
 # ─── Media Types ───────────────────────────────────────────
 media_types:
+  # Number of weeks before the target WMDL week to scan for DVD/BluRay releases
+  physical_lookback_weeks: 0
   movies:
     enabled: true
     # Pipeline mode per media type (see config.go for full docs):
@@ -197,6 +199,7 @@ media_types:
   anime:
     enabled: true
     mode: "full"
+    lookback_weeks: 0       # weeks before target to scan for completed anime
     min_score: 7.0          # minimum MAL score
     min_members: 50000      # minimum MAL member count
     # Phase B: currently-airing anime (adds directly to Sonarr, no Prowlarr search)

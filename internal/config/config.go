@@ -173,11 +173,12 @@ type BookFormatQualityConfig struct {
 }
 
 type MediaTypesConfig struct {
-	Movies MovieConfig `mapstructure:"movies"`
-	TV     TVConfig    `mapstructure:"tv"`
-	Music  MusicConfig `mapstructure:"music"`
-	Anime  AnimeConfig `mapstructure:"anime"`
-	Books  BookConfig  `mapstructure:"books"`
+	PhysicalLookbackWeeks int         `mapstructure:"physical_lookback_weeks"`
+	Movies                MovieConfig `mapstructure:"movies"`
+	TV                    TVConfig    `mapstructure:"tv"`
+	Music                 MusicConfig `mapstructure:"music"`
+	Anime                 AnimeConfig `mapstructure:"anime"`
+	Books                 BookConfig  `mapstructure:"books"`
 }
 
 // Mode selects the processing pipeline for this media type:
@@ -231,6 +232,7 @@ type MusicFilterConfig struct {
 type AnimeConfig struct {
 	Enabled               bool          `mapstructure:"enabled"`
 	Mode                  string        `mapstructure:"mode"`
+	LookbackWeeks         int           `mapstructure:"lookback_weeks"`
 	MinScore              float64       `mapstructure:"min_score"`
 	MinMembers            int           `mapstructure:"min_members"`
 	PhaseBEnabled         bool          `mapstructure:"phase_b_enabled"`
@@ -453,6 +455,12 @@ func (c *Config) Validate() error {
 	if c.MediaTypes.TV.StreamingLookbackWeeks < 0 {
 		errs = append(errs, "media_types.tv.streaming_lookback_weeks must be >= 0")
 	}
+	if c.MediaTypes.PhysicalLookbackWeeks < 0 {
+		errs = append(errs, "media_types.physical_lookback_weeks must be >= 0")
+	}
+	if c.MediaTypes.Anime.LookbackWeeks < 0 {
+		errs = append(errs, "media_types.anime.lookback_weeks must be >= 0")
+	}
 
 	switch c.Log.Level {
 	case "debug", "info", "warn", "error", "":
@@ -509,6 +517,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("library.lidarr.monitor_new_albums", true)
 	v.SetDefault("library.lidarr.monitor", "all")
 
+	v.SetDefault("media_types.physical_lookback_weeks", 0)
 	v.SetDefault("media_types.movies.enabled", true)
 	v.SetDefault("media_types.movies.mode", "full")
 	v.SetDefault("media_types.movies.scrapers", []string{"dvdsreleasedates", "tmdb-discover", "flixpatrol"})
@@ -531,6 +540,7 @@ func setDefaults(v *viper.Viper) {
 
 	v.SetDefault("media_types.anime.enabled", true)
 	v.SetDefault("media_types.anime.mode", "full")
+	v.SetDefault("media_types.anime.lookback_weeks", 0)
 	v.SetDefault("media_types.anime.min_score", 7.0)
 	v.SetDefault("media_types.anime.min_members", 50000)
 	v.SetDefault("media_types.anime.phase_b_enabled", true)
