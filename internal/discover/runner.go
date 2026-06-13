@@ -435,29 +435,28 @@ func (r *Runner) Run(ctx context.Context) error {
 				}
 				providers = append(providers, dvd)
 
-			case "tmdb-discover":
-				tmdb := NewTMDBDiscoverProvider(r.tmdb)
-				if len(types) == 1 {
-					for mt := range types {
+			case "tmdb-discover", "flixpatrol":
+				for mt := range types {
+					var (
+						p   ReleaseProvider
+						ws  WeekSettable
+					)
+					switch scraperName {
+					case "tmdb-discover":
+						tmdb := NewTMDBDiscoverProvider(r.tmdb)
 						tmdb.SetMediaTypeFilter(mt)
-					}
-				}
-				if r.hasTargetWeek {
-					tmdb.SetWeekRange(r.targetYear, r.targetWeek)
-				}
-				providers = append(providers, tmdb)
-
-			case "flixpatrol":
-				fp := NewFlixPatrolProvider(r.debugURL)
-				if len(types) == 1 {
-					for mt := range types {
+						p, ws = tmdb, tmdb
+					case "flixpatrol":
+						fp := NewFlixPatrolProvider(r.debugURL)
 						fp.SetMediaTypeFilter(mt)
+						p, ws = fp, fp
 					}
+					if r.hasTargetWeek {
+						sy, sw := r.streamingWeekForType(mt)
+						ws.SetWeekRange(sy, sw)
+					}
+					providers = append(providers, p)
 				}
-				if r.hasTargetWeek {
-					fp.SetWeekRange(r.targetYear, r.targetWeek)
-				}
-				providers = append(providers, fp)
 
 			default:
 				r.log.Warn().Str("scraper", scraperName).Msg("unknown video scraper configured")
@@ -1278,6 +1277,24 @@ func (r *Runner) processItem(ctx context.Context, item ScrapedItem, progYear, pr
 // with video/movie/TV physical media discovery.
 func (r *Runner) animeTargetWeek() (int, int) {
 	return r.targetYear, r.targetWeek
+}
+
+// streamingWeekForType returns the streaming target week for the given media type,
+// applying the configured StreamingLookbackWeeks offset from the runner's target week.
+func (r *Runner) streamingWeekForType(mt model.MediaType) (int, int) {
+	var lookback int
+	switch mt {
+	case model.MediaTypeMovie:
+		lookback = r.cfg.MediaTypes.Movies.StreamingLookbackWeeks
+	case model.MediaTypeTV:
+		lookback = r.cfg.MediaTypes.TV.StreamingLookbackWeeks
+	default:
+		return r.targetYear, r.targetWeek
+	}
+	if lookback <= 0 {
+		lookback = 8
+	}
+	return addISOWeekOffset(r.targetYear, r.targetWeek, lookback)
 }
 
 // addISOWeekOffset adds an offset (positive = past) to an ISO week/year pair,

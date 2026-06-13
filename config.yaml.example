@@ -144,6 +144,8 @@ media_types:
     #   yolo          — fully automatic, no TUI, cron-friendly
     mode: "full"
     scrapers: ["dvdsreleasedates", "tmdb-discover", "flixpatrol"]
+    # Number of weeks before the physical WMDL week to search for streaming releases
+    streaming_lookback_weeks: 8
     filter:
       # Block releases from specific origin languages
       # blocked_languages: ["hi", "te", "ta"]
@@ -160,6 +162,7 @@ media_types:
     enabled: true
     mode: "full"
     scrapers: ["dvdsreleasedates", "tmdb-discover", "flixpatrol"]
+    streaming_lookback_weeks: 8
     filter:
       # blocked_languages: []
       # blocked_countries: []

@@ -40,15 +40,14 @@ func (t *TMDBDiscoverProvider) SetWeekRange(year, week int) {
 }
 
 func (t *TMDBDiscoverProvider) Scrape() ([]ScrapedItem, error) {
-	var physicalTue time.Time
+	var streamTue time.Time
 
 	if t.hasTargetWeek {
-		physicalTue = tuesdayOfISOWeek(t.targetYear, t.targetWeek)
+		streamTue = tuesdayOfISOWeek(t.targetYear, t.targetWeek)
 	} else {
 		now := time.Now()
-		physicalTue = mostRecentTuesday(now)
+		streamTue = mostRecentTuesday(now)
 	}
-	streamTue := physicalTue.AddDate(0, -2, 0)
 	streamStart := streamTue.AddDate(0, 0, -6) // previous Wednesday
 	streamEnd := streamTue                     // this Tuesday
 

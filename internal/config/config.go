@@ -188,17 +188,19 @@ type MediaTypesConfig struct {
 //   - yolo          — fully automatic, no TUI, cron-friendly
 
 type MovieConfig struct {
-	Enabled  bool          `mapstructure:"enabled"`
-	Mode     string        `mapstructure:"mode"`
-	Scrapers []string      `mapstructure:"scrapers"`
-	Filter   ContentFilter `mapstructure:"filter"`
+	Enabled               bool          `mapstructure:"enabled"`
+	Mode                  string        `mapstructure:"mode"`
+	Scrapers              []string      `mapstructure:"scrapers"`
+	StreamingLookbackWeeks int          `mapstructure:"streaming_lookback_weeks"`
+	Filter                ContentFilter `mapstructure:"filter"`
 }
 
 type TVConfig struct {
-	Enabled  bool          `mapstructure:"enabled"`
-	Mode     string        `mapstructure:"mode"`
-	Scrapers []string      `mapstructure:"scrapers"`
-	Filter   ContentFilter `mapstructure:"filter"`
+	Enabled               bool          `mapstructure:"enabled"`
+	Mode                  string        `mapstructure:"mode"`
+	Scrapers              []string      `mapstructure:"scrapers"`
+	StreamingLookbackWeeks int          `mapstructure:"streaming_lookback_weeks"`
+	Filter                ContentFilter `mapstructure:"filter"`
 }
 
 type ContentFilter struct {
@@ -445,6 +447,12 @@ func (c *Config) Validate() error {
 			errs = append(errs, "media_types.books.initial_timeshift_weeks must be >= 0")
 		}
 	}
+	if c.MediaTypes.Movies.StreamingLookbackWeeks < 0 {
+		errs = append(errs, "media_types.movies.streaming_lookback_weeks must be >= 0")
+	}
+	if c.MediaTypes.TV.StreamingLookbackWeeks < 0 {
+		errs = append(errs, "media_types.tv.streaming_lookback_weeks must be >= 0")
+	}
 
 	switch c.Log.Level {
 	case "debug", "info", "warn", "error", "":
@@ -504,9 +512,11 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("media_types.movies.enabled", true)
 	v.SetDefault("media_types.movies.mode", "full")
 	v.SetDefault("media_types.movies.scrapers", []string{"dvdsreleasedates", "tmdb-discover", "flixpatrol"})
+	v.SetDefault("media_types.movies.streaming_lookback_weeks", 8)
 	v.SetDefault("media_types.tv.enabled", true)
 	v.SetDefault("media_types.tv.mode", "full")
 	v.SetDefault("media_types.tv.scrapers", []string{"dvdsreleasedates", "tmdb-discover", "flixpatrol"})
+	v.SetDefault("media_types.tv.streaming_lookback_weeks", 8)
 	v.SetDefault("quality.music.format_priority", []string{"flac", "mp3", "aac"})
 	v.SetDefault("quality.music.bitrate_priority", []string{"lossless", "320", "v0", "v2"})
 	v.SetDefault("media_types.music.enabled", true)

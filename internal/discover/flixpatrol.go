@@ -73,14 +73,14 @@ var (
 )
 
 func (f *FlixPatrolProvider) Scrape() ([]ScrapedItem, error) {
-	var physicalTue time.Time
+	var streamTue time.Time
 	if f.hasTargetWeek {
-		physicalTue = tuesdayOfISOWeek(f.targetYear, f.targetWeek)
+		streamTue = tuesdayOfISOWeek(f.targetYear, f.targetWeek)
 	} else {
 		now := time.Now()
-		physicalTue = mostRecentTuesday(now)
+		streamTue = mostRecentTuesday(now)
 	}
-	streamTue := truncateToDay(physicalTue.AddDate(0, -2, 0))
+	streamTue = truncateToDay(streamTue)
 	streamStart := truncateToDay(streamTue.AddDate(0, 0, -6))
 
 	startStr := streamStart.Format("Jan 2")
