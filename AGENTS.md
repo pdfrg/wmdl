@@ -43,7 +43,7 @@ All discovery, review, and processing is scoped to a single **WMDL atomic week**
 
 - The **reference Tuesday** is the most recently completed Tuesday (i.e. yesterday if today is Wednesday).
 - A WMDL week runs from that reference Tuesday **back 6 days to the prior Wednesday**.
-- All media types (movies, TV, music, books, anime) use the same Wed–Tue window, with optional `initial_timeshift_weeks` to look back N atomic weeks.
+- All media types (movies, TV, music, books, anime) use the same Wed–Tue window, with optional `lookback_weeks` to look back N atomic weeks.
 - `addISOWeekOffset` and `bookTargetWeekFrom`/`musicTargetWeek` apply the timeshift. The underlying ISO week math uses `tuesdayOfISOWeek` to anchor the week boundaries.
 - Timeshifted weeks still respect Wed–Tue boundaries — the shift just picks an earlier reference Tuesday.
 
@@ -51,7 +51,7 @@ All discovery, review, and processing is scoped to a single **WMDL atomic week**
 
 ## Bookshop Week Assignment
 
-Bookshop.org only shows the current week's new releases — no archive URLs exist for past weeks. The bookshop scraper always targets the **current real ISO week** (ignoring `initial_timeshift_weeks`).
+Bookshop.org only shows the current week's new releases — no archive URLs exist for past weeks. The bookshop scraper always targets the **current real ISO week** (ignoring `lookback_weeks`).
 
 Each scraped book is stored under its **actual release week**, computed from the enrichment-provided release date (falling back to the page header date). The storage week is `t.ISOWeek()` of that date — NOT the runner's target week and NOT the timeshifted book week.
 
@@ -66,7 +66,7 @@ A bookshop item discovered during a timeshifted run is stored for the week of it
 **Example log on Tuesday June 9 (timeshift_weeks=1, book targets May 20-26):**
 ```
 INFO[0002] found items                                   count=15 provider=bookshop
-INFO[0003] bookshop: future week pre-population           count=15 release_date=2026-06-08 stored_under=2026-W24 timeshift_weeks=1 review_from=2026-06-10
+INFO[0003] bookshop: future week pre-population           count=15 release_date=2026-06-08 stored_under=2026-W24 lookback_weeks=1 review_from=2026-06-10
 ```
 
 ## Key Dependencies

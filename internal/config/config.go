@@ -216,7 +216,7 @@ type MusicConfig struct {
 	Enabled               bool              `mapstructure:"enabled"`
 	Mode                  string            `mapstructure:"mode"`
 	Scrapers              []string          `mapstructure:"scrapers"`
-	InitialTimeshiftWeeks int               `mapstructure:"initial_timeshift_weeks"`
+	LookbackWeeks         int               `mapstructure:"lookback_weeks"`
 	Filter                MusicFilterConfig `mapstructure:"filter"`
 }
 
@@ -247,7 +247,7 @@ type BookConfig struct {
 	Enabled               bool             `mapstructure:"enabled"`
 	Mode                  string           `mapstructure:"mode"`
 	Scrapers              []string         `mapstructure:"scrapers"`
-	InitialTimeshiftWeeks int              `mapstructure:"initial_timeshift_weeks"`
+	LookbackWeeks         int              `mapstructure:"lookback_weeks"`
 	DefaultFormat         string           `mapstructure:"default_format"`
 	Filter                BookFilterConfig `mapstructure:"filter"`
 }
@@ -445,8 +445,11 @@ func (c *Config) Validate() error {
 		default:
 			errs = append(errs, "media_types.books.default_format must be one of: ebook, audiobook, both")
 		}
-		if c.MediaTypes.Books.InitialTimeshiftWeeks < 0 {
-			errs = append(errs, "media_types.books.initial_timeshift_weeks must be >= 0")
+		if c.MediaTypes.Books.LookbackWeeks < 0 {
+			errs = append(errs, "media_types.books.lookback_weeks must be >= 0")
+		}
+		if c.MediaTypes.Music.LookbackWeeks < 0 {
+			errs = append(errs, "media_types.music.lookback_weeks must be >= 0")
 		}
 	}
 	if c.MediaTypes.Movies.StreamingLookbackWeeks < 0 {
@@ -531,7 +534,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("media_types.music.enabled", true)
 	v.SetDefault("media_types.music.mode", "full")
 	v.SetDefault("media_types.music.scrapers", []string{"albumoftheyear", "allmusic"})
-	v.SetDefault("media_types.music.initial_timeshift_weeks", 1)
+	v.SetDefault("media_types.music.lookback_weeks", 1)
 	v.SetDefault("media_types.music.filter.min_critic_score", 75)
 	v.SetDefault("media_types.music.filter.min_critic_reviews", 5)
 	v.SetDefault("media_types.music.filter.min_user_score", 75)
@@ -569,7 +572,7 @@ func setDefaults(v *viper.Viper) {
 	// bookshop        — curated weekly list
 	// bookmarks       — LitHub-based, more "highbrow" content
 	v.SetDefault("media_types.books.scrapers", []string{"goodreads_blog", "bookshop", "bookmarks"})
-	v.SetDefault("media_types.books.initial_timeshift_weeks", 1)
+	v.SetDefault("media_types.books.lookback_weeks", 1)
 	v.SetDefault("media_types.books.default_format", "both")
 	v.SetDefault("media_types.books.filter.min_rating", 3.5)
 	v.SetDefault("media_types.books.filter.min_ratings", 100)

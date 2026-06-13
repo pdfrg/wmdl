@@ -26,8 +26,8 @@ Lookback config keys (set in config.yaml):
   streaming_lookback_weeks     movie/TV streaming (default 8)
   physical_lookback_weeks      DVD/BluRay (default 0)
   lookback_weeks               anime (default 0)
-  initial_timeshift_weeks      music (default 1)
-  initial_timeshift_weeks      books (default 1)
+  lookback_weeks               music (default 1)
+  lookback_weeks               books (default 1)
 
 These control how many weeks before the target WMDL week each scraper
 looks for releases. They are read fresh from config each run.

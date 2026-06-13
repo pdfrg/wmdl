@@ -176,11 +176,11 @@ media_types:
     enabled: true
     mode: "full"
     scrapers: ["albumoftheyear", "allmusic"]
-    # Initial offset for the FIRST music discovery run only.
+    # How many weeks before the target to look back for new music.
     # After the first run, music advances 1 wmdl week per run sequentially,
     # just like movies/TV. Changing this value later has NO effect unless
     # you delete the database to restart discovery.
-    initial_timeshift_weeks: 1
+    lookback_weeks: 1
     filter:
       # Blocked/origin filters (same keys as movies/tv)
       # blocked_languages: []
@@ -220,7 +220,7 @@ media_types:
     enabled: true
     mode: "full"
     scrapers: ["goodreads_blog", "bookshop", "bookmarks"]
-    initial_timeshift_weeks: 1
+    lookback_weeks: 1
     default_format: "both"  # ebook, audiobook, or both
     filter:
       # blocked_languages: []

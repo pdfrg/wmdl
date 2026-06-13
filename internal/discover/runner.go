@@ -539,7 +539,7 @@ func (r *Runner) Run(ctx context.Context) error {
 			}
 		}
 
-		bookLo, bookHi := r.lookbackRange("book", r.cfg.MediaTypes.Books.InitialTimeshiftWeeks)
+		bookLo, bookHi := r.lookbackRange("book", r.cfg.MediaTypes.Books.LookbackWeeks)
 		for wk := bookLo; wk <= bookHi; wk++ {
 			scrapeYear, scrapeWeek := addISOWeekOffset(bookYear, bookWeek, wk)
 			for _, name := range r.cfg.MediaTypes.Books.Scrapers {
@@ -585,7 +585,7 @@ func (r *Runner) Run(ctx context.Context) error {
 
 	// Music providers (gated on config and type filter)
 	if wantMusic && r.cfg.MediaTypes.Music.Enabled {
-		cfgVal := r.cfg.MediaTypes.Music.InitialTimeshiftWeeks
+		cfgVal := r.cfg.MediaTypes.Music.LookbackWeeks
 		if cfgVal <= 0 {
 			cfgVal = 1
 		}
@@ -655,7 +655,7 @@ func (r *Runner) Run(ctx context.Context) error {
 			if d, err := time.Parse("January 2, 2006", bsReleaseDate); err == nil {
 				storeYear, storeWeek := d.ISOWeek()
 				reviewStart := tuesdayOfISOWeek(storeYear, storeWeek).AddDate(0, 0, 1)
-				ts := r.cfg.MediaTypes.Books.InitialTimeshiftWeeks
+				ts := r.cfg.MediaTypes.Books.LookbackWeeks
 				r.log.Info().
 					Int("count", bsCount).
 					Str("release_date", d.Format("2006-01-02")).
@@ -666,7 +666,7 @@ func (r *Runner) Run(ctx context.Context) error {
 			} else if d, err := time.Parse("Jan 2, 2006", bsReleaseDate); err == nil {
 				storeYear, storeWeek := d.ISOWeek()
 				reviewStart := tuesdayOfISOWeek(storeYear, storeWeek).AddDate(0, 0, 1)
-				ts := r.cfg.MediaTypes.Books.InitialTimeshiftWeeks
+				ts := r.cfg.MediaTypes.Books.LookbackWeeks
 				r.log.Info().
 					Int("count", bsCount).
 					Str("release_date", d.Format("2006-01-02")).
@@ -1357,7 +1357,7 @@ func addISOWeekOffset(year, week, offset int) (int, int) {
 
 // bookTargetWeekFrom applies the book timeshift to an arbitrary year/week.
 func (r *Runner) bookTargetWeekFrom(year, week int) (int, int) {
-	timeshiftWeeks := r.cfg.MediaTypes.Books.InitialTimeshiftWeeks
+	timeshiftWeeks := r.cfg.MediaTypes.Books.LookbackWeeks
 	if timeshiftWeeks <= 0 {
 		timeshiftWeeks = 1
 	}
@@ -2002,7 +2002,7 @@ func (r *Runner) processBookItem(ctx context.Context, item ScrapedItem, progYear
 		// the review week (not the raw release week), matching other scrapers.
 		evtYear, evtWeek := progYear, progWeek
 		if isBookshop && storeYear > 0 {
-			ts := r.cfg.MediaTypes.Books.InitialTimeshiftWeeks
+			ts := r.cfg.MediaTypes.Books.LookbackWeeks
 			if ts <= 0 {
 				ts = 1
 			}
