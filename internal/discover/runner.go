@@ -1040,20 +1040,35 @@ func (r *Runner) processItem(ctx context.Context, item ScrapedItem, progYear, pr
 	var rating float64
 	var enrich *TMDBEnrichment
 	var imdbID string
+	var err error
 
 	preferType := string(item.MediaType)
 
-	enrich, err := r.tmdb.enrichWithPrefs(apiCtx, searchTitle, item.Year, preferType)
-	if err == nil {
-		tmdbID = enrich.TMDBID
-		rating = enrich.Rating
-		imdbID = enrich.IMDbID
-		r.log.Info().Int("tmdb_id", tmdbID).Float64("rating", rating).Str("media", string(enrich.MediaType)).Msg("TMDB enriched")
+	if item.TmdbID > 0 {
+		// TMDB ID already known (e.g. from tmdb-discover scraper).
+		// Fetch details directly, skipping the search/scoring phase.
+		enrich, err = r.tmdb.enrichByID(apiCtx, item.TmdbID, preferType, 0, item.Title, item.Year)
+		if err == nil {
+			tmdbID = enrich.TMDBID
+			rating = enrich.Rating
+			imdbID = enrich.IMDbID
+			r.log.Info().Int("tmdb_id", tmdbID).Float64("rating", rating).Str("media", string(enrich.MediaType)).Msg("TMDB enriched (by ID)")
+		}
+	}
+
+	if tmdbID == 0 {
+		enrich, err = r.tmdb.enrichWithPrefs(apiCtx, searchTitle, item.Year, preferType)
+		if err == nil {
+			tmdbID = enrich.TMDBID
+			rating = enrich.Rating
+			imdbID = enrich.IMDbID
+			r.log.Info().Int("tmdb_id", tmdbID).Float64("rating", rating).Str("media", string(enrich.MediaType)).Msg("TMDB enriched")
+		}
 	}
 
 	// Retry with uncleaned original title if cleaned search gave a weak match
 	// (non-exact) or failed entirely.
-	if err != nil || (enrich != nil && !strings.EqualFold(enrich.Title, searchTitle)) {
+	if tmdbID == 0 && (err != nil || (enrich != nil && !strings.EqualFold(enrich.Title, searchTitle))) {
 		origTitle := html.UnescapeString(item.Title)
 		if origTitle != searchTitle {
 			r.log.Info().Str("original", origTitle).Msg("retrying TMDB with original title")
@@ -1069,7 +1084,7 @@ func (r *Runner) processItem(ctx context.Context, item ScrapedItem, progYear, pr
 
 		// If original title retry also didn't yield an exact match, try
 		// parenthetical content as a last resort.
-		if enrich == nil || !strings.EqualFold(enrich.Title, searchTitle) {
+		if tmdbID == 0 && (enrich == nil || !strings.EqualFold(enrich.Title, searchTitle)) {
 			if paren := extractParenthetical(item.Title); paren != "" && !strings.EqualFold(paren, searchTitle) && !strings.EqualFold(paren, origTitle) {
 				r.log.Info().Str("parenthetical", paren).Msg("retrying TMDB with parenthetical content")
 				enrich3, err3 := r.tmdb.enrichWithPrefs(apiCtx, paren, item.Year, preferType)

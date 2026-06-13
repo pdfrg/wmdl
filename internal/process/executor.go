@@ -783,6 +783,7 @@ func (e *Executor) ComputePhase3Candidates(ctx context.Context, events []db.Even
 			// Check if movie is in Radarr with collection info from cache
 			tmdbID := ev.Title.TmdbID
 			if tmdbID == 0 {
+				e.log.Warn().Str("title", ev.Title.Title).Msg("no TMDB ID, skipping collection gap check")
 				continue
 			}
 			existing, err := e.radarr.Exists(ctx, tmdbID)
@@ -839,11 +840,13 @@ func (e *Executor) ComputePhase3Candidates(ctx context.Context, events []db.Even
 			if tvdbID == 0 && ev.Title.MediaType == model.MediaTypeAnime {
 				lookup, err := e.sonarr.LookupByTitle(ctx, ev.Title.Title)
 				if err != nil || lookup == nil {
+					e.log.Warn().Err(err).Str("title", ev.Title.Title).Msg("anime title lookup failed, skipping Phase 3 season check")
 					continue
 				}
 				tvdbID = lookup.TVDBID
 			}
 			if tvdbID == 0 {
+				e.log.Warn().Str("title", ev.Title.Title).Msg("no TVDB ID, skipping Phase 3 season check")
 				continue
 			}
 
@@ -1275,7 +1278,14 @@ processPicked:
 		if item.Event.Title.MediaType == model.MediaTypeMovie {
 			tmdbID := item.Event.Title.TmdbID
 			if tmdbID == 0 {
-				continue
+				e.log.Warn().Str("title", item.Event.Title.Title).Msg("no TMDB ID, trying title lookup in Radarr")
+				titleLookup, lookupErr := e.radarr.LookupByTitle(ctx, item.Event.Title.Title)
+				if lookupErr != nil || titleLookup == nil {
+					e.log.Warn().Err(lookupErr).Str("title", item.Event.Title.Title).Msg("Radarr title lookup failed, skipping library decisions")
+					goto nextPicked
+				}
+				tmdbID = titleLookup.TMDBID
+				e.log.Info().Str("title", item.Event.Title.Title).Int("tmdb_id", tmdbID).Msg("found TMDB ID via Radarr title lookup")
 			}
 			for {
 				existing, err := e.radarr.Exists(ctx, tmdbID)
@@ -1351,7 +1361,8 @@ processPicked:
 					}
 					tvdbID = titleLookup.TVDBID
 				} else {
-					continue
+					e.log.Warn().Str("title", item.Event.Title.Title).Msg("no TVDB ID, skipping Sonarr library decisions")
+					goto nextPicked
 				}
 			}
 			for {
@@ -1792,7 +1803,7 @@ func (e *Executor) resolveSonarrProfileID(ctx context.Context, profileName strin
 func (e *Executor) addToRadarr(ctx context.Context, evt db.EventWithTitle, confirmed bool, searchNow bool) error {
 	tmdbID := evt.Title.TmdbID
 	if tmdbID == 0 {
-		return nil
+		return fmt.Errorf("cannot add to Radarr: movie %q has no TMDB ID", evt.Title.Title)
 	}
 
 	if !confirmed {

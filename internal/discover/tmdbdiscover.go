@@ -69,6 +69,7 @@ func (t *TMDBDiscoverProvider) Scrape() ([]ScrapedItem, error) {
 			items = append(items, ScrapedItem{
 				Title:       m.Title,
 				Year:        m.Year,
+				TmdbID:      m.TMDBID,
 				MediaType:   model.MediaTypeMovie,
 				ReleaseType: model.ReleaseStreaming,
 				ReleaseDate: m.Date,
@@ -87,6 +88,7 @@ func (t *TMDBDiscoverProvider) Scrape() ([]ScrapedItem, error) {
 			items = append(items, ScrapedItem{
 				Title:       t.Title,
 				Year:        t.Year,
+				TmdbID:      t.TMDBID,
 				MediaType:   model.MediaTypeTV,
 				ReleaseType: model.ReleaseStreaming,
 				ReleaseDate: t.Date,

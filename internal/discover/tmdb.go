@@ -557,6 +557,52 @@ func (c *TMDBClient) enrichWithPrefs(ctx context.Context, query string, year int
 	return enrich, nil
 }
 
+// enrichByID builds a TMDBEnrichment from a known TMDB ID, skipping the
+// search/scoring phase. Used when the TMDB ID is already known (e.g. from
+// the tmdb-discover scraper).
+func (c *TMDBClient) enrichByID(ctx context.Context, tmdbID int, mediaType string, rating float64, title string, year int) (*TMDBEnrichment, error) {
+	enrich := &TMDBEnrichment{
+		TMDBID:    tmdbID,
+		MediaType: mediaType,
+		Title:     title,
+		Year:      year,
+		Rating:    rating,
+	}
+
+	extIDs, err := c.getExternalIDs(ctx, tmdbID, mediaType)
+	if err == nil {
+		enrich.IMDbID = extIDs.IMDbID
+		enrich.TVDBID = extIDs.TVDBID
+	}
+
+	var details *TMDBDetails
+	if mediaType == "movie" {
+		details, err = c.GetMovieDetails(ctx, tmdbID)
+	} else {
+		details, err = c.GetTVDetails(ctx, tmdbID)
+	}
+	if err == nil && details != nil {
+		enrich.Overview = details.Overview
+		var genreNames []string
+		for _, g := range details.Genres {
+			genreNames = append(genreNames, g.Name)
+		}
+		enrich.Genres = strings.Join(genreNames, ", ")
+		enrich.Runtime = details.Runtime
+		enrich.OriginalLanguage = details.OriginalLanguage
+		if len(details.OriginCountry) > 0 {
+			n := min(len(details.OriginCountry), 3)
+			enrich.OriginCountry = strings.Join(details.OriginCountry[:n], ",")
+		}
+		if mediaType == "movie" && details.BelongsToCollection != nil {
+			enrich.CollectionID = details.BelongsToCollection.ID
+			enrich.CollectionName = details.BelongsToCollection.Name
+		}
+	}
+
+	return enrich, nil
+}
+
 // searchWithFallback tries a type-specific search with year, then without,
 // then falls back to multi-search when type is unknown.
 func (c *TMDBClient) searchWithFallback(ctx context.Context, query string, year int, preferType string) (*TMDBMultiResult, error) {
@@ -596,6 +642,9 @@ func (c *TMDBClient) searchWithFallback(ctx context.Context, query string, year 
 // Leading articles (the, a, an) in the title are skipped.
 // Non-alphanumeric characters are stripped from each word for matching,
 // so "(good" and "good" are treated as the same word.
+// Standalone numeric tokens in the query (e.g. sequel numbers like "2")
+// are silently skipped during matching, so "Ready or Not 2 - Here I Come"
+// can match the TMDB title "Ready or Not: Here I Come".
 func matchTitle(qLower, title string) bool {
 	tLower := strings.ToLower(title)
 
@@ -610,16 +659,45 @@ func matchTitle(qLower, title string) bool {
 	qWords := tokenize(qLower)
 	tWords := tokenize(tLower)
 
-	if len(qWords) == 0 || len(qWords) > len(tWords) {
+	if len(qWords) == 0 || len(tWords) == 0 {
 		return false
 	}
 
-	for i, qw := range qWords {
-		if !strings.HasPrefix(tWords[i], qw) {
+	// Walk both token lists. Skip standalone numeric query tokens
+	// (e.g. sequel numbers) that don't appear in the TMDB title.
+	qi := 0
+	for ti := 0; ti < len(tWords) && qi < len(qWords); ti++ {
+		for qi < len(qWords) && isNumeric(qWords[qi]) {
+			qi++
+		}
+		if qi >= len(qWords) {
+			break
+		}
+		if !strings.HasPrefix(qWords[qi], tWords[ti]) {
+			return false
+		}
+		qi++
+	}
+
+	// Any remaining query tokens must be numeric
+	for qi < len(qWords) {
+		if !isNumeric(qWords[qi]) {
+			return false
+		}
+		qi++
+	}
+
+	return true
+}
+
+// isNumeric reports whether every character in s is a digit.
+func isNumeric(s string) bool {
+	for _, r := range s {
+		if !unicode.IsDigit(r) {
 			return false
 		}
 	}
-	return true
+	return len(s) > 0
 }
 
 // tokenize splits a string into words, stripping non-alphanumeric characters

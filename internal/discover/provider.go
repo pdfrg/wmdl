@@ -30,6 +30,7 @@ type WeekSettable interface {
 type ScrapedItem struct {
 	Title           string
 	Year            int
+	TmdbID          int
 	MediaType       model.MediaType
 	ReleaseType     model.ReleaseType
 	ReleaseDate     string

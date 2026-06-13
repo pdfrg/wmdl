@@ -189,19 +189,19 @@ type MediaTypesConfig struct {
 //   - yolo          — fully automatic, no TUI, cron-friendly
 
 type MovieConfig struct {
-	Enabled               bool          `mapstructure:"enabled"`
-	Mode                  string        `mapstructure:"mode"`
-	Scrapers              []string      `mapstructure:"scrapers"`
-	StreamingLookbackWeeks int          `mapstructure:"streaming_lookback_weeks"`
-	Filter                ContentFilter `mapstructure:"filter"`
+	Enabled                bool          `mapstructure:"enabled"`
+	Mode                   string        `mapstructure:"mode"`
+	Scrapers               []string      `mapstructure:"scrapers"`
+	StreamingLookbackWeeks int           `mapstructure:"streaming_lookback_weeks"`
+	Filter                 ContentFilter `mapstructure:"filter"`
 }
 
 type TVConfig struct {
-	Enabled               bool          `mapstructure:"enabled"`
-	Mode                  string        `mapstructure:"mode"`
-	Scrapers              []string      `mapstructure:"scrapers"`
-	StreamingLookbackWeeks int          `mapstructure:"streaming_lookback_weeks"`
-	Filter                ContentFilter `mapstructure:"filter"`
+	Enabled                bool          `mapstructure:"enabled"`
+	Mode                   string        `mapstructure:"mode"`
+	Scrapers               []string      `mapstructure:"scrapers"`
+	StreamingLookbackWeeks int           `mapstructure:"streaming_lookback_weeks"`
+	Filter                 ContentFilter `mapstructure:"filter"`
 }
 
 type ContentFilter struct {
@@ -213,11 +213,11 @@ type ContentFilter struct {
 }
 
 type MusicConfig struct {
-	Enabled               bool              `mapstructure:"enabled"`
-	Mode                  string            `mapstructure:"mode"`
-	Scrapers              []string          `mapstructure:"scrapers"`
-	LookbackWeeks         int               `mapstructure:"lookback_weeks"`
-	Filter                MusicFilterConfig `mapstructure:"filter"`
+	Enabled       bool              `mapstructure:"enabled"`
+	Mode          string            `mapstructure:"mode"`
+	Scrapers      []string          `mapstructure:"scrapers"`
+	LookbackWeeks int               `mapstructure:"lookback_weeks"`
+	Filter        MusicFilterConfig `mapstructure:"filter"`
 }
 
 type MusicFilterConfig struct {
@@ -244,12 +244,12 @@ type AnimeConfig struct {
 }
 
 type BookConfig struct {
-	Enabled               bool             `mapstructure:"enabled"`
-	Mode                  string           `mapstructure:"mode"`
-	Scrapers              []string         `mapstructure:"scrapers"`
-	LookbackWeeks         int              `mapstructure:"lookback_weeks"`
-	DefaultFormat         string           `mapstructure:"default_format"`
-	Filter                BookFilterConfig `mapstructure:"filter"`
+	Enabled       bool             `mapstructure:"enabled"`
+	Mode          string           `mapstructure:"mode"`
+	Scrapers      []string         `mapstructure:"scrapers"`
+	LookbackWeeks int              `mapstructure:"lookback_weeks"`
+	DefaultFormat string           `mapstructure:"default_format"`
+	Filter        BookFilterConfig `mapstructure:"filter"`
 }
 
 type BookFilterConfig struct {

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 )
@@ -140,6 +141,21 @@ func (r *RadarrClient) Lookup(ctx context.Context, tmdbID int) (*RadarrMovie, er
 	})
 	if err != nil {
 		return nil, fmt.Errorf("radarr lookup: %w", err)
+	}
+	if len(movies) == 0 {
+		return nil, nil
+	}
+	return &movies[0], nil
+}
+
+func (r *RadarrClient) LookupByTitle(ctx context.Context, title string) (*RadarrMovie, error) {
+	u := fmt.Sprintf("/api/v3/movie/lookup?term=%s", url.QueryEscape(title))
+	var movies []RadarrMovie
+	err := r.retry(ctx, func() error {
+		return r.get(ctx, u, &movies)
+	})
+	if err != nil {
+		return nil, fmt.Errorf("radarr lookup by title: %w", err)
 	}
 	if len(movies) == 0 {
 		return nil, nil

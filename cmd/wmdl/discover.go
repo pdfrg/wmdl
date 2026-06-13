@@ -39,7 +39,6 @@ Notes:
   • bookshop always scrapes the current real week, unaffected by --lookback.
   • allmusic participates in --lookback music; its month-boundary logic applies.`,
 
-
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := config.Load()
 			if err != nil {
