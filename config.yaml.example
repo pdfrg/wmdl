@@ -79,7 +79,7 @@ library:
     url: "http://radarr.local:7878"
     api_key: ""
     root_folder: "/media/movies"
-    quality_profile: "2160p"
+    quality_profile: "Ultra-HD"
     monitor: false
     # Request timeout in seconds (default: 300)
     # timeout: 300
@@ -87,7 +87,7 @@ library:
     url: "http://sonarr.local:8989"
     api_key: ""
     root_folder: "/media/tv"
-    quality_profile: "1080p"
+    quality_profile: "HD-1080p"
     monitor_new_episodes: true
     season_folders: true
     # Request timeout in seconds (default: 300)
