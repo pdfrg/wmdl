@@ -97,8 +97,16 @@ Notes:
 			if discovered && !headless && term.IsTerminal(int(os.Stdin.Fd())) {
 				fmt.Fprintln(os.Stderr)
 				if promptYesNo(cmd.Context(), "Review this week now?") {
-					_, err := runReviewForWeek(cmd.Context(), database, cfg, targetYear, targetWeek)
-					return err
+					approved, err := runReviewForWeek(cmd.Context(), database, cfg, targetYear, targetWeek)
+					if err != nil {
+						return err
+					}
+					if approved > 0 && term.IsTerminal(int(os.Stdin.Fd())) {
+						fmt.Fprintln(os.Stderr)
+						if promptYesNo(cmd.Context(), "Process this week now?") {
+							return runProcessForWeek(cmd.Context(), database, cfg, targetYear, targetWeek, "")
+						}
+					}
 				}
 			}
 			return nil
