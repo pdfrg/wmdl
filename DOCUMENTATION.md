@@ -224,6 +224,75 @@ crontab -e
 0 5 * * 3 $HOME/go/bin/wmdl discover --headless
 ```
 
+## Book Integration (LazyLibrarian)
+
+wmdl supports managing ebooks and audiobooks through LazyLibrarian (LL), an *arr-style
+library manager. Books are downloaded to LL's **Alternate Import Folder**, where LL
+reads file metadata (EPUB tags, id3 tags) to match them to library entries.
+
+### Prerequisites
+
+**qBittorrent:** Enable `Options → Downloads → Torrent Content Layout → Create subfolder`.
+Without this, all files land flat in one directory and LL may import multiple files into
+a single book entry.
+
+**LazyLibrarian config:**
+- `Alternate Import/Export Folder` must differ from `Download Directory`
+- `DESTINATION_COPY = True` to keep originals for seeding (`False` to move on import)
+- `NEWBOOK_STATUS` / `NEWAUDIO_STATUS` — set to `Wanted` if you want author-update
+  scans to auto-mark new releases as wanted. wmdl always calls `unqueueBook` after
+  `addBook` in full mode to revert to `Skipped`, preventing LL from searching in parallel.
+
+**Download client categories:** The `ebooks` and `audiobooks` category save paths must
+point to LL's Alternate Import Folder.
+
+### Modes
+
+| Mode | Prowlarr | LL add | LL search | Download |
+|------|----------|--------|-----------|----------|
+| full | ✅ wmdl | `addBook` + `unqueueBook` (Skipped) | No | wmdl |
+| arr  | ❌ | `addBook` (Wanted) | Yes (scheduled) | LL |
+| auto | ❌ | auto-yes | Yes | LL |
+| yolo | ❌ | auto-yes | Yes | LL |
+
+### External Import Trigger
+
+After wmdl downloads a book in `full` mode, LL must be told to scan the alternate folder.
+Set up either:
+
+**qBittorrent "on download completion" script:**
+Create a script that calls:
+```bash
+curl "http://lazylibrarian:5299/api?apikey=YOUR_KEY&cmd=importAlternate&library=eBook"
+curl "http://lazylibrarian:5299/api?apikey=YOUR_KEY&cmd=importAlternate&library=AudioBook"
+```
+Configure it in qBittorrent at `Options → Downloads → Run external program`.
+
+**Cron job** (every 10-30 minutes):
+```
+*/15 * * * * curl "http://lazylibrarian:5299/api?apikey=YOUR_KEY&cmd=importAlternate&library=eBook"
+*/15 * * * * curl "http://lazylibrarian:5299/api?apikey=YOUR_KEY&cmd=importAlternate&library=AudioBook"
+```
+
+The `&library=` parameter is required even though it has a default — call it once per
+format to handle both ebooks and audiobooks.
+
+### Config
+
+```yaml
+library:
+  book_backend: "lazylibrarian"
+  lazylibrarian:
+    url: "http://lazylibrarian.local:5299"
+    api_key: ""
+    timeout: 120
+
+downloader:
+  categories:
+    ebooks: "Books"
+    audiobooks: "Books"
+```
+
 ## Data
 
 SQLite database at `~/.local/share/wmdl/wmdl.db`. Key tables: `titles`, `release_events`, `downloads`, `week_state`.

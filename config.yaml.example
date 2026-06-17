@@ -70,8 +70,8 @@ downloader:
     tv: "TV"
     music: "Music"
     anime: "Anime"
-    ebooks: "Ebooks"
-    audiobooks: "Audiobooks"
+    ebooks: "Ebooks"          # must match LL's Alternate Import Folder save path
+    audiobooks: "Audiobooks"  # must match LL's Alternate Import Folder save path
 
 # ─── Library Managers ─────────────────────────────────────
 library:
@@ -82,6 +82,13 @@ library:
     api_key: ""
     # Request timeout in seconds (default: 120)
     # timeout: 120
+    #
+    # Prerequisites:
+    # 1. LL's Alternate Import Folder must differ from its Download Directory
+    # 2. LL config "DESTINATION_COPY = True" keeps originals for seeding
+    # 3. qBittorrent: enable "Options → Downloads → Torrent Content Layout → Create subfolder"
+    #    (without this, LL may import multiple files into a single book)
+    # 4. qBittorrent category (ebooks/audiobooks) save path = LL's Alternate Import Folder
   radarr:
     url: "http://radarr.local:7878"
     api_key: ""
