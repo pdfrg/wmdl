@@ -130,6 +130,7 @@ func (c *LazyLibrarianClient) GetSeriesMembers(ctx context.Context, seriesID str
 			AuthorName: m.AuthorName,
 			AuthorID:   m.AuthorID,
 			BookID:     m.BookID,
+			PubDate:    m.PubDate,
 		})
 	}
 	return members, nil
@@ -207,4 +208,5 @@ type llSeriesMember struct {
 	AuthorName string `json:"author_name"`
 	AuthorID   string `json:"author_id"`
 	BookID     string `json:"book_id"`
+	PubDate    string `json:"pubdate"`
 }

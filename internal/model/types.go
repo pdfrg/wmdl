@@ -299,4 +299,5 @@ type SeriesMember struct {
 	AuthorName string
 	AuthorID   string
 	BookID     string
+	PubDate    string // release date from metadata source, e.g. "2026-08-15" or "2026"
 }

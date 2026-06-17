@@ -3315,6 +3315,62 @@ func (e *Executor) ProcessBookLibraryDecisions(ctx context.Context, events []db.
 			}
 			e.log.Info().Str("book", title).Str("ll_id", bookID).Msg("LazyLibrarian: Skipped")
 		}
+
+		// Phase 3: series gap detection
+		if evt.Book.SeriesID != "" {
+			e.checkBookSeriesGaps(ctx, evt, searchNow)
+		}
+	}
+}
+
+func (e *Executor) checkBookSeriesGaps(ctx context.Context, evt db.EventWithBook, searchNow bool) {
+	members, err := e.bookClient.GetSeriesMembers(ctx, evt.Book.SeriesID)
+	if err != nil {
+		e.log.Warn().Err(err).Str("book", evt.Book.Title).Str("series", evt.Book.SeriesName).Msg("series gap: GetSeriesMembers failed")
+		return
+	}
+
+	var added int
+	for _, m := range members {
+		if m.BookID == "" {
+			continue
+		}
+
+		// Skip future releases
+		if m.PubDate != "" {
+			t, parseErr := time.Parse("2006-01-02", m.PubDate)
+			if parseErr != nil {
+				if len(m.PubDate) >= 4 {
+					t, parseErr = time.Parse("2006", m.PubDate[:4])
+				}
+			}
+			if parseErr == nil && t.After(time.Now()) {
+				e.log.Debug().Str("book", m.Title).Str("pubdate", m.PubDate).Msg("series gap: future release, skipping")
+				continue
+			}
+		}
+
+		// AddBook is idempotent — safe for books already in LL
+		if _, err := e.bookClient.AddBook(ctx, m.BookID); err != nil {
+			e.log.Warn().Err(err).Str("book", m.Title).Msg("series gap: addBook failed")
+			continue
+		}
+
+		if !searchNow {
+			if err := e.bookClient.UnqueueBook(ctx, m.BookID, model.BookFormatEbook); err != nil {
+				e.log.Warn().Err(err).Str("book", m.Title).Msg("series gap: unqueueBook ebook")
+			}
+			if err := e.bookClient.UnqueueBook(ctx, m.BookID, model.BookFormatAudiobook); err != nil {
+				e.log.Warn().Err(err).Str("book", m.Title).Msg("series gap: unqueueBook audiobook")
+			}
+		}
+
+		added++
+		e.log.Info().Str("book", m.Title).Str("author", m.AuthorName).Int("position", m.Position).Msg("series gap: added to LazyLibrarian")
+	}
+
+	if added > 0 {
+		e.log.Info().Str("series", evt.Book.SeriesName).Int("added", added).Msg("series gap check complete")
 	}
 }
 

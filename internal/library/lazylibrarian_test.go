@@ -118,7 +118,7 @@ func TestLazyLibrarianClient_ErrorResponse(t *testing.T) {
 func TestLazyLibrarianClient_GetSeriesMembers(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`[
-			{"position":1,"title":"Book One","author_name":"Author A","author_id":"100","book_id":"1001"},
+			{"position":1,"title":"Book One","author_name":"Author A","author_id":"100","book_id":"1001","pubdate":"2026-01-15"},
 			{"position":2,"title":"Book Two","author_name":"Author A","author_id":"100","book_id":"1002"}
 		]`))
 	}))
@@ -132,8 +132,11 @@ func TestLazyLibrarianClient_GetSeriesMembers(t *testing.T) {
 	if len(members) != 2 {
 		t.Fatalf("expected 2 members, got %d", len(members))
 	}
-	if members[0].Title != "Book One" || members[0].Position != 1 {
+	if members[0].Title != "Book One" || members[0].Position != 1 || members[0].PubDate != "2026-01-15" {
 		t.Fatalf("unexpected first member: %+v", members[0])
+	}
+	if members[1].PubDate != "" {
+		t.Fatalf("expected empty pubdate for second member, got %q", members[1].PubDate)
 	}
 }
 
