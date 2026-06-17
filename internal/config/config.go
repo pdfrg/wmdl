@@ -459,6 +459,15 @@ func (c *Config) Validate() error {
 		errs = append(errs, "library.book_backend must be one of: lazylibrarian, none")
 	}
 
+	if c.MediaTypes.Books.Enabled && needsLibMode(c.MediaTypes.Books.Mode) {
+		if c.Library.LazyLibrarian.URL == "" {
+			errs = append(errs, "library.lazylibrarian.url is required when media_types.books.mode is arr/auto/yolo")
+		}
+		if c.Library.LazyLibrarian.URL != "" && c.Library.LazyLibrarian.APIKey == "" {
+			errs = append(errs, "library.lazylibrarian.api_key is required when media_types.books.mode is arr/auto/yolo")
+		}
+	}
+
 	// Validate book config
 	if c.MediaTypes.Books.Enabled {
 		switch c.MediaTypes.Books.DefaultFormat {

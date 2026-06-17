@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/pdfrg/wmdl/internal/model"
 )
@@ -49,6 +50,38 @@ func TestLazyLibrarianClient_AddBook(t *testing.T) {
 	}
 }
 
+func TestLazyLibrarianClient_QueueBook(t *testing.T) {
+	tests := []struct {
+		name   string
+		format model.BookFormat
+		want   string
+	}{
+		{"ebook", model.BookFormatEbook, "eBook"},
+		{"audiobook", model.BookFormatAudiobook, "AudioBook"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Query().Get("cmd") != "queueBook" {
+					t.Errorf("expected cmd=queueBook, got %s", r.URL.Query().Get("cmd"))
+				}
+				if r.URL.Query().Get("id") != "42" {
+					t.Errorf("expected id=42, got %s", r.URL.Query().Get("id"))
+				}
+				if r.URL.Query().Get("type") != tt.want {
+					t.Errorf("expected type=%s, got %s", tt.want, r.URL.Query().Get("type"))
+				}
+				w.Write([]byte("OK"))
+			}))
+			c := NewLazyLibrarianClient(srv.URL, "key", 10)
+			if err := c.QueueBook(context.Background(), "42", tt.format); err != nil {
+				t.Fatalf("QueueBook() error: %v", err)
+			}
+			srv.Close()
+		})
+	}
+}
+
 func TestLazyLibrarianClient_UnqueueBook(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -81,25 +114,130 @@ func TestLazyLibrarianClient_UnqueueBook(t *testing.T) {
 	}
 }
 
-func TestLazyLibrarianClient_ImportAlternate(t *testing.T) {
+func TestLazyLibrarianClient_AddAuthor(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Query().Get("cmd") != "importAlternate" {
-			t.Errorf("expected cmd=importAlternate")
+		if r.URL.Query().Get("cmd") != "addAuthorID" {
+			t.Errorf("expected cmd=addAuthorID, got %s", r.URL.Query().Get("cmd"))
 		}
-		if r.URL.Query().Get("library") != "eBook" {
-			t.Errorf("expected library=eBook")
+		if r.URL.Query().Get("id") != "999" {
+			t.Errorf("expected id=999, got %s", r.URL.Query().Get("id"))
 		}
-		if r.URL.Query().Get("dir") != "/path/to/alt" {
-			t.Errorf("expected dir=/path/to/alt")
+		if r.URL.Query().Get("books") != "true" {
+			t.Errorf("expected books=true, got %s", r.URL.Query().Get("books"))
 		}
 		w.Write([]byte("OK"))
 	}))
 	defer srv.Close()
 
 	c := NewLazyLibrarianClient(srv.URL, "key", 10)
-	if err := c.ImportAlternate(context.Background(), "/path/to/alt", model.BookFormatEbook); err != nil {
-		t.Fatalf("ImportAlternate() error: %v", err)
+	res, err := c.AddAuthor(context.Background(), "999", true)
+	if err != nil {
+		t.Fatalf("AddAuthor() error: %v", err)
 	}
+	if res.AuthorID != "999" {
+		t.Fatalf("expected AuthorID 999, got %s", res.AuthorID)
+	}
+}
+
+func TestLazyLibrarianClient_AddAuthor_NoBooks(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("books") != "" {
+			t.Errorf("expected books param to be absent, got %s", r.URL.Query().Get("books"))
+		}
+		w.Write([]byte("OK"))
+	}))
+	defer srv.Close()
+
+	c := NewLazyLibrarianClient(srv.URL, "key", 10)
+	_, err := c.AddAuthor(context.Background(), "999", false)
+	if err != nil {
+		t.Fatalf("AddAuthor(fetchBooks=false) error: %v", err)
+	}
+}
+
+func TestLazyLibrarianClient_GetBookStatus(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`[
+			{"bookid":"100","bookname":"Found Book","status":"Skipped","audiostatus":"Wanted","bookfile":"","audiofile":""},
+			{"bookid":"200","bookname":"Other Book","status":"Have","audiostatus":"Have","bookfile":"file.epub","audiofile":"file.m4b"}
+		]`))
+	}))
+	defer srv.Close()
+
+	c := NewLazyLibrarianClient(srv.URL, "key", 10)
+	status, err := c.GetBookStatus(context.Background(), "100")
+	if err != nil {
+		t.Fatalf("GetBookStatus() error: %v", err)
+	}
+	if status.BookID != "100" {
+		t.Fatalf("expected BookID 100, got %s", status.BookID)
+	}
+	if status.Title != "Found Book" {
+		t.Fatalf("expected Title 'Found Book', got %s", status.Title)
+	}
+	if status.Status != "Skipped" {
+		t.Fatalf("expected Status 'Skipped', got %s", status.Status)
+	}
+	if status.AudioStatus != "Wanted" {
+		t.Fatalf("expected AudioStatus 'Wanted', got %s", status.AudioStatus)
+	}
+}
+
+func TestLazyLibrarianClient_GetBookStatus_NotFound(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`[{"bookid":"999","bookname":"Only Book"}]`))
+	}))
+	defer srv.Close()
+
+	c := NewLazyLibrarianClient(srv.URL, "key", 10)
+	_, err := c.GetBookStatus(context.Background(), "nonexistent")
+	if err == nil {
+		t.Fatal("expected error for nonexistent book")
+	}
+}
+
+func TestLazyLibrarianClient_ImportAlternate(t *testing.T) {
+	t.Run("ebook", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Query().Get("cmd") != "importAlternate" {
+				t.Errorf("expected cmd=importAlternate")
+			}
+			if r.URL.Query().Get("library") != "eBook" {
+				t.Errorf("expected library=eBook, got %s", r.URL.Query().Get("library"))
+			}
+			if r.URL.Query().Get("dir") != "/path/to/alt" {
+				t.Errorf("expected dir=/path/to/alt, got %s", r.URL.Query().Get("dir"))
+			}
+			w.Write([]byte("OK"))
+		}))
+		defer srv.Close()
+
+		c := NewLazyLibrarianClient(srv.URL, "key", 10)
+		if err := c.ImportAlternate(context.Background(), "/path/to/alt", model.BookFormatEbook); err != nil {
+			t.Fatalf("ImportAlternate() error: %v", err)
+		}
+	})
+
+	t.Run("audiobook", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Query().Get("cmd") != "importAlternate" {
+				t.Errorf("expected cmd=importAlternate")
+			}
+			if r.URL.Query().Get("library") != "AudioBook" {
+				t.Errorf("expected library=AudioBook, got %s", r.URL.Query().Get("library"))
+			}
+			if r.URL.Query().Get("dir") != "" {
+				t.Errorf("expected empty dir, got %s", r.URL.Query().Get("dir"))
+			}
+			w.Write([]byte("OK"))
+		}))
+		defer srv.Close()
+
+		c := NewLazyLibrarianClient(srv.URL, "key", 10)
+		if err := c.ImportAlternate(context.Background(), "", model.BookFormatAudiobook); err != nil {
+			t.Fatalf("ImportAlternate() error: %v", err)
+		}
+	})
 }
 
 func TestLazyLibrarianClient_ErrorResponse(t *testing.T) {
@@ -109,8 +247,11 @@ func TestLazyLibrarianClient_ErrorResponse(t *testing.T) {
 	}))
 	defer srv.Close()
 
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+
 	c := NewLazyLibrarianClient(srv.URL, "key", 10)
-	if err := c.Ping(context.Background()); err == nil {
+	if err := c.Ping(ctx); err == nil {
 		t.Fatal("expected error from server error response")
 	}
 }

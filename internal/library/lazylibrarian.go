@@ -34,8 +34,28 @@ func NewLazyLibrarianClient(baseURL, apiKey string, timeout int) *LazyLibrarianC
 
 var _ BookClient = (*LazyLibrarianClient)(nil)
 
+func (c *LazyLibrarianClient) retry(ctx context.Context, fn func() error) error {
+	var err error
+	delays := []time.Duration{5 * time.Second, 30 * time.Second, 120 * time.Second}
+	for i := 0; i <= len(delays); i++ {
+		if i > 0 {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(delays[i-1]):
+			}
+		}
+		if err = fn(); err == nil {
+			return nil
+		}
+	}
+	return err
+}
+
 func (c *LazyLibrarianClient) Ping(ctx context.Context) error {
-	return c.doOK(ctx, url.Values{"cmd": {"getVersion"}})
+	return c.retry(ctx, func() error {
+		return c.doOK(ctx, url.Values{"cmd": {"getVersion"}})
+	})
 }
 
 func (c *LazyLibrarianClient) AddAuthor(ctx context.Context, authorID string, fetchBooks bool) (*model.AuthorResult, error) {
@@ -46,7 +66,9 @@ func (c *LazyLibrarianClient) AddAuthor(ctx context.Context, authorID string, fe
 	if fetchBooks {
 		params.Set("books", "true")
 	}
-	if err := c.doOK(ctx, params); err != nil {
+	if err := c.retry(ctx, func() error {
+		return c.doOK(ctx, params)
+	}); err != nil {
 		return nil, err
 	}
 	return &model.AuthorResult{AuthorID: authorID}, nil
@@ -57,7 +79,9 @@ func (c *LazyLibrarianClient) AddBook(ctx context.Context, bookID string) (*mode
 		"cmd": {"addBook"},
 		"id":  {bookID},
 	}
-	if err := c.doOK(ctx, params); err != nil {
+	if err := c.retry(ctx, func() error {
+		return c.doOK(ctx, params)
+	}); err != nil {
 		return nil, err
 	}
 	return &model.BookResult{BookID: bookID}, nil
@@ -78,7 +102,9 @@ func (c *LazyLibrarianClient) QueueBook(ctx context.Context, bookID string, form
 		"id":   {bookID},
 		"type": {c.formatParam(format)},
 	}
-	return c.doOK(ctx, params)
+	return c.retry(ctx, func() error {
+		return c.doOK(ctx, params)
+	})
 }
 
 func (c *LazyLibrarianClient) UnqueueBook(ctx context.Context, bookID string, format model.BookFormat) error {
@@ -87,7 +113,9 @@ func (c *LazyLibrarianClient) UnqueueBook(ctx context.Context, bookID string, fo
 		"id":   {bookID},
 		"type": {c.formatParam(format)},
 	}
-	return c.doOK(ctx, params)
+	return c.retry(ctx, func() error {
+		return c.doOK(ctx, params)
+	})
 }
 
 func (c *LazyLibrarianClient) GetBookStatus(ctx context.Context, bookID string) (*model.BookStatus, error) {
@@ -95,7 +123,9 @@ func (c *LazyLibrarianClient) GetBookStatus(ctx context.Context, bookID string) 
 		"cmd": {"getAllBooks"},
 	}
 	var books []llBook
-	if err := c.doJSON(ctx, params, &books); err != nil {
+	if err := c.retry(ctx, func() error {
+		return c.doJSON(ctx, params, &books)
+	}); err != nil {
 		return nil, err
 	}
 	for _, b := range books {
@@ -119,7 +149,9 @@ func (c *LazyLibrarianClient) GetSeriesMembers(ctx context.Context, seriesID str
 		"series": {seriesID},
 	}
 	var raw []llSeriesMember
-	if err := c.doJSON(ctx, params, &raw); err != nil {
+	if err := c.retry(ctx, func() error {
+		return c.doJSON(ctx, params, &raw)
+	}); err != nil {
 		return nil, err
 	}
 	members := make([]*model.SeriesMember, 0, len(raw))
@@ -144,7 +176,9 @@ func (c *LazyLibrarianClient) ImportAlternate(ctx context.Context, dir string, f
 	if dir != "" {
 		params.Set("dir", dir)
 	}
-	return c.doOK(ctx, params)
+	return c.retry(ctx, func() error {
+		return c.doOK(ctx, params)
+	})
 }
 
 func (c *LazyLibrarianClient) doOK(ctx context.Context, params url.Values) error {

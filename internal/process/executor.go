@@ -368,6 +368,15 @@ func (e *Executor) updateLidarrCache(ctx context.Context, artists []library.Lida
 	}
 }
 
+func (e *Executor) PreWarmBookClient(ctx context.Context) {
+	if e.bookClient == nil {
+		return
+	}
+	if err := e.bookClient.Ping(ctx); err != nil {
+		e.log.Warn().Err(err).Msg("pre-warm LazyLibrarian")
+	}
+}
+
 func (e *Executor) HealthCheck(ctx context.Context, checkProwlarr, checkDownloader, checkLibrary bool) HealthCheckResult {
 	var result HealthCheckResult
 
@@ -395,6 +404,11 @@ func (e *Executor) HealthCheck(ctx context.Context, checkProwlarr, checkDownload
 		if e.lidarr != nil {
 			if err := e.lidarr.Ping(ctx); err != nil {
 				result.Warnings = append(result.Warnings, fmt.Sprintf("Lidarr: %v", err))
+			}
+		}
+		if e.bookClient != nil {
+			if err := e.bookClient.Ping(ctx); err != nil {
+				result.Warnings = append(result.Warnings, fmt.Sprintf("LazyLibrarian: %v", err))
 			}
 		}
 	}
@@ -3304,14 +3318,29 @@ func (e *Executor) ProcessBookLibraryDecisions(ctx context.Context, events []db.
 			continue
 		}
 
+		pref := evt.Event.FormatPref
 		if searchNow {
-			e.log.Info().Str("book", title).Str("ll_id", bookID).Msg("LazyLibrarian: Wanted, LL will search")
-		} else {
-			if err := e.bookClient.UnqueueBook(ctx, bookID, model.BookFormatEbook); err != nil {
-				e.log.Warn().Err(err).Str("book", title).Msg("lazylibrarian unqueueBook ebook")
+			if pref == model.BookFormatEbook || pref == model.BookFormatBoth {
+				if err := e.bookClient.QueueBook(ctx, bookID, model.BookFormatEbook); err != nil {
+					e.log.Warn().Err(err).Str("book", title).Msg("lazylibrarian queueBook ebook")
+				}
 			}
-			if err := e.bookClient.UnqueueBook(ctx, bookID, model.BookFormatAudiobook); err != nil {
-				e.log.Warn().Err(err).Str("book", title).Msg("lazylibrarian unqueueBook audiobook")
+			if pref == model.BookFormatAudiobook || pref == model.BookFormatBoth {
+				if err := e.bookClient.QueueBook(ctx, bookID, model.BookFormatAudiobook); err != nil {
+					e.log.Warn().Err(err).Str("book", title).Msg("lazylibrarian queueBook audiobook")
+				}
+			}
+			e.log.Info().Str("book", title).Str("ll_id", bookID).Msg("LazyLibrarian: Wanted")
+		} else {
+			if pref == model.BookFormatEbook || pref == model.BookFormatBoth {
+				if err := e.bookClient.UnqueueBook(ctx, bookID, model.BookFormatEbook); err != nil {
+					e.log.Warn().Err(err).Str("book", title).Msg("lazylibrarian unqueueBook ebook")
+				}
+			}
+			if pref == model.BookFormatAudiobook || pref == model.BookFormatBoth {
+				if err := e.bookClient.UnqueueBook(ctx, bookID, model.BookFormatAudiobook); err != nil {
+					e.log.Warn().Err(err).Str("book", title).Msg("lazylibrarian unqueueBook audiobook")
+				}
 			}
 			e.log.Info().Str("book", title).Str("ll_id", bookID).Msg("LazyLibrarian: Skipped")
 		}

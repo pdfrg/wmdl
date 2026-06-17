@@ -512,7 +512,7 @@ func runProcessForWeek(ctx context.Context, database *db.DB, cfg *config.Config,
 	warmCtx, warmCancel := context.WithCancel(ctx)
 	defer warmCancel()
 
-	preWarmDone := make(chan struct{}, 3)
+	preWarmDone := make(chan struct{}, 4)
 	if !skipLibrary {
 		go func() { exec.PreWarmRadarr(warmCtx); preWarmDone <- struct{}{} }()
 		go func() { exec.PreWarmSonarr(warmCtx); preWarmDone <- struct{}{} }()
@@ -521,8 +521,14 @@ func runProcessForWeek(ctx context.Context, database *db.DB, cfg *config.Config,
 		} else {
 			preWarmDone <- struct{}{} // skip Lidarr
 		}
+		if hasBooks && exec.BookClientAvailable() {
+			go func() { exec.PreWarmBookClient(warmCtx); preWarmDone <- struct{}{} }()
+		} else {
+			preWarmDone <- struct{}{} // skip book client
+		}
 		fmt.Fprintf(os.Stderr, "  Pre-warming library data in background...\n")
 	} else {
+		preWarmDone <- struct{}{}
 		preWarmDone <- struct{}{}
 		preWarmDone <- struct{}{}
 		preWarmDone <- struct{}{}
@@ -677,8 +683,9 @@ func runProcessForWeek(ctx context.Context, database *db.DB, cfg *config.Config,
 
 	// ─── ALL LIBRARY DECISIONS ──────────────────────────────────
 	if !skipLibrary {
-		if hasSearchable || hasAnimeAiring || hasAlbums {
+		if hasSearchable || hasAnimeAiring || hasAlbums || (hasBooks && exec.BookClientAvailable()) {
 			fmt.Fprintf(os.Stderr, "  Waiting for library data...\n")
+			<-preWarmDone
 			<-preWarmDone
 			<-preWarmDone
 			<-preWarmDone
