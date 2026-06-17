@@ -246,23 +246,19 @@ Goal: Replace the current "download → ABS scan" pipeline with proper *arr-styl
 
 **Architecture:**
 ```
-wmdl discover → review → addToLL (unmonitored) → queueBook → LL searches via Torznab/Prowlarr → download → auto-import+rename
-
-                    OR (wmdl-drives-search):
-
-wmdl discover → review → addToLL (unmonitored) → wmdl searches Prowlarr → download → forceProcess (LL imports+renames)
+wmdl discover → review → addToLL (addBook+unqueueBook) → wmdl searches Prowlarr → download to alt folder → importAlternate (LL copies to library + renames)
 ```
 
 **7.1 — LazyLibrarian Client** (`internal/library/lazylibrarian.go`)
 - [ ] `LazyLibrarianClient` struct following same pattern as `radarr.go`/`sonarr.go`
 - [ ] `Ping()` — health check
-- [ ] `AddAuthor(authorID, fetchBooks)` — add author with all books as `Skipped` (unmonitored)
-- [ ] `AddBook(bookID)` — add individual book to DB as `Skipped`
-- [ ] `QueueBook(bookID, format)` — set `Wanted` (triggers LL search)
-- [ ] `UnqueueBook(bookID, format)` — set `Skipped`
+- [ ] `AddAuthor(authorID, fetchBooks)` — add author with all books (status per config)
+- [ ] `AddBook(bookID)` — add individual book to DB (status per config; LL uses `NEWBOOK_STATUS`/`NEWAUDIO_STATUS`)
+- [ ] `UnqueueBook(bookID, format)` — set `Skipped` (undoes the config-driven Wanted status)
+- [ ] `QueueBook(bookID, format)` — set `Wanted`
 - [ ] `GetBookStatus(bookID)` — get current status (Skipped/Wanted/Have/Snatched/Failed)
 - [ ] `GetSeriesMembers(seriesID)` — series membership for Phase 3
-- [ ] `TriggerImport(dir)` — call `forceProcess` on completed download dir
+- [ ] `ImportAlternate(dir, format)` — call `importAlternate?&dir=&library=eBook|AudioBook` on alternate folder (file metadata matching, no `LL.(bookid)` required)
 - [ ] `SearchBook(bookID, format)` — trigger specific book search
 - [ ] Compile-time interface check: `var _ Client = (*LazyLibrarianClient)(nil)`
 
@@ -274,8 +270,8 @@ wmdl discover → review → addToLL (unmonitored) → wmdl searches Prowlarr �
 
 **7.3 — Pipeline Integration** (`internal/process/executor.go`)
 - [ ] `addToLazyLibrarian()` — called from book processing pipeline
-- [ ] For arr/auto/yolo modes: `queueBook` after add → LL handles search
-- [ ] For interactive mode: add as `Skipped`, wmdl handles Prowlarr, then call LL import
+- [ ] Interactive mode flow: `AddBook(id)` → `UnqueueBook(id, ebook)` → `UnqueueBook(id, audiobook)` → wmdl searches Prowlarr → download to alt folder → external `importAlternate` trigger
+- [ ] User keeps `NEWBOOK_STATUS`/`NEWAUDIO_STATUS` as `Wanted`; the `UnqueueBook` calls revert to `Skipped` so LL won't search in parallel
 - [ ] Replace `UploadToAudiobookshelf()` with LL import flow
 - [ ] Keep ABS as optional scan trigger alongside LL
 
@@ -295,7 +291,7 @@ Goal: Abstract book backend behind a common interface so users can choose their 
 
 **8.1 — Interface Definition**
 - [ ] Extract `BookClient` interface from LL implementation in `internal/library/book_client.go`
-- [ ] Methods: `Ping`, `AddAuthor`, `AddBook`, `QueueBook`, `UnqueueBook`, `GetBookStatus`, `GetSeriesMembers`, `TriggerImport`, `SearchBook`
+- [ ] Methods: `Ping`, `AddAuthor`, `AddBook`, `QueueBook`, `UnqueueBook`, `GetBookStatus`, `GetSeriesMembers`, `ImportAlternate`, `SearchBook`
 - [ ] Factory function: `NewBookClient(config)` based on `book_backend` type
 
 **8.2 — Shelfarr Backend** (`internal/library/shelfarr.go`)

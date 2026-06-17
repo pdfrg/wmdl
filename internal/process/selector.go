@@ -11,14 +11,14 @@ import (
 )
 
 type colWidths struct {
-	resolution    int
-	hdr           int
-	source        int
-	codec         int
-	seeders       int
-	size          int
-	releaseGroup  int
-	indexerName   int
+	resolution   int
+	hdr          int
+	source       int
+	codec        int
+	seeders      int
+	size         int
+	releaseGroup int
+	indexerName  int
 }
 
 type Selector struct {

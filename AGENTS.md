@@ -106,9 +106,9 @@ Book library management is abstracted behind a `BookClient` interface (see `inte
 
 LL is the primary *arr-style backend for books. Key patterns:
 
-- **Adding books:** `addAuthorID?&id=AUTHORID&books=true` adds author + all books with status `Skipped` (unmonitored). No search is triggered for `Skipped` books.
-- **Triggering search:** `queueBook?&id=BOOKID&type=eBook` sets status to `Wanted`, which triggers LL to search via its configured Torznab providers (Prowlarr).
-- **Post-process (wmdl-driven search):** After wmdl downloads, rename the file to include `LL.(bookid)` in the filename, place in LL's download dir, then call `forceProcess?&dir=/path/to/downloads`. LL's Pass 2 handles `LL.(bookid)` named files.
+- **Adding books:** `addBook?&id=BOOKID` adds individual book (status per `NEWBOOK_STATUS`/`NEWAUDIO_STATUS` config). wmdl then calls `unqueueBook?&id=BOOKID&type=eBook|AudioBook` to set status to `Skipped` so LL doesn't also search.
+- **Importing (wmdl-driven search):** wmdl downloads to LL's alternate import folder. An external trigger (qBittorrent completion script or cron) calls `importAlternate?&library=eBook|AudioBook`. LL reads file metadata (EPUB tags, id3 tags), matches to DB, copies/moves to library, and marks `Have`.
+- **Triggering LL search:** `queueBook?&id=BOOKID&type=eBook` sets `Wanted` for the LL-only search path (not used in wmdl-driven mode).
 - **Status values:** `Wanted` (searching), `Skipped` (in library, no search), `Have` (on disk), `Snatched` (downloading), `Failed`.
 - **Series:** LL has full series support. `getSeriesMembers` returns all books in a series for Phase 3 gap checking.
 - **Dual-format:** Separate `Status` (ebook) and `AudioStatus` (audiobook) per book.
@@ -124,7 +124,7 @@ type BookClient interface {
     UnqueueBook(ctx context.Context, bookID string, format BookFormat) error
     GetBookStatus(ctx context.Context, bookID string) (*BookStatus, error)
     GetSeriesMembers(ctx context.Context, seriesID string) ([]*SeriesMember, error)
-    TriggerImport(ctx context.Context, dir string) error
+    ImportAlternate(ctx context.Context, dir string, format BookFormat) error
 }
 ```
 

@@ -273,3 +273,30 @@ type BookDownload struct {
 	ClientTorrentID  string
 	CreatedAt        string
 }
+
+type AuthorResult struct {
+	AuthorID string
+	Name     string
+}
+
+type BookResult struct {
+	BookID string
+	Title  string
+}
+
+type BookStatus struct {
+	BookID      string
+	Title       string
+	Status      string // Skipped, Wanted, Have, Open, Ignored, Snatched, Failed
+	AudioStatus string
+	BookFile    string
+	AudioFile   string
+}
+
+type SeriesMember struct {
+	Position   int
+	Title      string
+	AuthorName string
+	AuthorID   string
+	BookID     string
+}

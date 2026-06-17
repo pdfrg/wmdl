@@ -75,6 +75,13 @@ downloader:
 
 # ─── Library Managers ─────────────────────────────────────
 library:
+  # Book backend type: "lazylibrarian" or "none" (default: lazylibrarian)
+  book_backend: "lazylibrarian"
+  lazylibrarian:
+    url: "http://lazylibrarian.local:5299"
+    api_key: ""
+    # Request timeout in seconds (default: 120)
+    # timeout: 120
   radarr:
     url: "http://radarr.local:7878"
     api_key: ""

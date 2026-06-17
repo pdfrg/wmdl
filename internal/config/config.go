@@ -108,9 +108,11 @@ type CategoryConfig struct {
 }
 
 type LibraryConfig struct {
-	Radarr RadarrConfig `mapstructure:"radarr"`
-	Sonarr SonarrConfig `mapstructure:"sonarr"`
-	Lidarr LidarrConfig `mapstructure:"lidarr"`
+	Radarr        RadarrConfig        `mapstructure:"radarr"`
+	Sonarr        SonarrConfig        `mapstructure:"sonarr"`
+	Lidarr        LidarrConfig        `mapstructure:"lidarr"`
+	LazyLibrarian LazyLibrarianConfig `mapstructure:"lazylibrarian"`
+	BookBackend   string              `mapstructure:"book_backend"`
 }
 
 type LidarrConfig struct {
@@ -122,6 +124,12 @@ type LidarrConfig struct {
 	Monitor          string `mapstructure:"monitor"`
 	MonitorNewAlbums bool   `mapstructure:"monitor_new_albums"`
 	Timeout          int    `mapstructure:"timeout"`
+}
+
+type LazyLibrarianConfig struct {
+	URL     string `mapstructure:"url"`
+	APIKey  string `mapstructure:"api_key"`
+	Timeout int    `mapstructure:"timeout"`
 }
 
 type RadarrConfig struct {
@@ -438,6 +446,19 @@ func (c *Config) Validate() error {
 		errs = append(errs, "library.lidarr.api_key is required when library.lidarr.url is set")
 	}
 
+	// Validate LazyLibrarian config
+	bookBackend := c.Library.BookBackend
+	if bookBackend == "" {
+		bookBackend = "lazylibrarian"
+	}
+	if bookBackend == "lazylibrarian" {
+		if c.Library.LazyLibrarian.URL != "" && c.Library.LazyLibrarian.APIKey == "" {
+			errs = append(errs, "library.lazylibrarian.api_key is required when library.lazylibrarian.url is set")
+		}
+	} else if bookBackend != "none" && bookBackend != "" {
+		errs = append(errs, "library.book_backend must be one of: lazylibrarian, none")
+	}
+
 	// Validate book config
 	if c.MediaTypes.Books.Enabled {
 		switch c.MediaTypes.Books.DefaultFormat {
@@ -519,6 +540,8 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("library.lidarr.timeout", 300)
 	v.SetDefault("library.lidarr.monitor_new_albums", true)
 	v.SetDefault("library.lidarr.monitor", "all")
+	v.SetDefault("library.lazylibrarian.timeout", 120)
+	v.SetDefault("library.book_backend", "lazylibrarian")
 
 	v.SetDefault("media_types.physical_lookback_weeks", 0)
 	v.SetDefault("media_types.movies.enabled", true)

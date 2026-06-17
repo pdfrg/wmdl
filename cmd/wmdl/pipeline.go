@@ -584,12 +584,10 @@ func runProcessForWeek(ctx context.Context, database *db.DB, cfg *config.Config,
 			musicResults = exec.SearchMusicAll(ctx, albumEventsForProcess)
 		}
 
-		// Search all books (skip for arr/auto/yolo — no library integration yet)
+		// Search all books (skip arr/auto/yolo — LL handles search)
 		if hasBooks {
 			bookMode := cfg.MediaTypeMode(model.MediaTypeBook)
-			if bookMode == "arr" || bookMode == "auto" || bookMode == "yolo" {
-				log.Info().Msgf("books in %s mode not yet supported — skipping", bookMode)
-			} else {
+			if bookMode != "arr" && bookMode != "auto" && bookMode != "yolo" {
 				bookResults = exec.SearchBooksAll(ctx, bookEventsForProcess)
 			}
 		}
@@ -672,8 +670,9 @@ func runProcessForWeek(ctx context.Context, database *db.DB, cfg *config.Config,
 		}
 	}
 
+	var bookDownloadedIDs []int64
 	if hasBooks && (cfg.ProcessMode == "batch" || cfg.ProcessMode == "") {
-		exec.PickBookResults(ctx, bookResults)
+		bookDownloadedIDs = exec.PickBookResults(ctx, bookResults)
 	}
 
 	// ─── ALL LIBRARY DECISIONS ──────────────────────────────────
@@ -691,6 +690,27 @@ func runProcessForWeek(ctx context.Context, database *db.DB, cfg *config.Config,
 
 		if len(albumResults) > 0 {
 			exec.ProcessMusicAlbumDecisions(ctx, albumResults)
+		}
+
+		// Book library decisions (add to LL)
+		if hasBooks && exec.BookClientAvailable() {
+			bookMode := cfg.MediaTypeMode(model.MediaTypeBook)
+			var bookEvents []db.EventWithBook
+			if bookMode == "arr" || bookMode == "auto" || bookMode == "yolo" {
+				bookEvents = bookEventsForProcess
+			} else if len(bookDownloadedIDs) > 0 {
+				// Filter to only downloaded events
+				idSet := make(map[int64]bool, len(bookDownloadedIDs))
+				for _, id := range bookDownloadedIDs {
+					idSet[id] = true
+				}
+				for _, ev := range bookEventsForProcess {
+					if idSet[ev.Event.ID] {
+						bookEvents = append(bookEvents, ev)
+					}
+				}
+			}
+			exec.ProcessBookLibraryDecisions(ctx, bookEvents)
 		}
 	}
 
@@ -722,16 +742,33 @@ func runProcessForWeek(ctx context.Context, database *db.DB, cfg *config.Config,
 		exec.SearchAiringAnimeEarlierSeasons(ctx, ae, series)
 	}
 
-	// ─── Book upload trigger (no user attention needed) ─────────
-	if hasBooks {
+	// ─── Book interactive processing (search+download only) ─────
+	var bookInteractiveIDs []int64
+	if hasBooks && cfg.ProcessMode != "batch" && cfg.ProcessMode != "" {
 		bookMode := cfg.MediaTypeMode(model.MediaTypeBook)
-		if bookMode == "arr" || bookMode == "auto" || bookMode == "yolo" {
-			// Already logged "skipping" in search phase
-		} else if cfg.ProcessMode == "batch" || cfg.ProcessMode == "" {
-			// batch mode — no media server scan needed
-		} else {
-			exec.ProcessBooks(ctx, bookEventsForProcess)
+		if bookMode == "full" {
+			bookInteractiveIDs = exec.ProcessBooks(ctx, bookEventsForProcess)
 		}
+	}
+
+	// Book library decisions for interactive mode (if not already handled above)
+	if hasBooks && exec.BookClientAvailable() && cfg.ProcessMode != "batch" && cfg.ProcessMode != "" {
+		bookMode := cfg.MediaTypeMode(model.MediaTypeBook)
+		var bookEvents []db.EventWithBook
+		if bookMode == "arr" || bookMode == "auto" || bookMode == "yolo" {
+			bookEvents = bookEventsForProcess
+		} else if len(bookInteractiveIDs) > 0 {
+			idSet := make(map[int64]bool, len(bookInteractiveIDs))
+			for _, id := range bookInteractiveIDs {
+				idSet[id] = true
+			}
+			for _, ev := range bookEventsForProcess {
+				if idSet[ev.Event.ID] {
+					bookEvents = append(bookEvents, ev)
+				}
+			}
+		}
+		exec.ProcessBookLibraryDecisions(ctx, bookEvents)
 	}
 
 	if hasSearchable || hasAnimeAiring || hasAlbums || hasBooks {

@@ -61,14 +61,15 @@ type PickedItem struct {
 }
 
 type Executor struct {
-	log    zerolog.Logger
-	cfg    *config.Config
-	db     *db.DB
-	prowl  *search.ProwlarrClient
-	dl     download.Client
-	radarr *library.RadarrClient
-	sonarr *library.SonarrClient
-	lidarr *library.LidarrClient
+	log        zerolog.Logger
+	cfg        *config.Config
+	db         *db.DB
+	prowl      *search.ProwlarrClient
+	dl         download.Client
+	radarr     *library.RadarrClient
+	sonarr     *library.SonarrClient
+	lidarr     *library.LidarrClient
+	bookClient library.BookClient
 
 	Unfound           []string
 	Skipped           []string
@@ -90,6 +91,15 @@ func NewExecutor(logger zerolog.Logger, cfg *config.Config, database *db.DB) *Ex
 	if cfg.Library.Lidarr.URL != "" {
 		lidarr = library.NewLidarrClient(cfg.Library.Lidarr.URL, cfg.Library.Lidarr.APIKey, cfg.Library.Lidarr.Timeout)
 	}
+	var bookClient library.BookClient
+	if cfg.Library.LazyLibrarian.URL != "" {
+		bookClient = library.NewBookClient(
+			cfg.Library.BookBackend,
+			cfg.Library.LazyLibrarian.URL,
+			cfg.Library.LazyLibrarian.APIKey,
+			cfg.Library.LazyLibrarian.Timeout,
+		)
+	}
 	catMap := map[string]int{
 		"videos":     cfg.Prowlarr.IndexerIDs.Videos,
 		"music":      cfg.Prowlarr.IndexerIDs.Music,
@@ -98,14 +108,15 @@ func NewExecutor(logger zerolog.Logger, cfg *config.Config, database *db.DB) *Ex
 		"audiobooks": cfg.Prowlarr.IndexerIDs.Audiobooks,
 	}
 	return &Executor{
-		log:    logger,
-		cfg:    cfg,
-		db:     database,
-		prowl:  search.NewProwlarrClient(cfg.Prowlarr.URL, cfg.Prowlarr.APIKey, cfg.Prowlarr.Timeout, catMap),
-		dl:     dl,
-		radarr: radarr,
-		sonarr: sonarr,
-		lidarr: lidarr,
+		log:        logger,
+		cfg:        cfg,
+		db:         database,
+		prowl:      search.NewProwlarrClient(cfg.Prowlarr.URL, cfg.Prowlarr.APIKey, cfg.Prowlarr.Timeout, catMap),
+		dl:         dl,
+		radarr:     radarr,
+		sonarr:     sonarr,
+		lidarr:     lidarr,
+		bookClient: bookClient,
 	}
 }
 
@@ -3104,7 +3115,7 @@ func (e *Executor) SearchBooksAll(ctx context.Context, events []db.EventWithBook
 }
 
 // PickBookResults presents pickers for pre-searched book results and downloads.
-func (e *Executor) PickBookResults(ctx context.Context, results []*BookSearchResult) {
+func (e *Executor) PickBookResults(ctx context.Context, results []*BookSearchResult) []int64 {
 	type formatsDone struct {
 		ebook, audiobook bool
 	}
@@ -3142,6 +3153,7 @@ func (e *Executor) PickBookResults(ctx context.Context, results []*BookSearchRes
 		}
 	}
 
+	var downloaded []int64
 	for id, f := range done {
 		pref := events[id].Event.FormatPref
 		allDone := false
@@ -3155,16 +3167,20 @@ func (e *Executor) PickBookResults(ctx context.Context, results []*BookSearchRes
 		}
 		if allDone {
 			e.markBookDownloaded(ctx, events[id])
+			downloaded = append(downloaded, id)
 		}
 	}
+	return downloaded
 }
 
-func (e *Executor) ProcessBooks(ctx context.Context, events []db.EventWithBook) {
+func (e *Executor) ProcessBooks(ctx context.Context, events []db.EventWithBook) []int64 {
 	if len(events) == 0 {
-		return
+		return nil
 	}
 
 	fmt.Fprintln(os.Stderr, "\n── Book Processing ──")
+
+	var downloaded []int64
 
 	for _, evt := range events {
 		title := evt.Book.Title
@@ -3188,7 +3204,7 @@ func (e *Executor) ProcessBooks(ctx context.Context, events []db.EventWithBook) 
 				n, err := e.PickBook(ctx, sr)
 				if errors.Is(err, ErrAbort) {
 					e.log.Info().Msg("pipeline aborted by user")
-					return
+					return nil
 				}
 				if err != nil {
 					e.log.Warn().Err(err).Str("book", title).Msg("ebook picker error")
@@ -3214,7 +3230,7 @@ func (e *Executor) ProcessBooks(ctx context.Context, events []db.EventWithBook) 
 				n, err := e.PickBook(ctx, sr)
 				if errors.Is(err, ErrAbort) {
 					e.log.Info().Msg("pipeline aborted by user")
-					return
+					return nil
 				}
 				if err != nil {
 					e.log.Warn().Err(err).Str("book", title).Msg("audiobook picker error")
@@ -3246,6 +3262,58 @@ func (e *Executor) ProcessBooks(ctx context.Context, events []db.EventWithBook) 
 		}
 		if allDone {
 			e.markBookDownloaded(ctx, evt)
+			downloaded = append(downloaded, evt.Event.ID)
+		}
+	}
+	return downloaded
+}
+
+func (e *Executor) BookClientAvailable() bool {
+	return e.bookClient != nil
+}
+
+func (e *Executor) ProcessBookLibraryDecisions(ctx context.Context, events []db.EventWithBook) {
+	mode := e.cfg.MediaTypeMode(model.MediaTypeBook)
+	autoConfirm := mode == "auto" || mode == "yolo"
+	searchNow := mode == "arr" || mode == "auto" || mode == "yolo"
+
+	if e.bookClient == nil {
+		return
+	}
+
+	for _, evt := range events {
+		if evt.Book.HardcoverID == 0 {
+			e.log.Warn().Str("book", evt.Book.Title).Msg("no HardcoverID, skipping LazyLibrarian")
+			continue
+		}
+
+		title := evt.Book.Title
+		author := evt.Author.Name
+		bookID := strconv.Itoa(int(evt.Book.HardcoverID))
+
+		if !autoConfirm {
+			label := fmt.Sprintf("  Add \"%s\" by %s to LazyLibrarian?", title, author)
+			if !promptYesNo(ctx, label) {
+				e.log.Info().Str("book", title).Msg("skipped LazyLibrarian (user declined)")
+				continue
+			}
+		}
+
+		if _, err := e.bookClient.AddBook(ctx, bookID); err != nil {
+			e.log.Warn().Err(err).Str("book", title).Msg("lazylibrarian addBook")
+			continue
+		}
+
+		if searchNow {
+			e.log.Info().Str("book", title).Str("ll_id", bookID).Msg("LazyLibrarian: Wanted, LL will search")
+		} else {
+			if err := e.bookClient.UnqueueBook(ctx, bookID, model.BookFormatEbook); err != nil {
+				e.log.Warn().Err(err).Str("book", title).Msg("lazylibrarian unqueueBook ebook")
+			}
+			if err := e.bookClient.UnqueueBook(ctx, bookID, model.BookFormatAudiobook); err != nil {
+				e.log.Warn().Err(err).Str("book", title).Msg("lazylibrarian unqueueBook audiobook")
+			}
+			e.log.Info().Str("book", title).Str("ll_id", bookID).Msg("LazyLibrarian: Skipped")
 		}
 	}
 }

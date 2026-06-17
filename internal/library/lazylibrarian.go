@@ -1,0 +1,210 @@
+package library
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"net/url"
+	"strings"
+	"time"
+
+	"github.com/pdfrg/wmdl/internal/model"
+)
+
+type LazyLibrarianClient struct {
+	baseURL string
+	apiKey  string
+	http    *http.Client
+}
+
+func NewLazyLibrarianClient(baseURL, apiKey string, timeout int) *LazyLibrarianClient {
+	if timeout <= 0 {
+		timeout = 120
+	}
+	return &LazyLibrarianClient{
+		baseURL: strings.TrimRight(baseURL, "/"),
+		apiKey:  apiKey,
+		http: &http.Client{
+			Timeout: time.Duration(timeout) * time.Second,
+		},
+	}
+}
+
+var _ BookClient = (*LazyLibrarianClient)(nil)
+
+func (c *LazyLibrarianClient) Ping(ctx context.Context) error {
+	return c.doOK(ctx, url.Values{"cmd": {"getVersion"}})
+}
+
+func (c *LazyLibrarianClient) AddAuthor(ctx context.Context, authorID string, fetchBooks bool) (*model.AuthorResult, error) {
+	params := url.Values{
+		"cmd": {"addAuthorID"},
+		"id":  {authorID},
+	}
+	if fetchBooks {
+		params.Set("books", "true")
+	}
+	if err := c.doOK(ctx, params); err != nil {
+		return nil, err
+	}
+	return &model.AuthorResult{AuthorID: authorID}, nil
+}
+
+func (c *LazyLibrarianClient) AddBook(ctx context.Context, bookID string) (*model.BookResult, error) {
+	params := url.Values{
+		"cmd": {"addBook"},
+		"id":  {bookID},
+	}
+	if err := c.doOK(ctx, params); err != nil {
+		return nil, err
+	}
+	return &model.BookResult{BookID: bookID}, nil
+}
+
+func (c *LazyLibrarianClient) formatParam(f model.BookFormat) string {
+	switch f {
+	case model.BookFormatAudiobook:
+		return "AudioBook"
+	default:
+		return "eBook"
+	}
+}
+
+func (c *LazyLibrarianClient) QueueBook(ctx context.Context, bookID string, format model.BookFormat) error {
+	params := url.Values{
+		"cmd":  {"queueBook"},
+		"id":   {bookID},
+		"type": {c.formatParam(format)},
+	}
+	return c.doOK(ctx, params)
+}
+
+func (c *LazyLibrarianClient) UnqueueBook(ctx context.Context, bookID string, format model.BookFormat) error {
+	params := url.Values{
+		"cmd":  {"unqueueBook"},
+		"id":   {bookID},
+		"type": {c.formatParam(format)},
+	}
+	return c.doOK(ctx, params)
+}
+
+func (c *LazyLibrarianClient) GetBookStatus(ctx context.Context, bookID string) (*model.BookStatus, error) {
+	params := url.Values{
+		"cmd": {"getAllBooks"},
+	}
+	var books []llBook
+	if err := c.doJSON(ctx, params, &books); err != nil {
+		return nil, err
+	}
+	for _, b := range books {
+		if b.BookID == bookID {
+			return &model.BookStatus{
+				BookID:      b.BookID,
+				Title:       b.Title,
+				Status:      b.Status,
+				AudioStatus: b.AudioStatus,
+				BookFile:    b.BookFile,
+				AudioFile:   b.AudioFile,
+			}, nil
+		}
+	}
+	return nil, fmt.Errorf("lazylibrarian: book %s not found", bookID)
+}
+
+func (c *LazyLibrarianClient) GetSeriesMembers(ctx context.Context, seriesID string) ([]*model.SeriesMember, error) {
+	params := url.Values{
+		"cmd":    {"getSeriesMembers"},
+		"series": {seriesID},
+	}
+	var raw []llSeriesMember
+	if err := c.doJSON(ctx, params, &raw); err != nil {
+		return nil, err
+	}
+	members := make([]*model.SeriesMember, 0, len(raw))
+	for _, m := range raw {
+		members = append(members, &model.SeriesMember{
+			Position:   m.Position,
+			Title:      m.Title,
+			AuthorName: m.AuthorName,
+			AuthorID:   m.AuthorID,
+			BookID:     m.BookID,
+		})
+	}
+	return members, nil
+}
+
+func (c *LazyLibrarianClient) ImportAlternate(ctx context.Context, dir string, format model.BookFormat) error {
+	params := url.Values{
+		"cmd":     {"importAlternate"},
+		"library": {c.formatParam(format)},
+	}
+	if dir != "" {
+		params.Set("dir", dir)
+	}
+	return c.doOK(ctx, params)
+}
+
+func (c *LazyLibrarianClient) doOK(ctx context.Context, params url.Values) error {
+	resp, err := c.get(ctx, params)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("lazylibrarian: reading response: %w", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("lazylibrarian: %s returned %d: %s", params.Get("cmd"), resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+	return nil
+}
+
+func (c *LazyLibrarianClient) doJSON(ctx context.Context, params url.Values, dst interface{}) error {
+	resp, err := c.get(ctx, params)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("lazylibrarian: %s returned %d: %s", params.Get("cmd"), resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+	if err := json.NewDecoder(resp.Body).Decode(dst); err != nil {
+		return fmt.Errorf("lazylibrarian: parsing %s response: %w", params.Get("cmd"), err)
+	}
+	return nil
+}
+
+func (c *LazyLibrarianClient) get(ctx context.Context, params url.Values) (*http.Response, error) {
+	params.Set("apikey", c.apiKey)
+	u := c.baseURL + "/api?" + params.Encode()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	if err != nil {
+		return nil, fmt.Errorf("lazylibrarian: creating request: %w", err)
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("lazylibrarian: %s request: %w", params.Get("cmd"), err)
+	}
+	return resp, nil
+}
+
+type llBook struct {
+	BookID      string `json:"bookid"`
+	Title       string `json:"bookname"`
+	Status      string `json:"status"`
+	AudioStatus string `json:"audiostatus"`
+	BookFile    string `json:"bookfile"`
+	AudioFile   string `json:"audiofile"`
+}
+
+type llSeriesMember struct {
+	Position   int    `json:"position"`
+	Title      string `json:"title"`
+	AuthorName string `json:"author_name"`
+	AuthorID   string `json:"author_id"`
+	BookID     string `json:"book_id"`
+}
