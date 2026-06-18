@@ -132,6 +132,25 @@ func runReviewForWeek(ctx context.Context, database *db.DB, cfg *config.Config, 
 		}
 	}
 
+	decided := approved
+	for _, ev := range events {
+		if ev.Event.Status != model.StatusPending && ev.Event.Status != model.StatusApproved {
+			decided++
+		}
+	}
+	if !hasPending {
+		for _, ev := range albumEvents {
+			if ev.Event.Status != model.StatusPending {
+				decided++
+			}
+		}
+		for _, ev := range bookEvents {
+			if ev.Event.Status != model.StatusPending {
+				decided++
+			}
+		}
+	}
+
 	if !hasPending {
 		if !target.Reviewed {
 			if approved > 0 {
@@ -192,6 +211,42 @@ func runReviewForWeek(ctx context.Context, database *db.DB, cfg *config.Config, 
 			default:
 				fmt.Fprintf(os.Stderr, "Invalid choice.\n")
 			}
+		}
+	}
+
+	// If some items are already decided, offer to review all
+	if hasPending && decided > 0 {
+		fmt.Fprintf(os.Stderr, "Some items already decided. [a] review all  [p] review pending only\n")
+		fmt.Fprintf(os.Stderr, "Choose [p]: ")
+		var choice string
+		if _, err := fmt.Scanln(&choice); err != nil {
+			choice = ""
+		}
+		if strings.ToLower(strings.TrimSpace(choice)) == "a" {
+			tui, err := review.NewReviewTUIWithEvents(events, albumEvents, bookEvents, database, cfg.PosterMode, year, week, prevAnimeWeek, model.BookFormat(cfg.MediaTypes.Books.DefaultFormat))
+			if err != nil {
+				return 0, err
+			}
+			if err := tui.Run(); err != nil {
+				return 0, err
+			}
+			approved = tui.ApprovedCount()
+			_, _, pending := tui.Counts()
+			if pending > 0 {
+				fmt.Fprintf(os.Stderr, "\n%d items still need decisions.\n", pending)
+			} else if approved > 0 {
+				fmt.Fprintf(os.Stderr, "\nApproved %d titles for processing.\n", approved)
+			} else {
+				fmt.Fprintf(os.Stderr, "\nAll items rejected.\n")
+			}
+			target.Reviewed = (pending == 0)
+			if err := database.UpsertWeekState(ctx, target); err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: tracking week state: %v\n", err)
+			}
+			if pending > 0 {
+				return 0, nil
+			}
+			return approved, nil
 		}
 	}
 

@@ -1731,6 +1731,8 @@ func (t *TUI) buildRightContent(tl *model.Title, ev *model.ReleaseEvent, rw int,
 		notes = append(notes, ev.Notes)
 	} else if ev.PreviousStatus == model.StatusRejected {
 		notes = append(notes, "previously rejected")
+	} else if ev.PreviousStatus == model.StatusApproved {
+		notes = append(notes, "previously approved")
 	} else if ev.PreviousStatus == model.StatusDownloaded {
 		notes = append(notes, "previously downloaded")
 	}
