@@ -1285,8 +1285,8 @@ func (r *Runner) processItem(ctx context.Context, item ScrapedItem, progYear, pr
 			return fmt.Errorf("checking existing events: %w", err)
 		}
 
-		// Skip if already pending — don't stack duplicate events
-		if existing != nil && existing.Status == model.StatusPending {
+		// Skip if any existing event — don't reset user decisions
+		if existing != nil {
 			existingEvent = existing
 			return nil
 		}
@@ -1352,8 +1352,8 @@ func (r *Runner) processItem(ctx context.Context, item ScrapedItem, progYear, pr
 		return err
 	}
 
-	// Skip if already pending — don't stack duplicate events
-	if existingEvent != nil && existingEvent.Status == model.StatusPending {
+	// Skip if already has an existing event
+	if existingEvent != nil {
 		return nil
 	}
 
@@ -1457,15 +1457,8 @@ func (r *Runner) processAnimeItem(ctx context.Context, item ScrapedItem, progYea
 		}
 
 		if existing != nil {
-			if existing.Status == model.StatusPending {
-				existingEvent = existing
-				return nil
-			}
-			if existing.Source == item.Source &&
-				(existing.Status == model.StatusDownloaded || existing.Status == model.StatusRejected) {
-				r.log.Info().Str("title", item.Title).Msg("anime already handled, skipping")
-				return nil
-			}
+			existingEvent = existing
+			return nil
 		}
 
 		evt := &model.ReleaseEvent{
@@ -1489,7 +1482,7 @@ func (r *Runner) processAnimeItem(ctx context.Context, item ScrapedItem, progYea
 		return err
 	}
 
-	if existingEvent != nil && existingEvent.Status == model.StatusPending {
+	if existingEvent != nil {
 		return nil
 	}
 
