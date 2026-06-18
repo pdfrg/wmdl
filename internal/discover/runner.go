@@ -1505,6 +1505,18 @@ func (r *Runner) processMusicItem(ctx context.Context, item ScrapedItem, progYea
 	}
 	r.log.Info().Str("artist", item.ArtistName).Str("album", item.Title).Msg("musicbrainz: searching release group")
 
+	// Check if we already have this AOTY item (unique URL) before doing any work
+	if item.AOTYURL != "" {
+		existingAlbum, err := r.db.GetAlbumByAOTYURL(ctx, item.AOTYURL)
+		if err == nil && existingAlbum != nil {
+			existingEvent, err := r.db.GetLatestAlbumReleaseEvent(ctx, existingAlbum.ID)
+			if err == nil && existingEvent != nil {
+				r.log.Info().Str("album", item.Title).Msg("already have this album, skipping")
+				return nil
+			}
+		}
+	}
+
 	// Step 1: MusicBrainz enrichment (best-effort)
 	mbAlbumID := ""
 	mbArtistID := ""

@@ -1968,6 +1968,40 @@ func (d *DB) GetAlbumByMBID(ctx context.Context, mbid string) (*model.Album, err
 	return &a, nil
 }
 
+func (d *DB) GetAlbumByAOTYURL(ctx context.Context, url string) (*model.Album, error) {
+	if url == "" {
+		return nil, nil
+	}
+	var a model.Album
+	var albumType, createdAt string
+	var mustHear int
+	err := d.db.QueryRowContext(ctx, `
+		SELECT id, artist_id, title, year, mbid, album_type,
+		       release_date, genres, overview, poster_path,
+		       aoty_url, allmusic_url,
+		       aoty_critic_score, aoty_critic_count,
+		       aoty_user_score, aoty_user_count,
+		       aoty_must_hear, allmusic_rating, mb_rating, created_at
+		FROM albums WHERE aoty_url = ?
+	`, url).Scan(
+		&a.ID, &a.ArtistID, &a.Title, &a.Year, &a.MBID, &albumType,
+		&a.ReleaseDate, &a.Genres, &a.Overview, &a.PosterPath,
+		&a.AOTYURL, &a.AllMusicURL,
+		&a.AOTYCriticScore, &a.AOTYCriticCount,
+		&a.AOTYUserScore, &a.AOTYUserCount,
+		&mustHear, &a.AllMusicRating, &a.MBRating, &createdAt)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("querying album by aoty_url: %w", err)
+	}
+	a.AlbumType = model.AlbumType(albumType)
+	a.AOTYMustHear = mustHear > 0
+	a.CreatedAt = createdAt
+	return &a, nil
+}
+
 func (d *DB) CreateAlbumReleaseEvent(ctx context.Context, e *model.AlbumReleaseEvent) (int64, error) {
 	res, err := d.db.ExecContext(ctx, `
 		INSERT INTO album_release_events (album_id, source, release_date, status, previous_status, notes, iso_year, iso_week)
