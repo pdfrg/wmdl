@@ -1830,7 +1830,14 @@ func (r *Runner) processBookItem(ctx context.Context, item ScrapedItem, progYear
 			description = hcResult.Description
 		}
 		if hcResult.ImageURL != "" {
-			imageURL = hcResult.ImageURL
+			// Hardcover returns high-quality CDN images (assets.hardcover.app/books/...)
+			// and low-res external thumbnails (assets.hardcover.app/external_data/...).
+			// Only prefer HC images that aren't the tiny external ones.
+			if !strings.Contains(hcResult.ImageURL, "/external_data/") {
+				imageURL = hcResult.ImageURL
+			} else if imageURL == "" {
+				imageURL = hcResult.ImageURL // last resort
+			}
 		}
 		if hcResult.ReleaseDate != "" {
 			releaseDate = hcResult.ReleaseDate
@@ -2259,7 +2266,7 @@ var (
 	trailingFmt = regexp.MustCompile(`(?i)\s+(season\s+\d+|dvd|blu-ray|4k)\s*$`)
 	// Strip AllMusic formatting suffixes like [2 CD], [Deluxe Edition], [Super Deluxe]
 	allMusicBracketRe = regexp.MustCompile(`\s*\[[^\]]*\]`)
-	goodreadsSizeRe   = regexp.MustCompile(`\._SX\d+_\.`)
+	goodreadsSizeRe   = regexp.MustCompile(`\._S[XY]\d+_\.`)
 	bookmarksWpSizeRe = regexp.MustCompile(`(-\d+x\d+)(\.[a-zA-Z]+)$`)
 	bookYearParenRe   = regexp.MustCompile(`\s*\(\d{4}\)`)
 	bookSubtitleRe    = regexp.MustCompile(`\s*[;:].*`)

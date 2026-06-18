@@ -160,9 +160,13 @@ func (p *BookshopProvider) Scrape() ([]ScrapedItem, error) {
 
 		var imgURL string
 		if m := srcSetRe.FindStringSubmatch(tag); m != nil {
-			imgURL = m[1]
-			if idx := strings.Index(imgURL, " "); idx > 0 {
-				imgURL = imgURL[:idx]
+			// srcSet format: "url1 100w, url2 500w" — take the LAST (largest)
+			parts := strings.Split(m[1], ",")
+			lastURL := strings.TrimSpace(parts[len(parts)-1])
+			if idx := strings.Index(lastURL, " "); idx > 0 {
+				imgURL = lastURL[:idx]
+			} else {
+				imgURL = lastURL
 			}
 		} else if m := srcRe.FindStringSubmatch(tag); m != nil {
 			imgURL = m[1]
