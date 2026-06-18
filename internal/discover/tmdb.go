@@ -249,7 +249,8 @@ type TMDBDetails struct {
 		ID   int    `json:"id"`
 		Name string `json:"name"`
 	} `json:"belongs_to_collection"`
-	Seasons []TMDBTVSeason `json:"seasons,omitempty"`
+	Seasons    []TMDBTVSeason `json:"seasons,omitempty"`
+	PosterPath string         `json:"poster_path"`
 }
 
 func (d *TMDBDetails) DisplayTitle() string {
@@ -598,6 +599,7 @@ func (c *TMDBClient) enrichByID(ctx context.Context, tmdbID int, mediaType strin
 			enrich.CollectionID = details.BelongsToCollection.ID
 			enrich.CollectionName = details.BelongsToCollection.Name
 		}
+		enrich.PosterPath = details.PosterPath
 	}
 
 	return enrich, nil
