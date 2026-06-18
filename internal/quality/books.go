@@ -116,13 +116,88 @@ func bookFormatScore(format string, priority []string) int {
 	return 0
 }
 
+func SplitSubtitle(fullTitle string) string {
+	if idx := strings.Index(fullTitle, ": "); idx > 0 {
+		return strings.TrimSpace(fullTitle[:idx])
+	}
+	return fullTitle
+}
+
+func wordsFromSearch(s string) []string {
+	norm := normalizeRelease(strings.ToLower(s))
+	words := strings.Fields(norm)
+	return filterStopWords(words)
+}
+
+func countPresentWords(releaseWords, searchWords []string) int {
+	wordSet := make(map[string]bool, len(releaseWords))
+	for _, w := range releaseWords {
+		wordSet[w] = true
+	}
+	n := 0
+	for _, w := range searchWords {
+		if wordSet[w] {
+			n++
+		}
+	}
+	return n
+}
+
+func allWordsPresent(releaseWords, searchWords []string) bool {
+	return countPresentWords(releaseWords, searchWords) == len(searchWords)
+}
+
+// FilterBookRelease checks whether a raw Prowlarr result is relevant
+// enough to enter the pool. A release passes if:
+//   - Title-led: all non-stop main title (subtitle-stripped) words present
+//     and in order, with at least one author word present; OR
+//   - Author-led: at least one author word present with at least one
+//     title word present
+func FilterBookRelease(rawTitle, author, fullTitle string) bool {
+	releaseNorm := normalizeRelease(rawTitle)
+	releaseWords := strings.Fields(releaseNorm)
+
+	mainTitle := SplitSubtitle(fullTitle)
+
+	mainWords := wordsFromSearch(mainTitle)
+	fullWords := wordsFromSearch(fullTitle)
+	authorWords := wordsFromSearch(author)
+
+	hasAuthor := countPresentWords(releaseWords, authorWords) > 0
+
+	// Title-led: ≥2 meaningful main title words — no author needed
+	if len(mainWords) > 1 && wordsInOrder(releaseNorm, mainWords) {
+		return true
+	}
+
+	// Title-led with author: for single-word main titles
+	if len(mainWords) > 0 && hasAuthor && wordsInOrder(releaseNorm, mainWords) {
+		return true
+	}
+
+	// Author-led: at least one author word + at least one title word
+	if hasAuthor {
+		if countPresentWords(releaseWords, fullWords) > 0 {
+			return true
+		}
+		// Fallback: full title had no meaningful words (e.g. "It")
+		if len(fullWords) == 0 {
+			return true
+		}
+	}
+
+	// Nothing meaningful to check — let through
+	return len(mainWords) == 0 && len(fullWords) == 0 && len(authorWords) == 0
+}
+
 func PartitionBookReleases(releases []ParsedBookRelease, author, title string) (exact, fuzzy []ParsedBookRelease) {
-	authorWords := strings.Fields(strings.ToLower(author))
-	titleWords := strings.Fields(strings.ToLower(title))
-
 	for _, r := range releases {
+		if !FilterBookRelease(r.RawTitle, author, title) {
+			continue
+		}
 		cleanTitle := strings.ToLower(r.RawTitle)
-
+		authorWords := strings.Fields(strings.ToLower(author))
+		titleWords := strings.Fields(strings.ToLower(title))
 		if wordsMatchBook(cleanTitle, authorWords, titleWords) {
 			exact = append(exact, r)
 		} else {
@@ -134,12 +209,13 @@ func PartitionBookReleases(releases []ParsedBookRelease, author, title string) (
 
 // PartitionBookReleasesRaw partitions raw Prowlarr results (pre-parse).
 func PartitionBookReleasesRaw(releases []ParsedRelease, author, title string) (exact, fuzzy []ParsedRelease) {
-	authorWords := strings.Fields(strings.ToLower(author))
-	titleWords := strings.Fields(strings.ToLower(title))
-
 	for _, r := range releases {
+		if !FilterBookRelease(r.RawTitle, author, title) {
+			continue
+		}
 		cleanTitle := strings.ToLower(r.RawTitle)
-
+		authorWords := strings.Fields(strings.ToLower(author))
+		titleWords := strings.Fields(strings.ToLower(title))
 		if wordsMatchBook(cleanTitle, authorWords, titleWords) {
 			exact = append(exact, r)
 		} else {
@@ -166,23 +242,18 @@ func filterStopWords(words []string) []string {
 	return out
 }
 
-func wordsMatchBook(clean string, authorWords, titleWords []string) bool {
-	authorWords = filterStopWords(authorWords)
-	titleWords = filterStopWords(titleWords)
+func wordsMatchBook(cleanRelease string, authorWords, titleWords []string) bool {
+	releaseNorm := normalizeRelease(cleanRelease)
+	releaseWords := strings.Fields(releaseNorm)
 
-	if len(authorWords) == 0 && len(titleWords) == 0 {
-		return true
-	}
+	mAuthor := wordsFromSearch(strings.Join(authorWords, " "))
+	mTitle := wordsFromSearch(strings.Join(titleWords, " "))
 
-	for _, w := range authorWords {
-		if !strings.Contains(clean, w) {
-			return false
-		}
+	if !allWordsPresent(releaseWords, mAuthor) {
+		return false
 	}
-	for _, w := range titleWords {
-		if !strings.Contains(clean, w) {
-			return false
-		}
+	if !wordsInOrder(releaseNorm, mTitle) {
+		return false
 	}
 	return true
 }
