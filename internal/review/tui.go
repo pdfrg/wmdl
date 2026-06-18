@@ -341,14 +341,14 @@ func buildLibraryCacheMap(database *db.DB, events []db.EventWithTitle, albumEven
 	}
 	for _, be := range bookEvents {
 		if be.Book.ISBN13 != "" {
-			key := "abs:" + be.Book.ISBN13
+			key := "book-client:" + be.Book.ISBN13
 			if !seen[key] {
 				lookups = append(lookups, struct{ Source, ExtID string }{"book-client", be.Book.ISBN13})
 				seen[key] = true
 			}
 		}
 		if be.Book.ASIN != "" {
-			key := "abs:" + be.Book.ASIN
+			key := "book-client:" + be.Book.ASIN
 			if !seen[key] {
 				lookups = append(lookups, struct{ Source, ExtID string }{"book-client", be.Book.ASIN})
 				seen[key] = true
