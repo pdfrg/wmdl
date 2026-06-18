@@ -758,10 +758,9 @@ func runProcessForWeek(ctx context.Context, database *db.DB, cfg *config.Config,
 		if hasBooks && exec.BookClientAvailable() {
 			bookMode := cfg.MediaTypeMode(model.MediaTypeBook)
 			var bookEvents []db.EventWithBook
-			if bookMode == "arr" || bookMode == "auto" || bookMode == "yolo" {
+			if bookMode == "arr" || bookMode == "auto" || bookMode == "yolo" || bookMode == "full" {
 				bookEvents = bookEventsForProcess
 			} else if len(bookDownloadedIDs) > 0 {
-				// Filter to only downloaded events
 				idSet := make(map[int64]bool, len(bookDownloadedIDs))
 				for _, id := range bookDownloadedIDs {
 					idSet[id] = true
@@ -817,7 +816,7 @@ func runProcessForWeek(ctx context.Context, database *db.DB, cfg *config.Config,
 	if hasBooks && exec.BookClientAvailable() && cfg.ProcessMode != "batch" && cfg.ProcessMode != "" {
 		bookMode := cfg.MediaTypeMode(model.MediaTypeBook)
 		var bookEvents []db.EventWithBook
-		if bookMode == "arr" || bookMode == "auto" || bookMode == "yolo" {
+		if bookMode == "arr" || bookMode == "auto" || bookMode == "yolo" || bookMode == "full" {
 			bookEvents = bookEventsForProcess
 		} else if len(bookInteractiveIDs) > 0 {
 			idSet := make(map[int64]bool, len(bookInteractiveIDs))

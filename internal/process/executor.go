@@ -81,6 +81,7 @@ type Executor struct {
 		SeriesTitle  string
 		MediaType    model.MediaType
 	}
+	skipRejectedTvdbIDs map[int]struct{}
 }
 
 func NewExecutor(logger zerolog.Logger, cfg *config.Config, database *db.DB) *Executor {
@@ -112,15 +113,16 @@ func NewExecutor(logger zerolog.Logger, cfg *config.Config, database *db.DB) *Ex
 		"audiobooks": cfg.Prowlarr.IndexerIDs.Audiobooks,
 	}
 	return &Executor{
-		log:        logger,
-		cfg:        cfg,
-		db:         database,
-		prowl:      search.NewProwlarrClient(cfg.Prowlarr.URL, cfg.Prowlarr.APIKey, cfg.Prowlarr.Timeout, catMap),
-		dl:         dl,
-		radarr:     radarr,
-		sonarr:     sonarr,
-		lidarr:     lidarr,
-		bookClient: bookClient,
+		log:                 logger,
+		cfg:                 cfg,
+		db:                  database,
+		prowl:               search.NewProwlarrClient(cfg.Prowlarr.URL, cfg.Prowlarr.APIKey, cfg.Prowlarr.Timeout, catMap),
+		dl:                  dl,
+		radarr:              radarr,
+		sonarr:              sonarr,
+		lidarr:              lidarr,
+		bookClient:          bookClient,
+		skipRejectedTvdbIDs: make(map[int]struct{}),
 	}
 }
 
@@ -818,6 +820,7 @@ func (e *Executor) SearchAndPickOne(ctx context.Context, evt db.EventWithTitle) 
 			label = fmt.Sprintf("%s (%d)", label, evt.Title.Year)
 		}
 		e.Skipped = append(e.Skipped, label)
+		e.handleSkipLibrary(ctx, evt, sr.Season)
 		return nil
 	}
 	e.addToClient(ctx, evt, chosen)
@@ -850,6 +853,7 @@ func (e *Executor) PickResults(ctx context.Context, results []*SearchResult) []P
 				label = fmt.Sprintf("%s (%d)", label, sr.Event.Title.Year)
 			}
 			e.Skipped = append(e.Skipped, label)
+			e.handleSkipLibrary(ctx, sr.Event, sr.Season)
 			continue
 		}
 		e.addToClient(ctx, sr.Event, chosen)
@@ -858,6 +862,111 @@ func (e *Executor) PickResults(ctx context.Context, results []*SearchResult) []P
 		picked = append(picked, PickedItem{Event: sr.Event, Season: sr.Season, Chosen: chosen})
 	}
 	return picked
+}
+
+func (e *Executor) handleSkipLibrary(ctx context.Context, evt db.EventWithTitle, season int) {
+	mode := e.cfg.MediaTypeMode(evt.Title.MediaType)
+	if mode != "full" {
+		return
+	}
+	if evt.Title.MediaType == model.MediaTypeTV || evt.Title.MediaType == model.MediaTypeAnime {
+		if tvdbID := evt.Title.TvdbID; tvdbID > 0 {
+			existing, _ := e.sonarr.Exists(ctx, tvdbID)
+			if existing == nil {
+				if promptYesNo(ctx, fmt.Sprintf("  Add %s to Sonarr anyway?", evt.Title.Title)) {
+					searchNow := false
+					monitorTarget := false
+					if promptYesNo(ctx, "    Monitor item? (Sonarr will search and manage downloads)") {
+						searchNow = true
+						monitorTarget = true
+					}
+					beforeSeasons := len(e.phase3Seasons)
+					if err := e.addToSonarr(ctx, evt, tvdbID, season, true, searchNow, monitorTarget); err != nil {
+						e.log.Warn().Err(err).Str("title", evt.Title.Title).Msg("adding to Sonarr after skip")
+					} else {
+						e.phase3Seasons = e.phase3Seasons[:beforeSeasons]
+					}
+				} else {
+					e.skipRejectedTvdbIDs[tvdbID] = struct{}{}
+				}
+			}
+		}
+	} else if evt.Title.MediaType == model.MediaTypeMovie {
+		if tmdbID := evt.Title.TmdbID; tmdbID > 0 {
+			existing, _ := e.radarr.Exists(ctx, tmdbID)
+			if existing == nil {
+				if promptYesNo(ctx, fmt.Sprintf("  Add %s to Radarr anyway?", evt.Title.Title)) {
+					searchNow := false
+					if promptYesNo(ctx, "    Monitor item? (Radarr will search and manage downloads)") {
+						searchNow = true
+					}
+					if err := e.addToRadarr(ctx, evt, true, searchNow); err != nil {
+						e.log.Warn().Err(err).Str("title", evt.Title.Title).Msg("adding to Radarr after skip")
+					}
+				}
+			}
+		}
+	}
+}
+
+func (e *Executor) handleSkipLibraryMusic(ctx context.Context, ae db.EventWithAlbum) {
+	if e.lidarr == nil {
+		return
+	}
+	mode := e.cfg.MediaTypeMode(model.MediaTypeMusic)
+	if mode != "full" {
+		return
+	}
+	artistMbid := ae.Artist.MBID
+	if artistMbid == "" {
+		return
+	}
+	existing, err := e.lidarr.GetArtist(ctx, artistMbid)
+	if err != nil {
+		e.log.Warn().Err(err).Str("artist", ae.Artist.Name).Msg("lidarr check error during skip")
+		return
+	}
+	if existing != nil {
+		e.log.Info().Str("artist", ae.Artist.Name).Int("lidarr_id", existing.ID).Msg("artist already in Lidarr")
+		return
+	}
+	if !promptYesNo(ctx, fmt.Sprintf("  Add %s to Lidarr anyway?", ae.Artist.Name)) {
+		return
+	}
+	qualProfileID, err := e.lidarr.ResolveQualityProfileID(ctx, e.cfg.Library.Lidarr.QualityProfile)
+	if err != nil {
+		e.log.Warn().Err(err).Msg("resolving quality profile for Lidarr")
+		return
+	}
+	metaProfileID, err := e.lidarr.ResolveMetadataProfileID(ctx, e.cfg.Library.Lidarr.MetadataProfile)
+	if err != nil {
+		e.log.Warn().Err(err).Msg("resolving metadata profile for Lidarr")
+		return
+	}
+	rootFolder := e.cfg.Library.Lidarr.RootFolder
+	if rootFolder == "" {
+		e.log.Warn().Msg("lidarr root_folder not configured, skipping")
+		return
+	}
+	monitor := e.cfg.Library.Lidarr.Monitor
+	if monitor == "" {
+		monitor = "all"
+	}
+	added, err := e.lidarr.AddArtist(ctx, artistMbid, ae.Artist.Name, library.AddArtistOptions{
+		Monitored:         true,
+		MonitorNewAlbums:  e.cfg.Library.Lidarr.MonitorNewAlbums,
+		QualityProfileID:  qualProfileID,
+		MetadataProfileID: metaProfileID,
+		RootFolderPath:    rootFolder,
+		Monitor:           monitor,
+		SearchNow:         true,
+	})
+	if err != nil {
+		e.log.Warn().Err(err).Str("artist", ae.Artist.Name).Msg("failed adding to Lidarr after skip")
+		return
+	}
+	_ = e.db.SetSetting(ctx, fmt.Sprintf("lidarr_artist_%s", artistMbid), fmt.Sprintf("%d", added.ID))
+	e.log.Info().Int("lidarr_id", added.ID).Str("artist", ae.Artist.Name).Msg("added artist to Lidarr after skip")
 }
 
 // ComputePhase3Candidates pre-computes Phase 3 search candidates for approved
@@ -1061,6 +1170,17 @@ func (e *Executor) ProcessPhase3Pickers(ctx context.Context) {
 	for _, entry := range e.phase3SearchPhase {
 		c := entry.Candidate
 		mode := e.cfg.MediaTypeMode(c.MediaType)
+
+		// Skip TV/anime candidates for series the user rejected adding to library
+		if c.TvdbID > 0 {
+			if _, rejected := e.skipRejectedTvdbIDs[c.TvdbID]; rejected {
+				existing, _ := e.sonarr.Exists(ctx, c.TvdbID)
+				if existing == nil {
+					e.log.Info().Str("title", c.Title).Int("tvdb", c.TvdbID).Msg("skipping phase 3: user rejected library add")
+					continue
+				}
+			}
+		}
 
 		if mode == "arr" || mode == "auto" || mode == "yolo" {
 			// Arr mode: add to *arr with SearchNow, skip picker & download
@@ -1566,7 +1686,7 @@ processPicked:
 			var addErr error
 		actionRetry:
 			if a.isTV {
-				addErr = e.addToSonarr(ctx, a.evt, a.tvdbID, a.season, true, a.searchNow)
+				addErr = e.addToSonarr(ctx, a.evt, a.tvdbID, a.season, true, a.searchNow, false)
 			} else {
 				addErr = e.addToRadarr(ctx, a.evt, true, a.searchNow)
 			}
@@ -1874,7 +1994,7 @@ func (e *Executor) addToLibrary(ctx context.Context, evt db.EventWithTitle, seas
 		}
 		tvdbID = lookup.TVDBID
 	}
-	return e.addToSonarr(ctx, evt, tvdbID, season, false, false)
+	return e.addToSonarr(ctx, evt, tvdbID, season, false, false, false)
 }
 
 func (e *Executor) resolveProfileID(ctx context.Context, profileName string) int {
@@ -2122,7 +2242,7 @@ func (e *Executor) SearchAiringAnimeEarlierSeasons(ctx context.Context, evt db.E
 	}
 }
 
-func (e *Executor) addToSonarr(ctx context.Context, evt db.EventWithTitle, tvdbID, season int, confirmed bool, searchNow bool) error {
+func (e *Executor) addToSonarr(ctx context.Context, evt db.EventWithTitle, tvdbID, season int, confirmed bool, searchNow bool, monitorTarget bool) error {
 	if tvdbID == 0 {
 		return nil
 	}
@@ -2196,9 +2316,13 @@ func (e *Executor) addToSonarr(ctx context.Context, evt db.EventWithTitle, tvdbI
 	var seasons []library.SonarrSeason
 	for _, s := range lookup.Seasons {
 		if s.SeasonNumber > 0 {
+			monitored := false
+			if monitorTarget && s.SeasonNumber == season {
+				monitored = true
+			}
 			seasons = append(seasons, library.SonarrSeason{
 				SeasonNumber: s.SeasonNumber,
-				Monitored:    false,
+				Monitored:    monitored,
 			})
 		}
 	}
@@ -2622,6 +2746,7 @@ func (e *Executor) PickMusicAlbum(ctx context.Context, sr *MusicSearchResult) *M
 	if len(chosen) == 0 {
 		label := ae.Artist.Name + " - " + ae.Album.Title
 		e.Skipped = append(e.Skipped, label)
+		e.handleSkipLibraryMusic(ctx, ae)
 		return &MusicAlbumResult{Event: ae}
 	}
 
@@ -2802,6 +2927,7 @@ decisionsLoop:
 
 		added, err := e.lidarr.AddArtist(ctx, d.artistMbid, ae.Artist.Name, library.AddArtistOptions{
 			Monitored:         true,
+			MonitorNewAlbums:  e.cfg.Library.Lidarr.MonitorNewAlbums,
 			QualityProfileID:  qualProfileID,
 			MetadataProfileID: metaProfileID,
 			RootFolderPath:    rootFolder,

@@ -40,6 +40,7 @@ type LidarrArtist struct {
 	ArtistName        string             `json:"artistName"`
 	MBID              string             `json:"mbId,omitempty"`
 	Monitored         bool               `json:"monitored"`
+	MonitorNewAlbums  bool               `json:"monitorNewAlbums"`
 	QualityProfileID  int                `json:"qualityProfileId"`
 	MetadataProfileID int                `json:"metadataProfileId"`
 	RootFolderPath    string             `json:"rootFolderPath"`
@@ -270,6 +271,7 @@ func (c *LidarrClient) GetArtist(ctx context.Context, mbid string) (*LidarrArtis
 
 type AddArtistOptions struct {
 	Monitored         bool
+	MonitorNewAlbums  bool
 	QualityProfileID  int
 	MetadataProfileID int
 	RootFolderPath    string
@@ -289,6 +291,7 @@ func (c *LidarrClient) AddArtist(ctx context.Context, mbid string, name string, 
 		ArtistName:        name,
 		MBID:              mbid,
 		Monitored:         opts.Monitored,
+		MonitorNewAlbums:  opts.MonitorNewAlbums,
 		QualityProfileID:  opts.QualityProfileID,
 		MetadataProfileID: opts.MetadataProfileID,
 		RootFolderPath:    opts.RootFolderPath,
