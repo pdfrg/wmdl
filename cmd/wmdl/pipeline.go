@@ -731,9 +731,9 @@ func runProcessForWeek(ctx context.Context, database *db.DB, cfg *config.Config,
 		}
 	}
 
-	var bookDownloadedIDs []int64
+	var bookDownloadedInfo map[int64]*process.BookDownloadInfo
 	if hasBooks && (cfg.ProcessMode == "batch" || cfg.ProcessMode == "") {
-		bookDownloadedIDs = exec.PickBookResults(ctx, bookResults)
+		bookDownloadedInfo = exec.PickBookResults(ctx, bookResults)
 	}
 
 	// ─── ALL LIBRARY DECISIONS ──────────────────────────────────
@@ -760,18 +760,10 @@ func runProcessForWeek(ctx context.Context, database *db.DB, cfg *config.Config,
 			var bookEvents []db.EventWithBook
 			if bookMode == "arr" || bookMode == "auto" || bookMode == "yolo" || bookMode == "full" {
 				bookEvents = bookEventsForProcess
-			} else if len(bookDownloadedIDs) > 0 {
-				idSet := make(map[int64]bool, len(bookDownloadedIDs))
-				for _, id := range bookDownloadedIDs {
-					idSet[id] = true
-				}
-				for _, ev := range bookEventsForProcess {
-					if idSet[ev.Event.ID] {
-						bookEvents = append(bookEvents, ev)
-					}
-				}
+			} else if len(bookDownloadedInfo) > 0 {
+				bookEvents = bookEventsForProcess
 			}
-			exec.ProcessBookLibraryDecisions(ctx, bookEvents)
+			exec.ProcessBookLibraryDecisions(ctx, bookEvents, bookDownloadedInfo)
 		}
 	}
 
@@ -804,11 +796,11 @@ func runProcessForWeek(ctx context.Context, database *db.DB, cfg *config.Config,
 	}
 
 	// ─── Book interactive processing (search+download only) ─────
-	var bookInteractiveIDs []int64
+	var bookInteractiveInfo map[int64]*process.BookDownloadInfo
 	if hasBooks && cfg.ProcessMode != "batch" && cfg.ProcessMode != "" {
 		bookMode := cfg.MediaTypeMode(model.MediaTypeBook)
 		if bookMode == "full" {
-			bookInteractiveIDs = exec.ProcessBooks(ctx, bookEventsForProcess)
+			bookInteractiveInfo = exec.ProcessBooks(ctx, bookEventsForProcess)
 		}
 	}
 
@@ -818,18 +810,10 @@ func runProcessForWeek(ctx context.Context, database *db.DB, cfg *config.Config,
 		var bookEvents []db.EventWithBook
 		if bookMode == "arr" || bookMode == "auto" || bookMode == "yolo" || bookMode == "full" {
 			bookEvents = bookEventsForProcess
-		} else if len(bookInteractiveIDs) > 0 {
-			idSet := make(map[int64]bool, len(bookInteractiveIDs))
-			for _, id := range bookInteractiveIDs {
-				idSet[id] = true
-			}
-			for _, ev := range bookEventsForProcess {
-				if idSet[ev.Event.ID] {
-					bookEvents = append(bookEvents, ev)
-				}
-			}
+		} else if len(bookInteractiveInfo) > 0 {
+			bookEvents = bookEventsForProcess
 		}
-		exec.ProcessBookLibraryDecisions(ctx, bookEvents)
+		exec.ProcessBookLibraryDecisions(ctx, bookEvents, bookInteractiveInfo)
 	}
 
 	if hasSearchable || hasAnimeAiring || hasAlbums || hasBooks {

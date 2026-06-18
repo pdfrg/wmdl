@@ -873,6 +873,14 @@ func (e *Executor) handleSkipLibrary(ctx context.Context, evt db.EventWithTitle,
 		if tvdbID := evt.Title.TvdbID; tvdbID > 0 {
 			existing, _ := e.sonarr.Exists(ctx, tvdbID)
 			if existing == nil {
+				if lookup, err := e.sonarr.Lookup(ctx, tvdbID); err == nil && lookup != nil {
+					e.log.Info().Msgf("  Sonarr: %s (%d)", lookup.Title, lookup.Year)
+					if lookup.Overview != "" {
+						for _, line := range formatOverview(lookup.Overview, 72) {
+							e.log.Info().Msg(line)
+						}
+					}
+				}
 				if promptYesNo(ctx, fmt.Sprintf("  Add %s to Sonarr anyway?", evt.Title.Title)) {
 					searchNow := false
 					monitorTarget := false
@@ -895,6 +903,14 @@ func (e *Executor) handleSkipLibrary(ctx context.Context, evt db.EventWithTitle,
 		if tmdbID := evt.Title.TmdbID; tmdbID > 0 {
 			existing, _ := e.radarr.Exists(ctx, tmdbID)
 			if existing == nil {
+				if lookup, err := e.radarr.Lookup(ctx, tmdbID); err == nil && lookup != nil {
+					e.log.Info().Msgf("  Radarr: %s (%d)", lookup.Title, lookup.Year)
+					if lookup.Overview != "" {
+						for _, line := range formatOverview(lookup.Overview, 72) {
+							e.log.Info().Msg(line)
+						}
+					}
+				}
 				if promptYesNo(ctx, fmt.Sprintf("  Add %s to Radarr anyway?", evt.Title.Title)) {
 					searchNow := false
 					if promptYesNo(ctx, "    Monitor item? (Radarr will search and manage downloads)") {
@@ -2975,6 +2991,11 @@ type BookSearchResult struct {
 	Error  error
 }
 
+type BookDownloadInfo struct {
+	EbookDownloaded     bool
+	AudiobookDownloaded bool
+}
+
 func bookSearchQueries(evt db.EventWithBook) []string {
 	var queries []string
 	seen := make(map[string]bool)
@@ -3333,11 +3354,8 @@ func (e *Executor) SearchBooksAll(ctx context.Context, events []db.EventWithBook
 }
 
 // PickBookResults presents pickers for pre-searched book results and downloads.
-func (e *Executor) PickBookResults(ctx context.Context, results []*BookSearchResult) []int64 {
-	type formatsDone struct {
-		ebook, audiobook bool
-	}
-	done := make(map[int64]*formatsDone)
+func (e *Executor) PickBookResults(ctx context.Context, results []*BookSearchResult) map[int64]*BookDownloadInfo {
+	done := make(map[int64]*BookDownloadInfo)
 	events := make(map[int64]db.EventWithBook)
 
 	for _, sr := range results {
@@ -3356,49 +3374,47 @@ func (e *Executor) PickBookResults(ctx context.Context, results []*BookSearchRes
 			}
 			id := sr.Event.Event.ID
 			if _, ok := done[id]; !ok {
-				done[id] = &formatsDone{
-					ebook:     sr.Event.Event.EbookProcessed,
-					audiobook: sr.Event.Event.AudiobookProcessed,
+				done[id] = &BookDownloadInfo{
+					EbookDownloaded:     sr.Event.Event.EbookProcessed,
+					AudiobookDownloaded: sr.Event.Event.AudiobookProcessed,
 				}
 				events[id] = sr.Event
 			}
 			switch sr.Format {
 			case model.BookFormatEbook:
-				done[id].ebook = true
+				done[id].EbookDownloaded = true
 			case model.BookFormatAudiobook:
-				done[id].audiobook = true
+				done[id].AudiobookDownloaded = true
 			}
 		}
 	}
 
-	var downloaded []int64
-	for id, f := range done {
+	for id, info := range done {
 		pref := events[id].Event.FormatPref
 		allDone := false
 		switch pref {
 		case model.BookFormatEbook:
-			allDone = f.ebook
+			allDone = info.EbookDownloaded
 		case model.BookFormatAudiobook:
-			allDone = f.audiobook
+			allDone = info.AudiobookDownloaded
 		case model.BookFormatBoth:
-			allDone = f.ebook && f.audiobook
+			allDone = info.EbookDownloaded && info.AudiobookDownloaded
 		}
 		if allDone {
 			e.markBookDownloaded(ctx, events[id])
-			downloaded = append(downloaded, id)
 		}
 	}
-	return downloaded
+	return done
 }
 
-func (e *Executor) ProcessBooks(ctx context.Context, events []db.EventWithBook) []int64 {
+func (e *Executor) ProcessBooks(ctx context.Context, events []db.EventWithBook) map[int64]*BookDownloadInfo {
 	if len(events) == 0 {
 		return nil
 	}
 
 	fmt.Fprintln(os.Stderr, "\n── Book Processing ──")
 
-	var downloaded []int64
+	downloaded := make(map[int64]*BookDownloadInfo)
 
 	for _, evt := range events {
 		title := evt.Book.Title
@@ -3412,6 +3428,11 @@ func (e *Executor) ProcessBooks(ctx context.Context, events []db.EventWithBook) 
 
 		if !needsEbook && !needsAudiobook {
 			continue
+		}
+
+		info := &BookDownloadInfo{
+			EbookDownloaded:     ebookDone,
+			AudiobookDownloaded: audiobookDone,
 		}
 
 		// Process ebook format
@@ -3430,7 +3451,7 @@ func (e *Executor) ProcessBooks(ctx context.Context, events []db.EventWithBook) 
 					if err := e.db.MarkBookFormatProcessed(ctx, evt.Event.ID, model.BookFormatEbook); err != nil {
 						e.log.Warn().Err(err).Msg("marking ebook processed")
 					}
-					ebookDone = true
+					info.EbookDownloaded = true
 					fmt.Fprintf(os.Stderr, "  ✓ %s by %s [ebook] (%d added)\n", title, author, n)
 				} else {
 					fmt.Fprintf(os.Stderr, "  %s by %s [ebook]: skipped\n", title, author)
@@ -3456,7 +3477,7 @@ func (e *Executor) ProcessBooks(ctx context.Context, events []db.EventWithBook) 
 					if err := e.db.MarkBookFormatProcessed(ctx, evt.Event.ID, model.BookFormatAudiobook); err != nil {
 						e.log.Warn().Err(err).Msg("marking audiobook processed")
 					}
-					audiobookDone = true
+					info.AudiobookDownloaded = true
 					fmt.Fprintf(os.Stderr, "  ✓ %s by %s [audiobook] (%d added)\n", title, author, n)
 				} else {
 					fmt.Fprintf(os.Stderr, "  %s by %s [audiobook]: skipped\n", title, author)
@@ -3466,22 +3487,20 @@ func (e *Executor) ProcessBooks(ctx context.Context, events []db.EventWithBook) 
 			}
 		}
 
-		// Mark fully downloaded once all required formats are processed
-		ebookDoneAfter := ebookDone || !needsEbook
-		audiobookDoneAfter := audiobookDone || !needsAudiobook
+		// Check if all required formats are done
 		allDone := false
 		switch pref {
 		case model.BookFormatEbook:
-			allDone = ebookDoneAfter
+			allDone = info.EbookDownloaded
 		case model.BookFormatAudiobook:
-			allDone = audiobookDoneAfter
+			allDone = info.AudiobookDownloaded
 		case model.BookFormatBoth:
-			allDone = ebookDoneAfter && audiobookDoneAfter
+			allDone = info.EbookDownloaded && info.AudiobookDownloaded
 		}
 		if allDone {
 			e.markBookDownloaded(ctx, evt)
-			downloaded = append(downloaded, evt.Event.ID)
 		}
+		downloaded[evt.Event.ID] = info
 	}
 	return downloaded
 }
@@ -3490,10 +3509,9 @@ func (e *Executor) BookClientAvailable() bool {
 	return e.bookClient != nil
 }
 
-func (e *Executor) ProcessBookLibraryDecisions(ctx context.Context, events []db.EventWithBook) {
+func (e *Executor) ProcessBookLibraryDecisions(ctx context.Context, events []db.EventWithBook, downloaded map[int64]*BookDownloadInfo) {
 	mode := e.cfg.MediaTypeMode(model.MediaTypeBook)
 	autoConfirm := mode == "auto" || mode == "yolo"
-	searchNow := mode == "arr" || mode == "auto" || mode == "yolo"
 
 	if e.bookClient == nil {
 		return
@@ -3522,35 +3540,43 @@ func (e *Executor) ProcessBookLibraryDecisions(ctx context.Context, events []db.
 			continue
 		}
 
+		info := downloaded[evt.Event.ID]
 		pref := evt.Event.FormatPref
-		if searchNow {
-			if pref == model.BookFormatEbook || pref == model.BookFormatBoth {
+
+		// Per-format decisions: if format was downloaded, set Skipped (qbit script handles import).
+		// If format was not downloaded (skipped or no results), set Wanted so LL searches.
+		ebookWanted := pref == model.BookFormatEbook || pref == model.BookFormatBoth
+		audiobookWanted := pref == model.BookFormatAudiobook || pref == model.BookFormatBoth
+
+		if ebookWanted {
+			if info != nil && info.EbookDownloaded {
+				if err := e.bookClient.UnqueueBook(ctx, bookID, model.BookFormatEbook); err != nil {
+					e.log.Warn().Err(err).Str("book", title).Msg("lazylibrarian unqueueBook ebook")
+				}
+			} else {
 				if err := e.bookClient.QueueBook(ctx, bookID, model.BookFormatEbook); err != nil {
 					e.log.Warn().Err(err).Str("book", title).Msg("lazylibrarian queueBook ebook")
 				}
 			}
-			if pref == model.BookFormatAudiobook || pref == model.BookFormatBoth {
+		}
+
+		if audiobookWanted {
+			if info != nil && info.AudiobookDownloaded {
+				if err := e.bookClient.UnqueueBook(ctx, bookID, model.BookFormatAudiobook); err != nil {
+					e.log.Warn().Err(err).Str("book", title).Msg("lazylibrarian unqueueBook audiobook")
+				}
+			} else {
 				if err := e.bookClient.QueueBook(ctx, bookID, model.BookFormatAudiobook); err != nil {
 					e.log.Warn().Err(err).Str("book", title).Msg("lazylibrarian queueBook audiobook")
 				}
 			}
-			e.log.Info().Str("book", title).Str("ll_id", bookID).Msg("LazyLibrarian: Wanted")
-		} else {
-			if pref == model.BookFormatEbook || pref == model.BookFormatBoth {
-				if err := e.bookClient.UnqueueBook(ctx, bookID, model.BookFormatEbook); err != nil {
-					e.log.Warn().Err(err).Str("book", title).Msg("lazylibrarian unqueueBook ebook")
-				}
-			}
-			if pref == model.BookFormatAudiobook || pref == model.BookFormatBoth {
-				if err := e.bookClient.UnqueueBook(ctx, bookID, model.BookFormatAudiobook); err != nil {
-					e.log.Warn().Err(err).Str("book", title).Msg("lazylibrarian unqueueBook audiobook")
-				}
-			}
-			e.log.Info().Str("book", title).Str("ll_id", bookID).Msg("LazyLibrarian: Skipped")
 		}
+
+		e.log.Info().Str("book", title).Str("ll_id", bookID).Msg("LazyLibrarian: added")
 
 		// Phase 3: series gap detection
 		if evt.Book.SeriesID != "" {
+			searchNow := mode == "arr" || mode == "auto" || mode == "yolo"
 			e.checkBookSeriesGaps(ctx, evt, searchNow)
 		}
 	}
