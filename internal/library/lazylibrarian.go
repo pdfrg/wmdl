@@ -14,9 +14,10 @@ import (
 )
 
 type LazyLibrarianClient struct {
-	baseURL string
-	apiKey  string
-	http    *http.Client
+	baseURL    string
+	apiKey     string
+	http       *http.Client
+	booksCache []model.BookStatus // in-memory cache from pre-warm
 }
 
 func NewLazyLibrarianClient(baseURL, apiKey string, timeout int) *LazyLibrarianClient {
@@ -119,6 +120,15 @@ func (c *LazyLibrarianClient) UnqueueBook(ctx context.Context, bookID string, fo
 }
 
 func (c *LazyLibrarianClient) GetBookStatus(ctx context.Context, bookID string) (*model.BookStatus, error) {
+	// Use in-memory cache if available
+	if c.booksCache != nil {
+		for _, b := range c.booksCache {
+			if b.BookID == bookID {
+				return &b, nil
+			}
+		}
+		return nil, fmt.Errorf("lazylibrarian: book %s not found in cache", bookID)
+	}
 	params := url.Values{
 		"cmd": {"getAllBooks"},
 	}
@@ -137,10 +147,43 @@ func (c *LazyLibrarianClient) GetBookStatus(ctx context.Context, bookID string) 
 				AudioStatus: b.AudioStatus,
 				BookFile:    b.BookFile,
 				AudioFile:   b.AudioFile,
+				Isbn:        b.BookIsbn,
 			}, nil
 		}
 	}
 	return nil, fmt.Errorf("lazylibrarian: book %s not found", bookID)
+}
+
+func (c *LazyLibrarianClient) SetAllBooks(books []model.BookStatus) {
+	c.booksCache = books
+}
+
+func (c *LazyLibrarianClient) GetAllBooks(ctx context.Context) ([]model.BookStatus, error) {
+	if c.booksCache != nil {
+		return c.booksCache, nil
+	}
+	params := url.Values{
+		"cmd": {"getAllBooks"},
+	}
+	var books []llBook
+	if err := c.retry(ctx, func() error {
+		return c.doJSON(ctx, params, &books)
+	}); err != nil {
+		return nil, err
+	}
+	result := make([]model.BookStatus, len(books))
+	for i, b := range books {
+		result[i] = model.BookStatus{
+			BookID:      b.BookID,
+			Title:       b.Title,
+			Status:      b.Status,
+			AudioStatus: b.AudioStatus,
+			BookFile:    b.BookFile,
+			AudioFile:   b.AudioFile,
+			Isbn:        b.BookIsbn,
+		}
+	}
+	return result, nil
 }
 
 func (c *LazyLibrarianClient) GetSeriesMembers(ctx context.Context, seriesID string) ([]*model.SeriesMember, error) {
@@ -234,6 +277,7 @@ type llBook struct {
 	AudioStatus string `json:"audiostatus"`
 	BookFile    string `json:"bookfile"`
 	AudioFile   string `json:"audiofile"`
+	BookIsbn    string `json:"bookisbn"`
 }
 
 type llSeriesMember struct {

@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/pdfrg/wmdl/internal/quality"
@@ -17,6 +18,7 @@ type ProwlarrClient struct {
 	baseURL           string
 	apiKey            string
 	http              *http.Client
+	mu                sync.Mutex
 	indexerNames      map[int]string
 	indexerByCategory map[string]int
 }
@@ -182,12 +184,15 @@ func (p *ProwlarrClient) Ping(ctx context.Context) error {
 }
 
 func (p *ProwlarrClient) GetIndexerName(ctx context.Context, id int) string {
+	p.mu.Lock()
 	if p.indexerNames == nil {
 		p.indexerNames = make(map[int]string)
 	}
 	if name, ok := p.indexerNames[id]; ok {
+		p.mu.Unlock()
 		return name
 	}
+	p.mu.Unlock()
 
 	u := p.baseURL + "/api/v1/indexer"
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
@@ -207,12 +212,15 @@ func (p *ProwlarrClient) GetIndexerName(ctx context.Context, id int) string {
 		return fmt.Sprintf("indexer %d", id)
 	}
 
+	p.mu.Lock()
 	for _, idx := range indexers {
 		p.indexerNames[idx.ID] = idx.Name
 	}
 	if name, ok := p.indexerNames[id]; ok {
+		p.mu.Unlock()
 		return name
 	}
+	p.mu.Unlock()
 	return fmt.Sprintf("indexer %d", id)
 }
 

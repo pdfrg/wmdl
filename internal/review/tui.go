@@ -343,14 +343,14 @@ func buildLibraryCacheMap(database *db.DB, events []db.EventWithTitle, albumEven
 		if be.Book.ISBN13 != "" {
 			key := "abs:" + be.Book.ISBN13
 			if !seen[key] {
-				lookups = append(lookups, struct{ Source, ExtID string }{"abs", be.Book.ISBN13})
+				lookups = append(lookups, struct{ Source, ExtID string }{"book-client", be.Book.ISBN13})
 				seen[key] = true
 			}
 		}
 		if be.Book.ASIN != "" {
 			key := "abs:" + be.Book.ASIN
 			if !seen[key] {
-				lookups = append(lookups, struct{ Source, ExtID string }{"abs", be.Book.ASIN})
+				lookups = append(lookups, struct{ Source, ExtID string }{"book-client", be.Book.ASIN})
 				seen[key] = true
 			}
 		}

@@ -114,11 +114,12 @@ func TestFilterTitle_BlockedGenres(t *testing.T) {
 		}
 	})
 
-	t.Run("partial genre name match", func(t *testing.T) {
+	t.Run("partial genre name no longer matches", func(t *testing.T) {
 		tm := &model.Title{Genres: "Action & Adventure, Comedy"}
 		f2 := &config.ContentFilter{BlockedGenres: []string{"Action"}}
-		if res := FilterTitle(f2, tm); res.Passed {
-			t.Error("Action should match Action & Adventure")
+		res := FilterTitle(f2, tm)
+		if !res.Passed {
+			t.Error("Action should not match Action & Adventure — comma-delimited exact match only")
 		}
 	})
 
@@ -257,10 +258,10 @@ func TestHasOverrideGenre(t *testing.T) {
 		}
 	})
 
-	t.Run("substring match", func(t *testing.T) {
+	t.Run("substring no longer matches", func(t *testing.T) {
 		f := &config.ContentFilter{OverrideGenres: []string{"Action"}}
-		if !HasOverrideGenre(f, "Action & Adventure, Thriller") {
-			t.Error("Action should match Action & Adventure via substring")
+		if HasOverrideGenre(f, "Action & Adventure, Thriller") {
+			t.Error("Action should not match Action & Adventure — comma-delimited exact match only")
 		}
 	})
 

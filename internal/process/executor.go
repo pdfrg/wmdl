@@ -93,12 +93,16 @@ func NewExecutor(logger zerolog.Logger, cfg *config.Config, database *db.DB) *Ex
 	}
 	var bookClient library.BookClient
 	if cfg.Library.LazyLibrarian.URL != "" {
-		bookClient = library.NewBookClient(
+		bc := library.NewBookClient(
 			cfg.Library.BookBackend,
 			cfg.Library.LazyLibrarian.URL,
 			cfg.Library.LazyLibrarian.APIKey,
 			cfg.Library.LazyLibrarian.Timeout,
 		)
+		if bc == nil {
+			logger.Warn().Str("backend", cfg.Library.BookBackend).Msg("book client: unknown backend, disabling")
+		}
+		bookClient = bc
 	}
 	catMap := map[string]int{
 		"videos":     cfg.Prowlarr.IndexerIDs.Videos,
@@ -372,9 +376,83 @@ func (e *Executor) PreWarmBookClient(ctx context.Context) {
 	if e.bookClient == nil {
 		return
 	}
-	if err := e.bookClient.Ping(ctx); err != nil {
-		e.log.Warn().Err(err).Msg("pre-warm LazyLibrarian")
+	if e.tryLoadBookClientCache(ctx) {
+		return
 	}
+	books, err := e.bookClient.GetAllBooks(ctx)
+	if err != nil {
+		e.log.Warn().Err(err).Msg("pre-warm LazyLibrarian")
+		return
+	}
+	e.updateBookClientCache(ctx, books)
+}
+
+func (e *Executor) tryLoadBookClientCache(ctx context.Context) bool {
+	fetchedAt, err := e.db.GetLibraryCacheFetchedAt(ctx, "book-client")
+	if err != nil || fetchedAt == "" {
+		return false
+	}
+	fetched, err := time.Parse("2006-01-02 15:04:05", fetchedAt)
+	if err != nil {
+		return false
+	}
+	ttl := time.Duration(e.cfg.CacheTTLHours) * time.Hour
+	if ttl <= 0 {
+		ttl = 48 * time.Hour
+	}
+	if time.Since(fetched) > ttl {
+		return false
+	}
+	caches, err := e.db.GetAllLibraryCache(ctx)
+	if err != nil {
+		return false
+	}
+	var books []model.BookStatus
+	for _, c := range caches {
+		if c.Source != "book-client" {
+			continue
+		}
+		var b model.BookStatus
+		if err := json.Unmarshal([]byte(c.Details), &b); err != nil {
+			continue
+		}
+		// Deduplicate by BookID since the same book may have ISBN13 and ASIN entries
+		found := false
+		for _, existing := range books {
+			if existing.BookID == b.BookID {
+				found = true
+				break
+			}
+		}
+		if !found {
+			books = append(books, b)
+		}
+	}
+	if len(books) == 0 {
+		return false
+	}
+	e.bookClient.SetAllBooks(books)
+	return true
+}
+
+func (e *Executor) updateBookClientCache(ctx context.Context, books []model.BookStatus) {
+	var entries []db.LibraryCache
+	for _, b := range books {
+		bookID, _ := strconv.Atoi(b.BookID)
+		details, _ := json.Marshal(b)
+		// Index by ISBN13
+		if b.Isbn != "" {
+			entries = append(entries, db.LibraryCache{
+				Source: "book-client", ExtID: b.Isbn,
+				ArrID: int64(bookID), ArrTitle: b.Title, Details: string(details),
+			})
+		}
+	}
+	if err := e.db.BulkUpsertLibraryCache(ctx, entries); err != nil {
+		e.log.Warn().Err(err).Msg("saving LazyLibrarian cache")
+	}
+	// Set in-memory cache on the client
+	e.bookClient.SetAllBooks(books)
 }
 
 func (e *Executor) HealthCheck(ctx context.Context, checkProwlarr, checkDownloader, checkLibrary bool) HealthCheckResult {

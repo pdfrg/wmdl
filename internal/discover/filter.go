@@ -141,7 +141,14 @@ func FilterBook(f *config.ContentFilter, b *model.Book) FilterResult {
 		}
 	}
 
+	// BlockedCountries: no-op pass-through — book model has no country field.
+	// Kept for interface consistency in case future enrichment provides it.
+
 	if len(f.BlockedGenres) > 0 && b.Tags != "" {
+		// If an override genre matches, skip the BlockedGenres check.
+		if HasOverrideGenre(f, b.Tags) {
+			return FilterResult{Passed: true}
+		}
 		for _, blocked := range f.BlockedGenres {
 			if hasGenre(b.Tags, blocked) {
 				return FilterResult{Passed: false, Reason: "tag " + blocked + " is blocked"}
@@ -167,7 +174,12 @@ func HasOverrideGenre(f *config.ContentFilter, genres string) bool {
 func hasGenre(genres, target string) bool {
 	lower := strings.ToLower(genres)
 	targetLower := strings.ToLower(target)
-	return strings.Contains(lower, targetLower)
+	for _, g := range strings.Split(lower, ",") {
+		if strings.TrimSpace(g) == targetLower {
+			return true
+		}
+	}
+	return false
 }
 
 func containsString(slice []string, target string) bool {

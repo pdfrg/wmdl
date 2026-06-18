@@ -149,16 +149,35 @@ func PartitionBookReleasesRaw(releases []ParsedRelease, author, title string) (e
 	return
 }
 
-func wordsMatchBook(clean string, authorWords, titleWords []string) bool {
-	allMatch := true
-	for _, w := range authorWords {
-		if !strings.Contains(clean, w) {
-			allMatch = false
-			break
+var stopWords = map[string]bool{
+	"the": true, "of": true, "and": true, "a": true, "an": true,
+	"in": true, "to": true, "is": true, "it": true, "for": true,
+	"on": true, "that": true, "by": true, "with": true, "as": true,
+	"at": true, "or": true, "be": true,
+}
+
+func filterStopWords(words []string) []string {
+	out := make([]string, 0, len(words))
+	for _, w := range words {
+		if !stopWords[w] {
+			out = append(out, w)
 		}
 	}
-	if !allMatch {
-		return false
+	return out
+}
+
+func wordsMatchBook(clean string, authorWords, titleWords []string) bool {
+	authorWords = filterStopWords(authorWords)
+	titleWords = filterStopWords(titleWords)
+
+	if len(authorWords) == 0 && len(titleWords) == 0 {
+		return true
+	}
+
+	for _, w := range authorWords {
+		if !strings.Contains(clean, w) {
+			return false
+		}
 	}
 	for _, w := range titleWords {
 		if !strings.Contains(clean, w) {

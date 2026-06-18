@@ -13,6 +13,8 @@ type BookClient interface {
 	QueueBook(ctx context.Context, bookID string, format model.BookFormat) error
 	UnqueueBook(ctx context.Context, bookID string, format model.BookFormat) error
 	GetBookStatus(ctx context.Context, bookID string) (*model.BookStatus, error)
+	GetAllBooks(ctx context.Context) ([]model.BookStatus, error)
+	SetAllBooks(books []model.BookStatus)
 	GetSeriesMembers(ctx context.Context, seriesID string) ([]*model.SeriesMember, error)
 	ImportAlternate(ctx context.Context, dir string, format model.BookFormat) error
 }

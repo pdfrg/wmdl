@@ -2463,6 +2463,14 @@ func (d *DB) DeleteBookReleaseEvent(ctx context.Context, id int64) error {
 	return nil
 }
 
+func (d *DB) DeleteBookReleaseEventTx(ctx context.Context, tx *sql.Tx, id int64) error {
+	_, err := tx.ExecContext(ctx, `DELETE FROM book_release_events WHERE id = ?`, id)
+	if err != nil {
+		return fmt.Errorf("deleting book release event %d: %w", id, err)
+	}
+	return nil
+}
+
 // DeleteBook deletes a book by ID. Only safe to call after its release events
 // have been re-pointed or deleted.
 func (d *DB) DeleteBook(ctx context.Context, id int64) error {
@@ -2471,4 +2479,57 @@ func (d *DB) DeleteBook(ctx context.Context, id int64) error {
 		return fmt.Errorf("deleting book %d: %w", id, err)
 	}
 	return nil
+}
+
+func (d *DB) DeleteBookTx(ctx context.Context, tx *sql.Tx, id int64) error {
+	_, err := tx.ExecContext(ctx, `DELETE FROM books WHERE id = ?`, id)
+	if err != nil {
+		return fmt.Errorf("deleting book %d: %w", id, err)
+	}
+	return nil
+}
+
+// FindPendingBookEventsByISBNTx is the transactional variant of
+// FindPendingBookEventsByISBN.
+func (d *DB) FindPendingBookEventsByISBNTx(ctx context.Context, tx *sql.Tx) (map[string][]BookISBNEntry, error) {
+	rows, err := tx.QueryContext(ctx, `
+		SELECT b.isbn13, b.id, e.id
+		FROM books b
+		JOIN book_release_events e ON e.book_id = b.id
+		WHERE b.isbn13 != '' AND e.status = 'pending'
+		ORDER BY b.isbn13, b.id, e.id
+	`)
+	if err != nil {
+		return nil, fmt.Errorf("querying pending events by isbn: %w", err)
+	}
+	defer rows.Close()
+
+	raw := make(map[string][]BookISBNEntry)
+	for rows.Next() {
+		var isbn string
+		var bookID, eventID int64
+		if err := rows.Scan(&isbn, &bookID, &eventID); err != nil {
+			return nil, fmt.Errorf("scanning pending event row: %w", err)
+		}
+		raw[isbn] = append(raw[isbn], BookISBNEntry{
+			ISBN:    isbn,
+			BookID:  bookID,
+			EventID: eventID,
+		})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	results := make(map[string][]BookISBNEntry)
+	for isbn, entries := range raw {
+		seen := make(map[int64]bool)
+		for _, e := range entries {
+			seen[e.BookID] = true
+		}
+		if len(seen) >= 2 {
+			results[isbn] = entries
+		}
+	}
+	return results, nil
 }

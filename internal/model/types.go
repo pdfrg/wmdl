@@ -291,6 +291,7 @@ type BookStatus struct {
 	AudioStatus string
 	BookFile    string
 	AudioFile   string
+	Isbn        string
 }
 
 type SeriesMember struct {
