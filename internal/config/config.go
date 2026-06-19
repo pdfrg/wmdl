@@ -591,8 +591,8 @@ func setDefaults(v *viper.Viper) {
 
 	v.SetDefault("downloader.categories.anime", "Anime")
 
-	v.SetDefault("downloader.categories.ebooks", "Ebooks")
-	v.SetDefault("downloader.categories.audiobooks", "Audiobooks")
+	v.SetDefault("downloader.categories.ebooks", "Books")
+	v.SetDefault("downloader.categories.audiobooks", "Books")
 
 	v.SetDefault("quality.books.ebooks.format_priority", []string{"epub", "mobi", "azw3", "pdf"})
 	v.SetDefault("quality.books.audiobooks.format_priority", []string{"m4b", "mp3", "flac", "aac", "opus"})

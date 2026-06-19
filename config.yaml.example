@@ -70,8 +70,8 @@ downloader:
     tv: "TV"
     music: "Music"
     anime: "Anime"
-    ebooks: "Ebooks"          # must match LL's Alternate Import Folder save path
-    audiobooks: "Audiobooks"  # must match LL's Alternate Import Folder save path
+    ebooks: "Books"           # for LazyLibrarian: set both to the same category whose
+    audiobooks: "Books"       # save path is LL's Alternate Import Folder
 
 # ─── Library Managers ─────────────────────────────────────
 library:

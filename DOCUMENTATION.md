@@ -93,8 +93,8 @@ downloader:
     tv: "TV"
     music: "Music"
     anime: "Anime"
-    ebooks: "Ebooks"
-    audiobooks: "Audiobooks"
+    ebooks: "Books"           # for LazyLibrarian: set both to the same category whose
+    audiobooks: "Books"       # save path is LL's Alternate Import Folder
 ```
 
 See `config.yaml.example` for per-client credentials.
@@ -623,8 +623,10 @@ into a single book entry.
   scans to auto-mark new releases as wanted. wmdl always calls `unqueueBook` after
   `addBook` in full mode to revert to `Skipped`, preventing LL from searching in parallel.
 
-**Download client categories:** The `ebooks` and `audiobooks` category save paths must
-point to LL's Alternate Import Folder.
+**Download client categories:** Set both `ebooks` and `audiobooks` to the same category
+(e.g. `"Books"`) whose save path points to LL's Alternate Import Folder. On download
+completion, the external trigger script changes the torrent's category to a seeding-only
+folder (e.g. `"Ebooks"` / `"Audiobooks"`) outside the import path.
 
 #### Modes
 
