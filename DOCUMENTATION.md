@@ -607,8 +607,43 @@ They appear naturally when `wmdl discover` eventually reaches that week.
 ### Library: LazyLibrarian
 
 wmdl manages ebooks and audiobooks through LazyLibrarian (LL), an *arr-style
-library manager. Books are downloaded to LL's **Alternate Import Folder**, where
-LL reads file metadata (EPUB tags, id3 tags) to match them to library entries.
+library manager. When `mode: "full"`, books are downloaded to LL's **Alternate Import Folder**,
+where LL reads file metadata (EPUB tags, id3 tags) to match them to library entries.
+For other modes, LL handles searching and downloading to its **Download Directories**.
+
+#### Audiobookshelf book server (optional)
+
+While LL stores ebooks and audiobooks in separate library directories (e.g.
+**eBook Library Folder** `/path/to/books/ebooks` and **AudioBook Library Folder**
+`/path/to/books/audiobooks`), both download to the same Alternate Import Folder —
+making Audiobookshelf a natural fit as a media server on top of that structure. Multiple options exist for detecting new media
+imported by LL. The simplest is to "Enable folder watcher for library".  See this [Audiobookshelf guide](https://www.audiobookshelf.org/guides/library_creation).
+Alternatively, schedule library scans or use the ABS [API to update your library](https://api.audiobookshelf.org/#scan-a-library-39-s-folders).
+The example `on-dl-comp.example.sh` script could be modified to include an ABS API call.
+
+#### Other book setups
+
+For setups using other book library managers, set `book_backend: "none"` and configure
+your download client to place completed ebook/audiobook files in your manager's
+import folder. Note that these setups won't get Phase 3 series gap detection or
+library status tracking (unlike LazyLibrarian). For example, [Grimmory BookDrop](https://grimmory.org/docs/bookdrop),
+[BookOrbit Book Dock](https://bookorbit.app/book-dock.html) (both support ebooks and audiobooks),
+or [Calibre-Web Automated](https://github.com/crocodilestick/calibre-web-automated#adding-books-to-your-library)
+(ebook only, no audiobook support).
+
+In the self-hosted book software space, no true *arr or arr-like application seems ready
+to seamlessly slot-in next to the established movie, TV, and music managers.  While LL
+with customization comes close, `wmdl` is designed with future support for other options
+in mind. Support for the projects below is being considered but not yet implemented for the
+reason(s) noted:
+
+| Project | Notes |
+|---------|-------|
+| [Shelfarr](https://shelfarr.org) | request-based (like Jellyseer/Overseer), not designed to follow series or authors |
+| [Chaptarr](https://hub.docker.com/r/robertlordhood/chaptarr) | private development only, no public release yet |
+| [Listenarr](https://github.com/Listenarrs/Listenarr) | audiobook only |
+| [ReadMeABook](https://github.com/kikootwo/readmeabook) | request-based, audiobook first, ebooks only via "shadow library" |
+| [Bookshelf](https://github.com/pennydreadful/bookshelf) | requires separate instances for ebooks and audiobooks |
 
 #### Prerequisites
 
