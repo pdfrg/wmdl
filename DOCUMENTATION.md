@@ -16,46 +16,242 @@ cd wmdl
 make build
 ```
 
-## Configuration
+Pre-built binaries are available on the [releases page](https://github.com/pdfrg/wmdl/releases).
 
-Required settings in `~/.config/wmdl/config.yaml`:
+## Quick Start
+
+Copy the example config and edit it with your credentials:
+
+```bash
+cp config.yaml.example ~/.config/wmdl/config.yaml
+$EDITOR ~/.config/wmdl/config.yaml
+```
+
+Required settings:
 - `tmdb.api_key` — get one free at https://www.themoviedb.org/settings/api
 - `prowlarr.url` + `prowlarr.api_key`
 - One downloader (`qbittorrent`, `transmission`, or `deluge`) with URL and credentials
 
-Optional: `radarr.url` + `radarr.api_key` for automated library management,
-`sonarr.url` + `sonarr.api_key` for TV shows, `notifier` for webhook notifications
-(Gotify, Slack, Discord, ntfy, or generic webhook).
+Then run the full pipeline:
+
+```bash
+wmdl all
+```
+
+## Configuration
 
 Full example at [config.yaml.example](config.yaml.example).
+
+### Notifications
+
+```yaml
+notifier:
+  service: gotify      # gotify, slack, discord, ntfy, webhook
+  url: "http://gotify.local:8080"
+  token: ""
+  search_complete_notify: false   # notify when batch search finishes
+```
+
+A custom Go template can override the JSON payload via `custom_template` with fields
+`{{.Title}}`, `{{.Message}}`, `{{.Priority}}`.
+
+### Browser (chromedp)
+
+Some scrapers (Rotten Tomatoes, Goodreads, Bookshop, AllMusic) require a Chrome-based browser:
+
+```yaml
+browser:
+  binary: "brave"          # brave, google-chrome, chromium, microsoft-edge, vivaldi, opera
+  debug_port: 9222
+  profile: "wmd-review"
+```
+
+Pass `--headless` to run without a visible browser window (recommended for cron/systemd).
+
+### Prowlarr
+
+```yaml
+prowlarr:
+  url: "http://prowlarr.local:9696"
+  api_key: ""
+  timeout: 120
+  indexer_id:
+    videos: 0       # movies + TV (0 = all indexers)
+    music: 0        # music
+    anime: 0        # anime
+    ebooks: 0       # ebooks
+    audiobooks: 0   # audiobooks
+```
+
+### Download Client
+
+```yaml
+downloader:
+  type: "qbittorrent"                    # qbittorrent, transmission, deluge
+  categories:
+    movies: "Movies"
+    tv: "TV"
+    music: "Music"
+    anime: "Anime"
+    ebooks: "Ebooks"
+    audiobooks: "Audiobooks"
+```
+
+See `config.yaml.example` for per-client credentials.
+
+### Library Managers
+
+| Backend | Media | Config Key | Features |
+|---------|-------|------------|----------|
+| **Radarr** | Movies | `library.radarr` | Add movie, collection gap checking, quality profile, monitor |
+| **Sonarr** | TV, Anime | `library.sonarr` | Add series, season folders, monitor new episodes |
+| **Lidarr** | Music | `library.lidarr` | Add artist + album, quality/metadata profiles, monitor |
+| **LazyLibrarian** | Books | `library.lazylibrarian` | Add author + book, queue/unqueue, series members, import |
+
+Example:
+
+```yaml
+library:
+  radarr:
+    url: "http://radarr.local:7878"
+    api_key: ""
+    root_folder: "/media/movies"
+    quality_profile: "Ultra-HD"
+    monitor: false
+  sonarr:
+    url: "http://sonarr.local:8989"
+    api_key: ""
+    root_folder: "/media/tv"
+    quality_profile: "HD-1080p"
+    monitor_new_episodes: true
+    season_folders: true
+  lidarr:
+    url: "http://lidarr.local:8686"
+    api_key: ""
+    root_folder: "/media/music"
+    quality_profile: "Lossless"
+    metadata_profile: "Standard"
+    monitor: "all"
+    monitor_new_albums: true
+  lazylibrarian:
+    url: "http://lazylibrarian.local:5299"
+    api_key: ""
+  book_backend: "lazylibrarian"   # or "none"
+```
+
+### Processing Modes
+
+Each media type has a `mode` setting that controls how much wmdl automates:
+
+| Mode | Prowlarr Search | Download | Library Add | TUI Required |
+|------|:---:|:---:|:---:|:---:|
+| `full` | wmdl searches | wmdl downloads | wmdl adds | Yes |
+| `prowlarr-grab` | wmdl searches | Prowlarr routes | wmdl adds | Yes |
+| `arr` | *arr handles | *arr handles | wmdl adds (monitored) | Yes |
+| `auto` | *arr handles | *arr handles | wmdl adds (monitored) | Review only |
+| `yolo` | *arr handles | *arr handles | wmdl adds (monitored) | No |
+
+In `arr`/`auto`/`yolo` modes, wmdl adds the title to the *arr as monitored with
+a `SearchNow` trigger so the *arr searches on its own schedule.
+
+### Quality Scoring
+
+Release scoring is fully configurable per media type:
+
+**Movies / TV / Anime:**
+```yaml
+quality:
+  movies:
+    resolution: "2160p"           # target: 2160p, 1080p, 720p
+    prefer_hdr: true
+    source_priority: ["bluray", "web-dl", "webrip"]
+    codec_priority: ["h265", "h264", "av1"]
+```
+
+**Music:**
+```yaml
+quality:
+  music:
+    format_priority: ["flac", "mp3", "aac"]
+    bitrate_priority: ["lossless", "320", "v0", "v2"]
+```
+
+**Books:**
+```yaml
+quality:
+  books:
+    ebooks:
+      format_priority: ["epub", "mobi", "azw3", "pdf"]
+    audiobooks:
+      format_priority: ["m4b", "mp3", "flac", "aac", "opus"]
+```
+
+### Content Filters
+
+Per media type, you can filter by language, country, and genre:
+
+```yaml
+media_types:
+  movies:
+    filter:
+      blocked_languages: ["hi", "te", "ta"]     # origin languages to block
+      blocked_countries: ["IN"]                   # origin countries to block
+      blocked_genres: ["Documentary", "Musical"]  # genres to block
+      allowed_languages: ["en"]                   # exclusive allow (empty = all)
+      override_genres: ["Animation"]              # skip all filter checks
+```
+
+Media-type-specific filters — these apply to specific scrapers (not all scrapers
+for that media type):
+
+**Music:** `min_critic_score`, `min_critic_reviews`, `min_user_score`, `min_user_ratings`,
+`include_must_hear` (for live/remix/box set releases) — **AOTY only.**
+AllMusic has no comparable scoring filters.
+
+**Anime:** `min_score`, `min_members` — **Jikan Phase A** (completed anime) only.
+`phase_b_*` thresholds are for **Jikan Phase B** (currently-airing) only.
+`filter_flixpatrol_anime` deduplicates against **FlixPatrol** results.
+
+**Books:** `min_rating`, `min_ratings` — **Goodreads only.** Goodreads Blog, Bookshop,
+and BookMarks have no comparable rating filters.
+
+### Global Options
+
+```yaml
+show_top_n: 10                    # max releases shown per picker
+min_seeders: 3                    # reject releases below this seeder count
+preferred_release_groups: []      # bonus score (e.g. ["NTb", "FLUX"])
+poster_mode: "auto"               # auto, kitty, text, off
+process_mode: "batch"             # batch or interactive
+check_collections: true           # Phase 3 collection gap checking
+cache_ttl_hours: 48               # *arr library cache lifetime
+```
 
 ## Commands
 
 ### `wmdl help`
 
 ```
-Automated workflow for discovering, reviewing, and downloading 
-weekly DVD/streaming releases via Prowlarr, your preferred torrent client, and Radarr/Sonarr.
-
 Usage:
   wmdl [command]
 
 Available Commands:
-  all         Run full pipeline: discover, review, and process
-  catchup     Run all pending steps for incomplete weeks
-  completion  Generate the autocompletion script for the specified shell
-  discover    Scrape release sources and notify
-  help        Help about any command
-  process     Search and download approved releases
-  review      Review pending releases in TUI
-  status      Show status of recent weeks
+  all              Run full pipeline: discover, review, and process
+  catchup          Run all pending steps for incomplete weeks
+  completion       Generate the autocompletion script for the specified shell
+  discover         Scrape release sources and notify
+  help             Help about any command
+  process          Search and download approved releases
+  review           Review pending releases in TUI
+  search           Ad-hoc Prowlarr search + download + library add
+  add              Add a title to the weekly pipeline, bypassing discovery
+  mark-downloaded  Manually mark approved items as downloaded
+  status           Show status of recent weeks
 
 Flags:
-      --config string   config file path
-  -h, --help            help for wmdl
-  -v, --version         version for wmdl
-
-Use "wmdl [command] --help" for more information about a command.
+  --config string   config file path
+  -h, --help        help for wmdl
+  -v, --version     version for wmdl
 ```
 
 ### `wmdl all`
@@ -63,68 +259,136 @@ Use "wmdl [command] --help" for more information about a command.
 Run discover → review → process in sequence for the current week. The full pipeline
 in one command.
 
+```bash
+wmdl all                         # current week
+wmdl all --week 2025-W14         # specific ISO week
+wmdl all --week -3               # 3 weeks ago
+wmdl all --type movie            # movies only
+```
+
 ### `wmdl discover`
 
-Scrape release websites, enrich metadata (TMDB, IMDb, Rotten Tomatoes), save to SQLite database,
-and optionally send a notification.
+Scrape release sources, enrich metadata (TMDB, IMDb, Rotten Tomatoes, MusicBrainz,
+Hardcover), save to SQLite, and optionally send a notification.
 
-Flags: `--headless` (no browser window, for cron/systemd)
+```bash
+wmdl discover                              # current week
+wmdl discover --headless                   # cron/systemd (no visible browser)
+wmdl discover --type movie                 # movies only
+wmdl discover --type book --week 2025-W14  # books for a specific week
+wmdl discover --lookback movie:2-8,tv:2-8 # one-shot lookback overrides
+```
+
+Flags:
+- `--week` — target ISO week (see [week formats](#target-a-specific-week))
+- `--headless` — no browser window, for cron/systemd
+- `--type` — media type filter: `movie`, `tv`, `music`, `anime`, `book`
+- `--lookback` — one-shot lookback override, format: `type:range[,type:range...]`
+  (e.g. `movie:4-8` looks back 4-8 weeks for movie streaming)
 
 ### `wmdl review`
 
-Opens a Bubble Tea TUI showing all pending releases. Approve or reject each one. Shows poster
-art, ratings, genre, and summary for each title.
+Opens a Bubble Tea TUI showing all pending releases. Approve or reject each one.
+Shows poster art, ratings, genre, and summary.
+
+```bash
+wmdl review                        # current pending weeks
+wmdl review --week 2025-W14        # specific week
+```
+
+Keyboard: `j`/`k` to move, `a`/`r` to approve/reject, `enter` to confirm,
+`o` to open details page in browser.
+
+Posters render via Kitty image protocol (Kitty, Ghostty, Rio). Other terminals
+show a placeholder.
 
 ### `wmdl process`
 
-For each approved release: searches Prowlarr with an optionally configured preferred indexer
-(perfect for your private tracker), falls back to all Prowlarr indexers, filters results by
-your quality preferences (resolution, source type, codec, preferred groups, min seeders),
-opens a release picker TUI, then sends the chosen release to your download client and adds
-it to Radarr/Sonarr.  If adding a new show season >1, offers to search prior seasons.
+For each approved release: searches Prowlarr, scores by quality preferences, opens
+a release picker TUI, then sends the chosen release to your download client and
+adds it to your library manager.
 
-Supports two modes:
-- `batch` (default): searches all items first, then presents them
-- `interactive`: searches and presents each item just-in-time
+```bash
+wmdl process                         # all pending approved items
+wmdl process --type tv               # TV only
+wmdl process --refresh-cache         # force re-fetch *arr library caches
+```
+
+Two display modes (configurable via `process_mode`):
+- `batch` (default): Searches all items first, then presents pickers
+- `interactive`: Searches and presents each item just-in-time
+
+**Skip handling:** If you skip a Prowlarr result, wmdl offers to add the item
+to the *arr as monitored so it can search on its own schedule.
+
+### `wmdl search`
+
+Ad-hoc Prowlarr search bypassing the weekly pipeline. Supports all media types.
+
+```bash
+wmdl search "Dune: Part Two"
+wmdl search --year 2024 "Dune: Part Two"
+wmdl search --season 2 "Squid Game"
+wmdl search --season all "Game of Thrones"       # all completed seasons
+wmdl search --season 1-3 "Justified"             # season range
+wmdl search --auto "The Matrix"                  # auto-confirm all prompts
+wmdl search --no-library "The Office (US)"       # download only, no *arr add
+wmdl search --grab "Gladiator II"                # Prowlarr grab (Prowlarr routes download)
+wmdl search --format audiobook "Project Hail Mary"  # book format override
+```
+
+Flags:
+- `--year`/`-y` — filter or disambiguate by year
+- `--season` — season number, range (`1-3`, `S01-S03`), or `all` (TV/anime only)
+- `--grab` — Prowlarr grab instead of direct download
+- `--no-library` — skip adding to library manager
+- `--auto` — auto-confirm all prompts
+- `--format` — book format override: `ebook`, `audiobook`, `both`
+
+### `wmdl add`
+
+Inject a title directly into the weekly pipeline without discovery. Useful if you
+heard about something outside the normal release calendar.
+
+```bash
+wmdl add --tmdb 157336                          # Movie (Interstellar)
+wmdl add --tmdb 60625 --season 3                # TV (Rick and Morty S03)
+wmdl add --mal 5114                             # Anime (FMAB)
+wmdl add --mbid "11111111-2222-3333-4444-555555555555"  # Music release group
+wmdl add --isbn "978-0-00-000000-0"             # Book
+wmdl add --tmdb 27205 --status approved         # Pre-approved
+```
+
+Flags:
+- `--tmdb` — TMDB ID (movie or TV)
+- `--tvdb` — TVDB ID (TV only)
+- `--mal` — MyAnimeList ID (anime)
+- `--mbid` — MusicBrainz release group ID (music)
+- `--isbn` — ISBN-13 (book)
+- `--year`/`-y` — disambiguation year
+- `--season` — season number (TV/anime, default: latest completed)
+- `--status` — initial status: `pending` or `approved`
+- `--week` — target week
+- `--format` — book format: `ebook`, `audiobook`, `both`
+
+### `wmdl mark-downloaded`
+
+Manually mark items as downloaded. Useful when you obtained media outside wmdl
+and want the pipeline to acknowledge it.
+
+```bash
+wmdl mark-downloaded release:42
+wmdl mark-downloaded book:7 --format audiobook
+wmdl mark-downloaded album:3
+```
+
+Flags:
+- `--format` — book format: `ebook`, `audiobook`, `both`
 
 ### `wmdl status`
 
-Displays a week-by-week progress table showing which weeks have been discovered, reviewed,
- and processed.
+Displays a week-by-week progress table:
 
-### `wmdl catchup`
-
-Advances each incomplete week by one step per invocation. Run it repeatedly to catch up weeks
-in order.
-
-### Target a specific week
-
-```bash
-wmdl all --week 2025-W14       # ISO week
-wmdl all --week 2025-03-31     # date
-wmdl all --week last           # previous week
-wmdl all --week next           # next week
-wmdl all --week -3             # 3 weeks ago
-```
-
-## wmdl "week" definition
-
-For `wmdl` the week runs from Wednesday to the following Tuesday (physical media release day).
-Automated setups run `wmdl discover` every Wednesday morning by default.  Occasionally, physical
-media is released on other days of the week, and will be grouped with the Tuesday releases as a 
-trackable unit, to help prevent any missed weeks or missed releases. As noted below, `wmdl`
-searches for streaming media released 2 months earlier than physical. These releases are grouped
-with the physical releases into the same week "unit" to simplify tracking.
-
-**To illustrate...**
-
-Physical release day: Tuesday May 19.
-
-`wmdl` week: Wednesday May 13 - May 19.
-
-Streaming media search: March 13 - March 19.
-
-Output of `wmdl status`:
 ```
 Week      Date        Discover  Review  Process
 ────────  ──────────  ────────  ──────  ───────
@@ -133,73 +397,264 @@ W21 2026  2026-05-19  ✓         ✓       ✓
 All caught up!
 ```
 
+```bash
+wmdl status            # progress table
+wmdl status -v         # also list approved-but-not-downloaded items
+```
+
+### `wmdl catchup`
+
+Advances each incomplete week by one step per invocation (discover → review → process).
+Run repeatedly to catch up backlogged weeks in order.
+
+### Target a specific week
+
+All week-aware commands accept the `--week` flag:
+
+| Format | Example | Meaning |
+|--------|---------|---------|
+| empty | `--week ""` | Current WMDL atomic week (most recent past Tuesday) |
+| `W` + number | `--week W21` | Week 21 of current year |
+| year + week | `--week 2025-W52` | ISO week 52 of 2025 |
+| `MM-DD` | `--week 05-19` | May 19 of current year |
+| `YYYY-MM-DD` | `--week 2025-05-19` | Specific date |
+| `-N` | `--week -3` | 3 weeks ago |
+
+## wmdl "week" definition
+
+The WMDL atomic week runs **Wednesday to Tuesday** (anchored on Tuesday, the
+traditional physical media release day). Automated setups run `wmdl discover`
+every Wednesday morning by default.
+
+**Example:** Physical release day is Tuesday May 19. The WMDL week is Wednesday
+May 13 – Tuesday May 19. Streaming releases are discovered with a lookback
+(typically 8 weeks) to account for earlier streaming premieres.
+
+All media types (movies, TV, music, anime, books) use the same Wed–Tue window,
+with optional `lookback_weeks` to look back N atomic weeks.
+
 ## Architecture
 
 ```
-discover  →  review  →  process
-   │            │           │
- scrape      TUI       Prowlarr search
- TMDB/RT   approve/    release picker
- enrich     reject     download + library
-   │            │           │
-   └────────────┴───────────┘
-              SQLite
-        (~/.local/share/wmdl/)
+              discover                      review                  process
+           ┌──────────────┐            ┌──────────────┐        ┌───────────────┐
+  Movies   │ DVD Release  │            │  Bubble Tea  │        │ Prowlarr      │
+  TV       │ TMDB Discover│            │  approve /   │        │ search +      │
+  Music    │ FlixPatrol   │  ─────►    │  reject TUI  │ ───►   │ quality       │
+  Anime    │ AOTY         │            │  with poster │        │ scoring       │
+  Books    │ AllMusic     │            │  preview     │        │ picker TUI    │
+           │ Jikan (MAL)  │            │              │        │               │
+           │ Goodreads    │            │              │        │ download +    │
+           │ Bookshop     │            │              │        │ *arr/Lidarr/  │
+           │ BookMarks    │            │              │        │ LL add        │
+           └──────┬───────┘            └──────┬───────┘        └───────┬───────┘
+                  │                           │                        │
+                  └───────────────────────────┼────────────────────────┘
+                                              ▼
+                                         SQLite DB
+                                   (~/.local/share/wmdl/wmdl.db)
 ```
 
-### Discover phase (CLI)
+### Enrichment
 
-Three sources are utilized:
-- **dvdsreleasesdates.com** — physical DVD/Blu-ray releases (each Tuesday)
-- **TMDB Discover API** — streaming premieres
-- **FlixPatrol** — streaming release calendar, includes extensive non-US and non-English
-content
+External APIs enrich each discovered item:
 
-Streaming release discovery is time-shifted 2 months earlier than physical. Targeting
-earlier streaming releases allows critic and user review ecosystem to populate, series
-with weekly release calendars to finish, and season packs to become available.
+- **TMDB** — TMDB ID, IMDb ID, overview, genres, runtime, poster, US rating, collection membership
+- **IMDbAPI** — IMDb rating + Metacritic score
+- **Rotten Tomatoes** — chromedp web scraping for critic/audience scores (requires browser)
+- **MusicBrainz** — release group ID, artist details, ratings, genres
+- **Hardcover** — book metadata (ISBN, pages, ratings, descriptions)
+- **OpenLibrary** — book metadata fallback
 
-Each title is enriched through:
-- **TMDB** — TMDB ID, IMDb ID, overview, genres, runtime, poster path, US content rating
-- **IMDbAPI** — IMDb rating and Metacritic score
-- **Rotten Tomatoes** — critic and audience scores via chromedp web scraping, though often
-not available for more niche/non-US content.  Requires installed Chrome-based browser
-(Chromium, Brave, Edge, Opera, Vivaldi), though does not need to be default browser.
+### Phase 1: Prowlarr Search + TUI Picker
 
-This phase can easily be automated with `systemd` or `cron` (see below), and configured to
-notify you when complete.
-
-### Review phase (TUI)
-
-Bubble Tea TUI with keyboard navigation (j/k to move, a/r to approve/reject, enter to confirm,
-o to open RT page). Posters are fetched from TMDB and rendered inline via Kitty image protocol
-when supported. Kitty, Ghostty, and Rio terminals all support Kitty images.  Once all selections
-are made, review the list of choices, and confirm to save.
-
-### Process phase (CLI + TUI)
-
-1. Prowlarr search with tiered queries (preferred indexer if configured,
-resolution-specific → fallbacks)
-2. Results filtered by title, year, season number, and media type
+1. Tiered Prowlarr search (preferred indexer → resolution-specific → fallbacks)
+2. Results filtered by title, year, season number, media type
 3. Releases scored and sorted by quality preferences
-4. TUI picker to select the best release(s). Multi-select enabled.
-5. Torrents added to download client (qBittorrent/Transmission/Deluge)
+4. TUI picker to select the best release (multi-select enabled)
+5. Torrents added to download client
 6. Download records saved to SQLite
-7. Movies/series added to Radarr/Sonarr with selected quality profile after confirmation
 
-**Note: For TV, only season packs are returned.  All single episode releases are filtered.**
+### Phase 2: Library Add
 
-### Quality scoring
+Movies/series/albums/books added to their respective library manager with
+confirmation. Quality profile, root folder, and monitor settings are respected.
 
-Releases are scored on:
-- Resolution match (separate configuration values for Movies and TV)
-- Source type priority (default: bluray > web-dl > webrip > hdtv)
-- Codec priority (default: h265/hevc > h264/x264 > av1)
-- Preferred release groups
-- Minimum seeders filter
-- HDR preference
+### Phase 3: Gap Detection
 
-All values are user configurable.
+After adding an item to the library, wmdl checks for gaps:
+
+- **Movies:** TMDB collection membership — asks if you want to add missing collection entries
+- **TV:** Season > 1 — offers to search/download previous seasons
+- **Books:** LazyLibrarian series membership — offers to add earlier books in the series
+
+## Music Pipeline
+
+### Scrapers
+
+- **Album of the Year** (`albumoftheyear`) — HTTP+goquery scraper for critic scores and user ratings
+- **AllMusic** (`allmusic`) — chromedp scraper for editor ratings (requires browser).
+  Editors Choice pages provide release months only (not specific days), so results
+  appear when the WMDL atomic week crosses a calendar month boundary (roughly once
+  per month).
+
+### Enrichment
+
+MusicBrainz provides release group IDs, artist details, ratings, and genre tags.
+
+### Quality
+
+Music releases are scored by format priority (`flac > mp3 > aac`) and bitrate
+priority (`lossless > 320 > v0 > v2`).
+
+### Filters
+
+```yaml
+media_types:
+  music:
+    filter:
+      min_critic_score: 75
+      min_critic_reviews: 5
+      min_user_score: 75
+      min_user_ratings: 200
+      include_must_hear: true   # special releases bypass review-count checks
+```
+
+### Library: Lidarr
+
+Lidarr manages music with artist and album tracking. wmdl can add artists
+(which auto-pulls albums) or individual albums, and trigger searches via
+the Lidarr API.
+
+```yaml
+library:
+  lidarr:
+    url: "http://lidarr.local:8686"
+    api_key: ""
+    root_folder: "/media/music"
+    quality_profile: "Lossless"
+    metadata_profile: "Standard"
+    monitor: "all"
+    monitor_new_albums: true
+```
+
+## Anime Pipeline
+
+### Scrapers
+
+- **Jikan** (`jikan`) — MyAnimeList via Jikan API. Two phases:
+  - **Phase A:** Recently completed anime meeting score/member thresholds
+  - **Phase B:** Currently-airing anime above higher thresholds — added directly
+    to Sonarr without Prowlarr search (since episodes are still releasing)
+- **FlixPatrol** — also catches anime; can be deduped against Jikan results
+
+### Filters
+
+```yaml
+media_types:
+  anime:
+    min_score: 7.0
+    min_members: 50000
+    phase_b_enabled: true
+    phase_b_min_score: 7.5
+    phase_b_min_members: 100000
+    min_phase_b_results: 3
+    filter_flixpatrol_anime: false
+```
+
+### Library
+
+Anime goes to **Sonarr** (same config as TV). The anime-specific config
+determines which seasons qualify.
+
+## Book Pipeline
+
+### Scrapers
+
+- **Goodreads** (`goodreads`) — chromedp scraper for monthly popular-by-date (requires browser)
+- **Goodreads Blog** (`goodreads_blog`) — HTTP+goquery scraper for weekly/editors blog posts
+- **Bookshop** (`bookshop`) — chromedp scraper for curated weekly new releases (requires browser)
+- **LitHub BookMarks** (`bookmarks`) — HTTP+regex scraper for "highbrow" literary content
+
+### Enrichment
+
+- **Hardcover** — primary metadata (ISBN, pages, ratings, descriptions, author info)
+- **OpenLibrary** — fallback when Hardcover lookup fails
+
+### Quality
+
+Ebook format priority: `epub > mobi > azw3 > pdf`
+Audiobook format priority: `m4b > mp3 > flac > aac > opus`
+
+### Per-Format Processing
+
+Books support independent tracking of ebooks and audiobooks. When `default_format: "both"`,
+wmdl processes each format independently — separate Prowlarr search, download, and
+library add for each format.
+
+### Dedup Merge
+
+When the same book is found by multiple scrapers, sources are merged — e.g.
+`source` becomes `"goodreads,bookshop"` and notes carry data from both providers.
+
+### Bookshop Future-Week Pre-Population
+
+Bookshop.org has no archive URLs for past weeks, so it always scrapes the current
+real ISO week. Books found during a timeshifted run are stored under their actual
+release week (from the enrichment-provided release date), not the timeshifted target.
+They appear naturally when `wmdl discover` eventually reaches that week.
+
+### Library: LazyLibrarian
+
+wmdl manages ebooks and audiobooks through LazyLibrarian (LL), an *arr-style
+library manager. Books are downloaded to LL's **Alternate Import Folder**, where
+LL reads file metadata (EPUB tags, id3 tags) to match them to library entries.
+
+#### Prerequisites
+
+**qBittorrent:** Enable `Options → Downloads → Torrent Content Layout → Create subfolder`.
+Without this, all files land flat in one directory and LL may import multiple files
+into a single book entry.
+
+**LazyLibrarian config:**
+- `Alternate Import/Export Folder` must differ from `Download Directory`
+- `DESTINATION_COPY = True` to keep originals for seeding (`False` to move on import)
+- `NEWBOOK_STATUS` / `NEWAUDIO_STATUS` — set to `Wanted` if you want author-update
+  scans to auto-mark new releases as wanted. wmdl always calls `unqueueBook` after
+  `addBook` in full mode to revert to `Skipped`, preventing LL from searching in parallel.
+
+**Download client categories:** The `ebooks` and `audiobooks` category save paths must
+point to LL's Alternate Import Folder.
+
+#### Modes
+
+| Mode | Prowlarr | LL add | LL search | Download |
+|------|----------|--------|-----------|----------|
+| full | wmdl | `addBook` + `unqueueBook` (Skipped) | No | wmdl |
+| arr | ❌ | `addBook` (Wanted) | Yes (scheduled) | LL |
+| auto | ❌ | auto-yes | Yes | LL |
+| yolo | ❌ | auto-yes | Yes | LL |
+
+#### External Import Trigger
+
+After wmdl downloads a book in `full` mode, LL must be told to scan the alternate
+folder. See the example script at [scripts/on-dl-comp.example.sh](scripts/on-dl-comp.example.sh)
+for a complete qBittorrent completion hook that:
+
+1. Detects format (ebook vs audiobook) from file extensions
+2. Calls LL's `importAlternate` for the correct format
+3. Changes the qBittorrent category to a seeding folder outside the import path
+4. Sends a Gotify notification on completion
+
+Alternatively, a cron job calling `importAlternate` every 10–30 minutes:
+
+```bash
+*/15 * * * * curl "http://lazylibrarian:5299/api?apikey=KEY&cmd=importAlternate&library=eBook"
+*/15 * * * * curl "http://lazylibrarian:5299/api?apikey=KEY&cmd=importAlternate&library=AudioBook"
+```
+
+A Gotify notification script for LL's external script hook is at
+[scripts/ll-gotify.example.sh](scripts/ll-gotify.example.sh).
 
 ## Automation (weekly discovery)
 
@@ -212,90 +667,23 @@ systemctl --user daemon-reload
 systemctl --user enable --now wmdl-discover.timer
 ```
 
-Runs `wmdl discover --headless` every Wednesday at 05:00 and optionally sends notification.
-Results can then be reviewed and processed at your convenience. Change time or day of week
-by editing `wmdl-discover.timer`.
+Runs `wmdl discover --headless` every Wednesday at 05:00. Results can then be
+reviewed and processed at your convenience.
 
 ### Cron
 
 ```
 crontab -e
-# add the following line, edit path to your install location if needed, then save and exit
 0 5 * * 3 $HOME/go/bin/wmdl discover --headless
 ```
 
-## Book Integration (LazyLibrarian)
+## Data Storage
 
-wmdl supports managing ebooks and audiobooks through LazyLibrarian (LL), an *arr-style
-library manager. Books are downloaded to LL's **Alternate Import Folder**, where LL
-reads file metadata (EPUB tags, id3 tags) to match them to library entries.
-
-### Prerequisites
-
-**qBittorrent:** Enable `Options → Downloads → Torrent Content Layout → Create subfolder`.
-Without this, all files land flat in one directory and LL may import multiple files into
-a single book entry.
-
-**LazyLibrarian config:**
-- `Alternate Import/Export Folder` must differ from `Download Directory`
-- `DESTINATION_COPY = True` to keep originals for seeding (`False` to move on import)
-- `NEWBOOK_STATUS` / `NEWAUDIO_STATUS` — set to `Wanted` if you want author-update
-  scans to auto-mark new releases as wanted. wmdl always calls `unqueueBook` after
-  `addBook` in full mode to revert to `Skipped`, preventing LL from searching in parallel.
-
-**Download client categories:** The `ebooks` and `audiobooks` category save paths must
-point to LL's Alternate Import Folder.
-
-### Modes
-
-| Mode | Prowlarr | LL add | LL search | Download |
-|------|----------|--------|-----------|----------|
-| full | ✅ wmdl | `addBook` + `unqueueBook` (Skipped) | No | wmdl |
-| arr  | ❌ | `addBook` (Wanted) | Yes (scheduled) | LL |
-| auto | ❌ | auto-yes | Yes | LL |
-| yolo | ❌ | auto-yes | Yes | LL |
-
-### External Import Trigger
-
-After wmdl downloads a book in `full` mode, LL must be told to scan the alternate folder.
-Set up either:
-
-**qBittorrent "on download completion" script:**
-Create a script that calls:
-```bash
-curl "http://lazylibrarian:5299/api?apikey=YOUR_KEY&cmd=importAlternate&library=eBook"
-curl "http://lazylibrarian:5299/api?apikey=YOUR_KEY&cmd=importAlternate&library=AudioBook"
-```
-Configure it in qBittorrent at `Options → Downloads → Run external program`.
-
-**Cron job** (every 10-30 minutes):
-```
-*/15 * * * * curl "http://lazylibrarian:5299/api?apikey=YOUR_KEY&cmd=importAlternate&library=eBook"
-*/15 * * * * curl "http://lazylibrarian:5299/api?apikey=YOUR_KEY&cmd=importAlternate&library=AudioBook"
-```
-
-The `&library=` parameter is required even though it has a default — call it once per
-format to handle both ebooks and audiobooks.
-
-### Config
-
-```yaml
-library:
-  book_backend: "lazylibrarian"
-  lazylibrarian:
-    url: "http://lazylibrarian.local:5299"
-    api_key: ""
-    timeout: 120
-
-downloader:
-  categories:
-    ebooks: "Books"
-    audiobooks: "Books"
-```
-
-## Data
-
-SQLite database at `~/.local/share/wmdl/wmdl.db`. Key tables: `titles`, `release_events`, `downloads`, `week_state`.
+SQLite database at `~/.local/share/wmdl/wmdl.db`. Key tables:
+`titles`, `release_events`, `downloads`, `week_state`,
+`artists`, `albums`, `album_release_events`,
+`authors`, `books`, `book_release_events`, `book_downloads`,
+`library_cache`.
 
 Logs at `~/.local/state/wmdl/wmdl.log` (also printed to stderr).
 
@@ -306,16 +694,28 @@ cmd/wmdl/           — CLI commands (cobra)
 internal/discover/  — scrapers (interface-based)
 internal/review/    — Bubble Tea TUI list
 internal/process/   — Bubble Tea release picker + orchestration
-internal/browser/   — chromedp Brave tab grabber
+internal/browser/   — chromedp browser tab grabber
 internal/search/    — Prowlarr API client
-internal/download/  — download client interface + impls
-internal/library/   — Radarr/Sonarr API clients
+internal/download/  — download client interface + implementations
+internal/library/   — Radarr/Sonarr/Lidarr/LazyLibrarian API clients
 internal/quality/   — release title parser + scorer
 internal/model/     — shared types
 internal/db/        — SQLite state
 internal/config/    — viper config loader
 internal/notifier/  — webhook notifications
 ```
+
+## Example Scripts
+
+The [scripts/](scripts/) directory contains ready-to-use shell scripts:
+
+- **`on-dl-comp.example.sh`** — qBittorrent completion hook for LazyLibrarian import:
+  detects format, triggers `importAlternate`, changes category to seeding folder,
+  sends Gotify notification.
+- **`ll-gotify.example.sh`** — LazyLibrarian external script hook: sends rich
+  Gotify notifications (title, description, cover image) when LL imports a book.
+
+Copy and customize these for your setup.
 
 ## Building
 
