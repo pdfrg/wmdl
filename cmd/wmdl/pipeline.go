@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -677,9 +678,10 @@ func runProcessForWeek(ctx context.Context, database *db.DB, cfg *config.Config,
 
 	// ─── PRIMARY PICKERS (movies/TV/anime, mode-aware) ──────────
 	var picked []process.PickedItem
+	var batchItems []*process.BatchItem
 	if hasSearchable {
 		if cfg.ProcessMode == "batch" || cfg.ProcessMode == "" {
-			// Split results by processing mode
+			// Batch mode: split results, collect all items, single TUI
 			var fullResults, grabResults []*process.SearchResult
 			for _, sr := range primaryVideoResults {
 				mode := cfg.MediaTypeMode(sr.Event.Title.MediaType)
@@ -689,11 +691,29 @@ func runProcessForWeek(ctx context.Context, database *db.DB, cfg *config.Config,
 					fullResults = append(fullResults, sr)
 				}
 			}
-			if len(grabResults) > 0 {
-				exec.ProcessGrabResults(ctx, grabResults)
+
+			// Collect video results
+			for _, sr := range grabResults {
+				if len(sr.Top) == 0 {
+					continue
+				}
+				batchItems = append(batchItems, &process.BatchItem{
+					ID:           fmt.Sprintf("v-%d", sr.Event.Event.ID),
+					Label:        labelForSearchResult(sr),
+					Releases:     sr.Top,
+					SearchResult: sr,
+				})
 			}
-			if len(fullResults) > 0 {
-				picked = exec.PickResults(ctx, fullResults)
+			for _, sr := range fullResults {
+				if len(sr.Top) == 0 {
+					continue
+				}
+				batchItems = append(batchItems, &process.BatchItem{
+					ID:           fmt.Sprintf("v-%d", sr.Event.Event.ID),
+					Label:        labelForSearchResult(sr),
+					Releases:     sr.Top,
+					SearchResult: sr,
+				})
 			}
 		} else {
 			// Interactive mode — process one at a time
@@ -711,7 +731,8 @@ func runProcessForWeek(ctx context.Context, database *db.DB, cfg *config.Config,
 	}
 
 	// ─── ARR/AUTO/YOLO MODE ITEMS (no Prowlarr search, add directly to *arr) ──
-	// These weren't searched above, so construct synthetic PickedItems
+	// Handled after batch/interactive mode — these weren't searched, so construct
+	// synthetic PickedItems for the library phase.
 	for _, ev := range events {
 		mode := cfg.MediaTypeMode(ev.Title.MediaType)
 		if mode == "arr" || mode == "auto" || mode == "yolo" {
@@ -720,20 +741,108 @@ func runProcessForWeek(ctx context.Context, database *db.DB, cfg *config.Config,
 		}
 	}
 
-	// ─── ALL PICKERS (continuous user attention) ─────────────────
+	// ─── BATCH PICKER (single TUI for all items, batch mode only) ─────────
 	var albumResults []process.MusicAlbumResult
+	var bookDownloadedInfo map[int64]*process.BookDownloadInfo
 
-	if hasAlbums {
-		if cfg.ProcessMode == "batch" || cfg.ProcessMode == "" {
-			albumResults = exec.PickMusicResults(ctx, musicResults)
-		} else {
+	if cfg.ProcessMode == "batch" || cfg.ProcessMode == "" {
+		// Collect music results
+		if hasAlbums {
+			for _, sr := range musicResults {
+				if len(sr.Top) == 0 {
+					continue
+				}
+				batchItems = append(batchItems, &process.BatchItem{
+					ID:          fmt.Sprintf("m-%d", sr.Event.Event.ID),
+					Label:       fmt.Sprintf("%s - %s", sr.Event.Artist.Name, sr.Event.Album.Title),
+					Releases:    sr.Top,
+					MusicResult: sr,
+				})
+			}
+		}
+
+		// Collect book results (convert ParsedBookRelease to ParsedRelease for picker)
+		if hasBooks {
+			bookMode := cfg.MediaTypeMode(model.MediaTypeBook)
+			if bookMode != "arr" && bookMode != "auto" && bookMode != "yolo" {
+				for _, sr := range bookResults {
+					if len(sr.Top) == 0 {
+						continue
+					}
+					parsed := make([]quality.ParsedRelease, len(sr.Top))
+					for i, br := range sr.Top {
+						parsed[i] = br.ParsedRelease
+					}
+					batchItems = append(batchItems, &process.BatchItem{
+						ID:         fmt.Sprintf("b-%d-%s", sr.Event.Event.ID, sr.Format),
+						Label:      fmt.Sprintf("%s by %s [%s]", sr.Event.Book.Title, sr.Event.Author.Name, sr.Format),
+						Releases:   parsed,
+						BookResult: sr,
+					})
+				}
+			}
+		}
+
+		// Collect Phase 3 items (full/prowlarr-grab mode only; arr/auto/yolo stay
+		// in Phase3SearchPhase for ProcessPhase3Pickers to handle later).
+		if needsLibrary && (hasSearchable || hasAnimeAiring) && len(exec.Phase3SearchPhase) > 0 {
+			var remaining []process.Phase3SearchEntry
+			for _, entry := range exec.Phase3SearchPhase {
+				c := entry.Candidate
+				mode := cfg.MediaTypeMode(c.MediaType)
+				if mode == "arr" || mode == "auto" || mode == "yolo" {
+					remaining = append(remaining, entry)
+				} else if len(entry.Top) > 0 {
+					label := fmt.Sprintf("%s (%d)", c.Title, c.Year)
+					if c.Season > 0 {
+						label = fmt.Sprintf("Season %d - %s", c.Season, c.Title)
+					}
+					batchItems = append(batchItems, &process.BatchItem{
+						ID:       fmt.Sprintf("p3-%d-%d", c.TmdbID, c.Season),
+						Label:    label,
+						Phase3:   true,
+						Releases: entry.Top,
+						SearchResult: &process.SearchResult{
+							Event: db.EventWithTitle{
+								Title: &model.Title{
+									Title:     c.Title,
+									Year:      c.Year,
+									MediaType: c.MediaType,
+									TmdbID:    c.TmdbID,
+									TvdbID:    c.TvdbID,
+								},
+							},
+							Season: c.Season,
+							Top:    entry.Top,
+						},
+					})
+				}
+			}
+			exec.Phase3SearchPhase = remaining
+		}
+
+		// Run the batch picker — single TUI session
+		if len(batchItems) > 0 {
+			fmt.Fprintf(os.Stderr, "  Processing %d item(s) in picker...\n", len(batchItems))
+			picker := process.NewBatchPicker(batchItems)
+			result, err := picker.Run()
+			if err != nil && !errors.Is(err, process.ErrAbort) {
+				return err
+			}
+			if errors.Is(err, process.ErrAbort) {
+				log.Info().Msg("pipeline aborted by user")
+			}
+			batchPicked, batchAlbumResults, batchBookInfo := exec.ProcessBatchResults(ctx, result.Items)
+			picked = append(picked, batchPicked...)
+			albumResults = batchAlbumResults
+			bookDownloadedInfo = batchBookInfo
+		}
+	} else {
+		// Interactive mode — music and book processing
+		if hasAlbums {
 			albumResults = exec.ProcessMusicAlbumsInteractive(ctx, albumEventsForProcess)
 		}
-	}
-
-	var bookDownloadedInfo map[int64]*process.BookDownloadInfo
-	if hasBooks && (cfg.ProcessMode == "batch" || cfg.ProcessMode == "") {
-		bookDownloadedInfo = exec.PickBookResults(ctx, bookResults)
+		// Interactive book processing is handled after Phase 3
 	}
 
 	// ─── ALL LIBRARY DECISIONS ──────────────────────────────────
@@ -907,4 +1016,11 @@ func autoApproveYoloItems(ctx context.Context, database *db.DB, cfg *config.Conf
 			}
 		}
 	}
+}
+
+func labelForSearchResult(sr *process.SearchResult) string {
+	if sr.Event.Title.Year > 0 {
+		return fmt.Sprintf("%s (%d)", sr.Event.Title.Title, sr.Event.Title.Year)
+	}
+	return sr.Event.Title.Title
 }

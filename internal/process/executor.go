@@ -73,7 +73,7 @@ type Executor struct {
 
 	Unfound           []string
 	Skipped           []string
-	phase3SearchPhase []Phase3SearchEntry
+	Phase3SearchPhase []Phase3SearchEntry
 	phase3Movies      []Phase3Movie
 	phase3Seasons     []struct {
 		SeriesID     int
@@ -884,6 +884,185 @@ func (e *Executor) PickResults(ctx context.Context, results []*SearchResult) []P
 	return picked
 }
 
+// ProcessBatchResults processes batch picker results, dispatching by item type.
+// Returns collected items for the library decisions phase.
+func (e *Executor) ProcessBatchResults(ctx context.Context, items []*BatchItem) (picked []PickedItem, albumResults []MusicAlbumResult, bookInfo map[int64]*BookDownloadInfo) {
+	for _, item := range items {
+		if item.Skipped {
+			e.Skipped = append(e.Skipped, item.Label)
+			continue
+		}
+		if len(item.Selected) == 0 {
+			continue
+		}
+
+		switch {
+		case item.Phase3:
+			e.processPhase3BatchItem(ctx, item)
+
+		case item.MusicResult != nil:
+			result := e.processMusicBatchItem(ctx, item)
+			if result != nil {
+				albumResults = append(albumResults, *result)
+			}
+
+		case item.BookResult != nil:
+			e.processBookBatchItem(ctx, item, &bookInfo)
+
+		case item.SearchResult != nil:
+			sr := item.SearchResult
+			mode := e.cfg.MediaTypeMode(sr.Event.Title.MediaType)
+			if mode == "prowlarr-grab" {
+				e.grabViaProwlarr(ctx, sr.Event, item.Selected)
+			} else {
+				e.addToClient(ctx, sr.Event, item.Selected)
+				picked = append(picked, PickedItem{Event: sr.Event, Season: sr.Season, Chosen: item.Selected})
+			}
+			e.handleUpgrade(ctx, sr.Event)
+			e.markDownloaded(ctx, sr.Event)
+		}
+	}
+	return
+}
+
+func (e *Executor) processPhase3BatchItem(ctx context.Context, item *BatchItem) {
+	sr := item.SearchResult
+	if sr == nil {
+		return
+	}
+
+	// For movies, add to Radarr if not already present
+	if sr.Event.Title.MediaType == model.MediaTypeMovie && sr.Event.Title.TmdbID > 0 {
+		existing, err := e.radarr.Exists(ctx, sr.Event.Title.TmdbID)
+		if err == nil && existing == nil {
+			profileID := e.resolveProfileID(ctx, e.cfg.Library.Radarr.QualityProfile)
+			if _, addErr := e.radarr.Add(ctx, sr.Event.Title.TmdbID, sr.Event.Title.Title, sr.Event.Title.Year, library.AddMovieOptions{
+				Monitored:           e.cfg.Library.Radarr.Monitor,
+				MinimumAvailability: "released",
+				QualityProfileID:    profileID,
+				RootFolderPath:      e.cfg.Library.Radarr.RootFolder,
+				SearchNow:           false,
+			}); addErr != nil {
+				e.log.Warn().Err(addErr).Str("title", sr.Event.Title.Title).Msg("adding collection movie to Radarr")
+			}
+		}
+	}
+
+	category := e.cfg.Downloader.Categories.Movies
+	if sr.Event.Title.MediaType == model.MediaTypeTV || sr.Event.Title.MediaType == model.MediaTypeAnime {
+		category = e.cfg.Downloader.Categories.TV
+	}
+	for _, release := range item.Selected {
+		uri := release.DownloadURL
+		if uri == "" {
+			uri = release.MagnetURL
+		}
+		if uri != "" {
+			if _, err := e.dl.AddTorrent(ctx, uri, download.WithCategory(category)); err != nil {
+				e.log.Warn().Err(err).Str("title", sr.Event.Title.Title).Msg("phase 3 add failed")
+			}
+		}
+	}
+	e.log.Info().Str("title", sr.Event.Title.Title).Msg("phase 3 item downloaded")
+}
+
+func (e *Executor) processMusicBatchItem(ctx context.Context, item *BatchItem) *MusicAlbumResult {
+	sr := item.MusicResult
+	if sr == nil {
+		return nil
+	}
+	ae := sr.Event
+
+	category := e.cfg.Downloader.Categories.Music
+	if category == "" {
+		category = "Music"
+	}
+	var releaseEventID int64
+	if ae.Event != nil {
+		releaseEventID = ae.Event.ID
+	}
+
+	for _, release := range item.Selected {
+		e.log.Info().Str("release", release.RawTitle).Str("artist", ae.Artist.Name).Str("album", ae.Album.Title).Int("score", release.Score).Msg("selected music release")
+		uri := release.DownloadURL
+		if uri == "" {
+			uri = release.MagnetURL
+		}
+		if uri != "" {
+			tid, err := e.dl.AddTorrent(ctx, uri, download.WithCategory(category))
+			if err != nil {
+				e.log.Warn().Err(err).Msg("music add failed")
+			} else {
+				e.log.Info().Str("client", e.cfg.Downloader.Type).Str("category", category).Str("torrent_id", tid).Msg("added music to download client")
+			}
+		}
+
+		dl := &model.Download{
+			TitleID:         0,
+			ReleaseEventID:  releaseEventID,
+			Quality:         release.Source,
+			SourceType:      release.Source,
+			Codec:           release.Codec,
+			InfoHash:        release.InfoHash,
+			Category:        category,
+			Status:          model.DownloadAdded,
+			ClientTorrentID: "",
+		}
+		if _, err := e.db.CreateDownload(ctx, dl); err != nil {
+			e.log.Warn().Err(err).Msg("saving music download record")
+		}
+		_ = e.db.UpdateAlbumReleaseEventStatus(ctx, releaseEventID, model.StatusDownloaded)
+	}
+
+	return &MusicAlbumResult{Event: ae, Downloaded: true}
+}
+
+func (e *Executor) processBookBatchItem(ctx context.Context, item *BatchItem, bookInfo *map[int64]*BookDownloadInfo) {
+	sr := item.BookResult
+	if sr == nil {
+		return
+	}
+
+	// Map ParsedRelease selections back to ParsedBookRelease by GUID
+	var chosen []quality.ParsedBookRelease
+	for _, sel := range item.Selected {
+		for _, br := range sr.Top {
+			if br.Guid == sel.Guid {
+				chosen = append(chosen, br)
+				break
+			}
+		}
+	}
+	if len(chosen) == 0 {
+		return
+	}
+
+	n := e.addBookToClient(ctx, sr.Event, chosen, sr.Format)
+	if n > 0 {
+		if err := e.db.MarkBookFormatProcessed(ctx, sr.Event.Event.ID, sr.Format); err != nil {
+			e.log.Warn().Err(err).Msg("marking book format processed")
+		}
+		id := sr.Event.Event.ID
+		if *bookInfo == nil {
+			*bookInfo = make(map[int64]*BookDownloadInfo)
+		}
+		info, ok := (*bookInfo)[id]
+		if !ok {
+			info = &BookDownloadInfo{
+				EbookDownloaded:     sr.Event.Event.EbookProcessed,
+				AudiobookDownloaded: sr.Event.Event.AudiobookProcessed,
+			}
+			(*bookInfo)[id] = info
+		}
+		switch sr.Format {
+		case model.BookFormatEbook:
+			info.EbookDownloaded = true
+		case model.BookFormatAudiobook:
+			info.AudiobookDownloaded = true
+		}
+	}
+}
+
 func (e *Executor) handleSkipLibrary(ctx context.Context, evt db.EventWithTitle, season int) {
 	mode := e.cfg.MediaTypeMode(evt.Title.MediaType)
 	if mode != "full" {
@@ -1177,7 +1356,7 @@ func (e *Executor) SearchAllCandidates(ctx context.Context, candidates []Phase3C
 		if err != nil {
 			e.log.Warn().Err(err).Str("title", c.Title).Msg("error searching phase 3 candidate")
 			entry := Phase3SearchEntry{Candidate: c}
-			e.phase3SearchPhase = append(e.phase3SearchPhase, entry)
+			e.Phase3SearchPhase = append(e.Phase3SearchPhase, entry)
 			continue
 		}
 
@@ -1185,7 +1364,7 @@ func (e *Executor) SearchAllCandidates(ctx context.Context, candidates []Phase3C
 		top := quality.SortAndTop(releases, prefs, e.cfg.ShowTopN)
 
 		entry := Phase3SearchEntry{Candidate: c, Top: top}
-		e.phase3SearchPhase = append(e.phase3SearchPhase, entry)
+		e.Phase3SearchPhase = append(e.Phase3SearchPhase, entry)
 
 		if len(top) > 0 {
 			e.log.Info().Int("count", len(top)).Str("title", c.Title).Msg("phase 3 results found")
@@ -1198,7 +1377,7 @@ func (e *Executor) SearchAllCandidates(ctx context.Context, candidates []Phase3C
 // ProcessPhase3Pickers presents pickers for pre-searched Phase 3 items,
 // adds collection movies to Radarr, and downloads torrents.
 func (e *Executor) ProcessPhase3Pickers(ctx context.Context) {
-	if len(e.phase3SearchPhase) == 0 && len(e.phase3Movies) == 0 && len(e.phase3Seasons) == 0 {
+	if len(e.Phase3SearchPhase) == 0 && len(e.phase3Movies) == 0 && len(e.phase3Seasons) == 0 {
 		return
 	}
 
@@ -1210,7 +1389,7 @@ func (e *Executor) ProcessPhase3Pickers(ctx context.Context) {
 	}
 
 	// Pre-computed Phase 3 candidates
-	for _, entry := range e.phase3SearchPhase {
+	for _, entry := range e.Phase3SearchPhase {
 		c := entry.Candidate
 		mode := e.cfg.MediaTypeMode(c.MediaType)
 
@@ -1449,12 +1628,12 @@ func (e *Executor) ProcessPhase3Pickers(ctx context.Context) {
 	}
 
 	// Reset for next run
-	e.phase3SearchPhase = nil
+	e.Phase3SearchPhase = nil
 }
 
 func (e *Executor) hasPhase3Movie(tmdbID int) bool {
-	for i := range e.phase3SearchPhase {
-		if e.phase3SearchPhase[i].Candidate.TmdbID == tmdbID {
+	for i := range e.Phase3SearchPhase {
+		if e.Phase3SearchPhase[i].Candidate.TmdbID == tmdbID {
 			return true
 		}
 	}
@@ -1462,8 +1641,8 @@ func (e *Executor) hasPhase3Movie(tmdbID int) bool {
 }
 
 func (e *Executor) hasPhase3Season(title string, season int) bool {
-	for i := range e.phase3SearchPhase {
-		c := &e.phase3SearchPhase[i].Candidate
+	for i := range e.Phase3SearchPhase {
+		c := &e.Phase3SearchPhase[i].Candidate
 		if c.Title == title && c.Season == season {
 			return true
 		}
@@ -2252,10 +2431,10 @@ func (e *Executor) SearchAiringAnimeEarlierSeasons(ctx context.Context, evt db.E
 
 		// Find pre-searched results from batch phase
 		var entry *Phase3SearchEntry
-		for i := range e.phase3SearchPhase {
-			c := &e.phase3SearchPhase[i].Candidate
+		for i := range e.Phase3SearchPhase {
+			c := &e.Phase3SearchPhase[i].Candidate
 			if c.Title == evt.Title.Title && c.Season == ms.SeasonNumber {
-				entry = &e.phase3SearchPhase[i]
+				entry = &e.Phase3SearchPhase[i]
 				break
 			}
 		}
