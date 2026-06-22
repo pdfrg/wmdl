@@ -869,7 +869,8 @@ func (e *Executor) handleSkipLibrary(ctx context.Context, evt db.EventWithTitle,
 	if mode != "full" {
 		return
 	}
-	if evt.Title.MediaType == model.MediaTypeTV || evt.Title.MediaType == model.MediaTypeAnime {
+	switch evt.Title.MediaType {
+	case model.MediaTypeTV, model.MediaTypeAnime:
 		if tvdbID := evt.Title.TvdbID; tvdbID > 0 {
 			existing, _ := e.sonarr.Exists(ctx, tvdbID)
 			if existing == nil {
@@ -899,7 +900,7 @@ func (e *Executor) handleSkipLibrary(ctx context.Context, evt db.EventWithTitle,
 				}
 			}
 		}
-	} else if evt.Title.MediaType == model.MediaTypeMovie {
+	case model.MediaTypeMovie:
 		if tmdbID := evt.Title.TmdbID; tmdbID > 0 {
 			existing, _ := e.radarr.Exists(ctx, tmdbID)
 			if existing == nil {

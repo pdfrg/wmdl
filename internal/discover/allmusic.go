@@ -166,7 +166,7 @@ func (p *AllMusicProvider) fetchPageOnce(url string) (string, error) {
 	}
 
 	if err := waitForRealPage(ct); err != nil {
-		return "", fmt.Errorf("Cloudflare challenge: %w", err)
+		return "", fmt.Errorf("cloudflare challenge: %w", err)
 	}
 
 	var html string

@@ -93,7 +93,7 @@ func (c *HardcoverClient) Ping(ctx context.Context) error {
 		return fmt.Errorf("hardcover unreachable: %w", err)
 	}
 	defer resp.Body.Close()
-	io.Copy(io.Discard, resp.Body)
+	_, _ = io.Copy(io.Discard, resp.Body)
 
 	switch resp.StatusCode {
 	case http.StatusOK:

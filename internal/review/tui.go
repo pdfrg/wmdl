@@ -575,13 +575,6 @@ func (t *TUI) loadPosterCmd() tea.Cmd {
 	}
 }
 
-func (t *TUI) setCurrentPoster() {
-	it := t.currentItem()
-	if it == nil {
-		return
-	}
-}
-
 func (t *TUI) renderPosterCmd() tea.Cmd {
 	if !posterAvailable || t.posterMode == PosterOff || t.posterImg == nil {
 		return nil
