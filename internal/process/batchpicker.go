@@ -79,6 +79,15 @@ func (bp *BatchPicker) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return bp, nil
 }
 
+func (bp *BatchPicker) allDecided() bool {
+	for _, item := range bp.Items {
+		if !item.Skipped && len(item.Selected) == 0 {
+			return false
+		}
+	}
+	return true
+}
+
 func (bp *BatchPicker) updateList(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch {
 	case msg.String() == "j", msg.String() == "down":
@@ -101,6 +110,11 @@ func (bp *BatchPicker) updateList(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		item := bp.Items[bp.cursor]
 		item.Skipped = true
 		item.Selected = nil
+
+	case msg.String() == "c":
+		if bp.allDecided() {
+			return bp, tea.Quit
+		}
 
 	case msg.String() == "q":
 		bp.abort = true
@@ -255,15 +269,17 @@ func (bp *BatchPicker) listView() tea.View {
 		b.WriteString("\n")
 	}
 
-	footer := fmt.Sprintf("\n%s",
-		selHelpStyle.Render("[↑/↓] navigate  [enter] pick release  [s] skip  [q] quit pipeline"),
-	)
-	extra := ""
-	if decided > 0 {
-		extra = fmt.Sprintf("  %d/%d decided", decided, len(bp.Items))
+	helpText := "[↑/↓] navigate  [enter] pick release  [s] skip"
+	if bp.allDecided() {
+		helpText += "  [c] continue"
+	} else {
+		helpText += "  [q] quit pipeline"
 	}
-	if extra != "" {
-		footer += selHelpStyle.Render(extra)
+	footer := fmt.Sprintf("\n%s",
+		selHelpStyle.Render(helpText),
+	)
+	if decided > 0 {
+		footer += selHelpStyle.Render(fmt.Sprintf("  %d/%d decided", decided, len(bp.Items)))
 	}
 	b.WriteString(footer)
 
