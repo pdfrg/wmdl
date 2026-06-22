@@ -136,7 +136,9 @@ func (w *webhook) Send(title, message string, priority int) error {
 		return fmt.Errorf("rendered body is not valid JSON: %s", string(body))
 	}
 
-	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, w.url, bytes.NewReader(body))
+	sendCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(sendCtx, http.MethodPost, w.url, bytes.NewReader(body))
 	if err != nil {
 		return fmt.Errorf("creating request: %w", err)
 	}

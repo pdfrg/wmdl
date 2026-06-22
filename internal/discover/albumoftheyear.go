@@ -110,7 +110,8 @@ func (p *AOTYProvider) Scrape() ([]ScrapedItem, error) {
 
 	// Enrich with genres from individual album pages
 	if len(allItems) > 0 {
-		ctx := context.Background()
+		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		defer cancel()
 		sem := make(chan struct{}, 5)
 		var wg sync.WaitGroup
 
@@ -174,7 +175,9 @@ func (p *AOTYProvider) scrapePage(page int) ([]ScrapedItem, error) {
 		url = "https://www.albumoftheyear.org/releases/"
 	}
 
-	req, err := http.NewRequest("GET", url, nil)
+	reqCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(reqCtx, "GET", url, nil)
 	if err != nil {
 		return nil, err
 	}

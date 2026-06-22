@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"fmt"
 	"strings"
+	"time"
 
 	_ "modernc.org/sqlite"
 
@@ -28,7 +29,9 @@ func Open(path string) (*DB, error) {
 	}
 	d.SetMaxOpenConns(1)
 	db := &DB{db: d}
-	if err := db.Migrate(context.Background()); err != nil {
+	migrateCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := db.Migrate(migrateCtx); err != nil {
 		return nil, fmt.Errorf("migrating database: %w", err)
 	}
 	return db, nil

@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -15,6 +16,7 @@ type QbittorrentClient struct {
 	username string
 	password string
 	http     *http.Client
+	mu       sync.Mutex
 	cookies  []*http.Cookie
 	loggedIn bool
 }
@@ -39,7 +41,10 @@ func NewQbittorrentClient(baseURL, username, password string) *QbittorrentClient
 }
 
 func (q *QbittorrentClient) login(ctx context.Context) error {
-	if q.loggedIn && len(q.cookies) > 0 {
+	q.mu.Lock()
+	alreadyLoggedIn := q.loggedIn && len(q.cookies) > 0
+	q.mu.Unlock()
+	if alreadyLoggedIn {
 		return nil
 	}
 
@@ -63,18 +68,26 @@ func (q *QbittorrentClient) login(ctx context.Context) error {
 		return fmt.Errorf("qbittorrent login returned %d", resp.StatusCode)
 	}
 
-	body, _ := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("qbittorrent login: reading response: %w", err)
+	}
 	if strings.Contains(string(body), "Fails") {
 		return fmt.Errorf("qbittorrent login failed: invalid credentials")
 	}
 
+	q.mu.Lock()
 	q.cookies = resp.Cookies()
 	q.loggedIn = true
+	q.mu.Unlock()
 	return nil
 }
 
 func (q *QbittorrentClient) setAuth(req *http.Request) {
-	for _, c := range q.cookies {
+	q.mu.Lock()
+	cookies := q.cookies
+	q.mu.Unlock()
+	for _, c := range cookies {
 		req.AddCookie(c)
 	}
 }
@@ -128,11 +141,12 @@ func (q *QbittorrentClient) add(ctx context.Context, field, value string, opts .
 		defer resp.Body.Close()
 
 		if resp.StatusCode == http.StatusForbidden && attempt == 0 {
+			q.mu.Lock()
 			q.loggedIn = false
+			q.mu.Unlock()
 			if err := q.login(ctx); err != nil {
 				return "", err
 			}
-			resp.Body.Close()
 			continue
 		}
 

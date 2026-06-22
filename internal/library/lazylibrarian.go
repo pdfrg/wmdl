@@ -247,7 +247,10 @@ func (c *LazyLibrarianClient) doJSON(ctx context.Context, params url.Values, dst
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return fmt.Errorf("lazylibrarian: %s returned %d: reading body: %w", params.Get("cmd"), resp.StatusCode, err)
+		}
 		return fmt.Errorf("lazylibrarian: %s returned %d: %s", params.Get("cmd"), resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 	if err := json.NewDecoder(resp.Body).Decode(dst); err != nil {

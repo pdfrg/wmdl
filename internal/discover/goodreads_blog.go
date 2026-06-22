@@ -1,6 +1,7 @@
 package discover
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"net/http"
@@ -151,7 +152,9 @@ type grBlogBook struct {
 }
 
 func (p *GoodreadsBlogProvider) fetchNewsPage(url string, wedStart, tueEnd time.Time, targetMonths []int) ([]grBlogPost, error) {
-	req, err := http.NewRequest("GET", url, nil)
+	reqCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(reqCtx, "GET", url, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -209,7 +212,9 @@ func (p *GoodreadsBlogProvider) fetchNewsPage(url string, wedStart, tueEnd time.
 }
 
 func (p *GoodreadsBlogProvider) fetchBlogPost(url string) ([]grBlogBook, error) {
-	req, err := http.NewRequest("GET", url, nil)
+	reqCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(reqCtx, "GET", url, nil)
 	if err != nil {
 		return nil, err
 	}

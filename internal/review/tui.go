@@ -304,7 +304,8 @@ func NewReviewTUIWithEvents(events []db.EventWithTitle, albumEvents []db.EventWi
 }
 
 func buildLibraryCacheMap(database *db.DB, events []db.EventWithTitle, albumEvents []db.EventWithAlbum, bookEvents []db.EventWithBook) map[string]*db.LibraryCache {
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
 	var lookups []struct{ Source, ExtID string }
 	seen := make(map[string]bool)
 	for _, e := range events {
@@ -422,18 +423,19 @@ func buildLibraryCacheMap(database *db.DB, events []db.EventWithTitle, albumEven
 }
 
 func NewReviewTUI(database *db.DB, posterMode string, defaultBookFormat model.BookFormat) (*TUI, error) {
-	ctx := context.Background()
-	events, err := database.ListPendingWithTitles(ctx)
+	listCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	events, err := database.ListPendingWithTitles(listCtx)
 	if err != nil {
 		return nil, fmt.Errorf("loading events: %w", err)
 	}
 
-	albumEvents, err := database.ListPendingAlbumEventsWithAlbums(ctx)
+	albumEvents, err := database.ListPendingAlbumEventsWithAlbums(listCtx)
 	if err != nil {
 		return nil, fmt.Errorf("loading album events: %w", err)
 	}
 
-	bookEvents, err := database.ListPendingBookEventsWithBooks(ctx)
+	bookEvents, err := database.ListPendingBookEventsWithBooks(listCtx)
 	if err != nil {
 		return nil, fmt.Errorf("loading book events: %w", err)
 	}
@@ -630,8 +632,9 @@ func (t *TUI) hasDecisions() bool {
 }
 
 func (t *TUI) saveDecisions() error {
-	ctx := context.Background()
-	return t.database.Transaction(ctx, func(tx *sql.Tx) error {
+	saveCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	return t.database.Transaction(saveCtx, func(tx *sql.Tx) error {
 		for _, it := range t.items {
 			if it.decision == decisionNone {
 				continue
@@ -645,20 +648,20 @@ func (t *TUI) saveDecisions() error {
 			case it.bookEvent != nil:
 				pref := it.bookEvent.Event.FormatPref
 				if pref != "" {
-					if err := t.database.UpdateBookReleaseEventStatusAndFormatTx(ctx, tx, it.bookEvent.Event.ID, status, pref); err != nil {
+					if err := t.database.UpdateBookReleaseEventStatusAndFormatTx(saveCtx, tx, it.bookEvent.Event.ID, status, pref); err != nil {
 						return err
 					}
 				} else {
-					if err := t.database.UpdateBookReleaseEventStatusTx(ctx, tx, it.bookEvent.Event.ID, status); err != nil {
+					if err := t.database.UpdateBookReleaseEventStatusTx(saveCtx, tx, it.bookEvent.Event.ID, status); err != nil {
 						return err
 					}
 				}
 			case it.albumEvent != nil:
-				if err := t.database.UpdateAlbumReleaseEventStatusTx(ctx, tx, it.albumEvent.Event.ID, status); err != nil {
+				if err := t.database.UpdateAlbumReleaseEventStatusTx(saveCtx, tx, it.albumEvent.Event.ID, status); err != nil {
 					return err
 				}
 			default:
-				if err := t.database.UpdateReleaseEventStatusTx(ctx, tx, it.event.Event.ID, status); err != nil {
+				if err := t.database.UpdateReleaseEventStatusTx(saveCtx, tx, it.event.Event.ID, status); err != nil {
 					return err
 				}
 			}

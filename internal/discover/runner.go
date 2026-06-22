@@ -190,7 +190,11 @@ func (r *Runner) cacheLibraryData(ctx context.Context) error {
 			sonarrSeries = series
 			var entries []db.LibraryCache
 			for _, s := range series {
-				details, _ := json.Marshal(s)
+				details, err := json.Marshal(s)
+				if err != nil {
+					r.log.Warn().Err(err).Int("tvdb", s.TVDBID).Msg("marshaling Sonarr series for cache")
+					continue
+				}
 				entries = append(entries, db.LibraryCache{
 					Source: "sonarr", ExtID: strconv.Itoa(s.TVDBID),
 					ArrID: int64(s.ID), ArrTitle: s.Title, Details: string(details),
@@ -217,7 +221,11 @@ func (r *Runner) cacheLibraryData(ctx context.Context) error {
 		if err == nil {
 			var entries []db.LibraryCache
 			for _, m := range movies {
-				details, _ := json.Marshal(m)
+				details, err := json.Marshal(m)
+				if err != nil {
+					r.log.Warn().Err(err).Int("tmdb", m.TMDBID).Msg("marshaling Radarr movie for cache")
+					continue
+				}
 				entries = append(entries, db.LibraryCache{
 					Source: "radarr", ExtID: strconv.Itoa(m.TMDBID),
 					ArrID: int64(m.ID), ArrTitle: m.Title, Details: string(details),
@@ -254,7 +262,11 @@ func (r *Runner) cacheLibraryData(ctx context.Context) error {
 			{
 				var entries []db.LibraryCache
 				for _, a := range result.artists {
-					details, _ := json.Marshal(a)
+					details, err := json.Marshal(a)
+					if err != nil {
+						r.log.Warn().Err(err).Str("artist", a.ArtistName).Msg("marshaling Lidarr artist for cache")
+						continue
+					}
 					entries = append(entries, db.LibraryCache{
 						Source: "lidarr", ExtID: a.MBID,
 						ArrID: int64(a.ID), ArrTitle: a.ArtistName, Details: string(details),
@@ -269,7 +281,11 @@ func (r *Runner) cacheLibraryData(ctx context.Context) error {
 			{
 				var entries []db.LibraryCache
 				for _, a := range result.albums {
-					details, _ := json.Marshal(a)
+					details, err := json.Marshal(a)
+					if err != nil {
+						r.log.Warn().Err(err).Str("album", a.Title).Msg("marshaling Lidarr album for cache")
+						continue
+					}
 					entries = append(entries, db.LibraryCache{
 						Source: "lidarr-album", ExtID: a.ForeignAlbumID,
 						ArrID: int64(a.ID), ArrTitle: a.Title, Details: string(details),
@@ -292,7 +308,11 @@ func (r *Runner) cacheLibraryData(ctx context.Context) error {
 			var entries []db.LibraryCache
 			for _, b := range books {
 				bookID, _ := strconv.Atoi(b.BookID)
-				details, _ := json.Marshal(b)
+				details, err := json.Marshal(b)
+				if err != nil {
+					r.log.Warn().Err(err).Str("book", b.Title).Msg("marshaling book for cache")
+					continue
+				}
 				if b.Isbn != "" {
 					entries = append(entries, db.LibraryCache{
 						Source: "book-client", ExtID: b.Isbn,
@@ -333,7 +353,11 @@ func (r *Runner) cacheLibraryData(ctx context.Context) error {
 						continue
 					}
 					t.TvdbID = s.TVDBID
-					details, _ := json.Marshal(s)
+					details, err := json.Marshal(s)
+					if err != nil {
+						r.log.Warn().Err(err).Int("tvdb", s.TVDBID).Msg("marshaling matched anime for cache")
+						break
+					}
 					if err := r.db.UpsertLibraryCache(ctx, "sonarr", strconv.Itoa(s.TVDBID), int64(s.ID), s.Title, string(details)); err != nil {
 						r.log.Warn().Err(err).Msg("failed to upsert sonarr cache for matched anime")
 					}

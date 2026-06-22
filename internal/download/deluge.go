@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -45,20 +46,26 @@ type delugeError struct {
 	Code    int    `json:"code"`
 }
 
-var delugeReqID int
+var (
+	delugeReqID int
+	delugeReqMu sync.Mutex
+)
 
-func (d *DelugeClient) call(method string, params []interface{}) (*delugeResponse, error) {
+func (d *DelugeClient) call(ctx context.Context, method string, params []interface{}) (*delugeResponse, error) {
+	delugeReqMu.Lock()
 	delugeReqID++
+	id := delugeReqID
+	delugeReqMu.Unlock()
 	body, err := json.Marshal(delugeRequest{
 		Method: method,
 		Params: params,
-		ID:     delugeReqID,
+		ID:     id,
 	})
 	if err != nil {
 		return nil, err
 	}
 
-	req, err := http.NewRequest(http.MethodPost, d.baseURL+"/json", bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, d.baseURL+"/json", bytes.NewReader(body))
 	if err != nil {
 		return nil, err
 	}
@@ -84,12 +91,15 @@ func (d *DelugeClient) call(method string, params []interface{}) (*delugeRespons
 	return &dr, nil
 }
 
-func (d *DelugeClient) login() error {
-	resp, err := d.call("auth.login", []interface{}{d.password})
+func (d *DelugeClient) login(ctx context.Context) error {
+	resp, err := d.call(ctx, "auth.login", []interface{}{d.password})
 	if err != nil {
 		return err
 	}
-	ok, _ := resp.Result.(bool)
+	ok, okCheck := resp.Result.(bool)
+	if !okCheck {
+		return fmt.Errorf("deluge login: unexpected response type %T", resp.Result)
+	}
 	if !ok {
 		return fmt.Errorf("deluge login failed")
 	}
@@ -97,7 +107,7 @@ func (d *DelugeClient) login() error {
 }
 
 func (d *DelugeClient) Ping(ctx context.Context) error {
-	return d.login()
+	return d.login(ctx)
 }
 
 func (d *DelugeClient) AddTorrent(ctx context.Context, torrentURL string, opts ...Option) (string, error) {
@@ -109,7 +119,7 @@ func (d *DelugeClient) AddMagnet(ctx context.Context, magnetURI string, opts ...
 }
 
 func (d *DelugeClient) add(ctx context.Context, uri string, opts ...Option) (string, error) {
-	if err := d.login(); err != nil {
+	if err := d.login(ctx); err != nil {
 		return "", err
 	}
 
@@ -129,11 +139,14 @@ func (d *DelugeClient) add(ctx context.Context, uri string, opts ...Option) (str
 		delugeOpts["label"] = opt.Category
 	}
 
-	resp, err := d.call("core.add_torrent_url", []interface{}{uri, delugeOpts})
+	resp, err := d.call(ctx, "core.add_torrent_url", []interface{}{uri, delugeOpts})
 	if err != nil {
 		return "", err
 	}
 
-	torrentID, _ := resp.Result.(string)
+	torrentID, ok := resp.Result.(string)
+	if !ok {
+		return "", fmt.Errorf("deluge add torrent: unexpected response type %T", resp.Result)
+	}
 	return torrentID, nil
 }

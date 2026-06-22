@@ -7,15 +7,18 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 )
 
 type TransmissionClient struct {
-	baseURL   string
-	username  string
-	password  string
+	baseURL  string
+	username string
+	password string
+	http     *http.Client
+
+	mu        sync.Mutex
 	sessionID string
-	http      *http.Client
 }
 
 var _ Client = (*TransmissionClient)(nil)
@@ -57,10 +60,13 @@ func (t *TransmissionClient) getSessionID(ctx context.Context) error {
 	defer resp.Body.Close()
 
 	if resp.StatusCode == http.StatusConflict {
-		t.sessionID = resp.Header.Get("X-Transmission-Session-Id")
-		if t.sessionID == "" {
+		sid := resp.Header.Get("X-Transmission-Session-Id")
+		if sid == "" {
 			return fmt.Errorf("transmission: no session ID in 409 response")
 		}
+		t.mu.Lock()
+		t.sessionID = sid
+		t.mu.Unlock()
 		return nil
 	}
 
@@ -68,10 +74,16 @@ func (t *TransmissionClient) getSessionID(ctx context.Context) error {
 }
 
 func (t *TransmissionClient) do(ctx context.Context, method string, args interface{}) (*trpcResponse, error) {
-	if t.sessionID == "" {
+	t.mu.Lock()
+	sid := t.sessionID
+	t.mu.Unlock()
+	if sid == "" {
 		if err := t.getSessionID(ctx); err != nil {
 			return nil, err
 		}
+		t.mu.Lock()
+		sid = t.sessionID
+		t.mu.Unlock()
 	}
 
 	body, err := json.Marshal(trpcRequest{
@@ -88,7 +100,7 @@ func (t *TransmissionClient) do(ctx context.Context, method string, args interfa
 		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Transmission-Session-Id", t.sessionID)
+	req.Header.Set("X-Transmission-Session-Id", sid)
 	t.setAuth(req)
 
 	resp, err := t.http.Do(req)
@@ -98,7 +110,10 @@ func (t *TransmissionClient) do(ctx context.Context, method string, args interfa
 	defer resp.Body.Close()
 
 	if resp.StatusCode == http.StatusConflict {
-		t.sessionID = resp.Header.Get("X-Transmission-Session-Id")
+		sid := resp.Header.Get("X-Transmission-Session-Id")
+		t.mu.Lock()
+		t.sessionID = sid
+		t.mu.Unlock()
 		return t.do(ctx, method, args)
 	}
 

@@ -211,7 +211,11 @@ func (e *Executor) tryLoadRadarrCache(ctx context.Context) bool {
 func (e *Executor) updateRadarrCache(ctx context.Context, movies []library.RadarrMovie) {
 	var entries []db.LibraryCache
 	for _, m := range movies {
-		details, _ := json.Marshal(m)
+		details, err := json.Marshal(m)
+		if err != nil {
+			e.log.Warn().Err(err).Int("tmdb", m.TMDBID).Msg("marshaling Radarr movie for cache")
+			continue
+		}
 		entries = append(entries, db.LibraryCache{
 			Source: "radarr", ExtID: strconv.Itoa(m.TMDBID),
 			ArrID: int64(m.ID), ArrTitle: m.Title, Details: string(details),
@@ -276,7 +280,11 @@ func (e *Executor) tryLoadSonarrCache(ctx context.Context) bool {
 func (e *Executor) updateSonarrCache(ctx context.Context, series []library.SonarrSeries) {
 	var entries []db.LibraryCache
 	for _, s := range series {
-		details, _ := json.Marshal(s)
+		details, err := json.Marshal(s)
+		if err != nil {
+			e.log.Warn().Err(err).Int("tvdb", s.TVDBID).Msg("marshaling Sonarr series for cache")
+			continue
+		}
 		entries = append(entries, db.LibraryCache{
 			Source: "sonarr", ExtID: strconv.Itoa(s.TVDBID),
 			ArrID: int64(s.ID), ArrTitle: s.Title, Details: string(details),
@@ -356,14 +364,22 @@ func (e *Executor) tryLoadLidarrCache(ctx context.Context) bool {
 func (e *Executor) updateLidarrCache(ctx context.Context, artists []library.LidarrArtist, albums []library.LidarrAlbum) {
 	var entries []db.LibraryCache
 	for _, a := range artists {
-		details, _ := json.Marshal(a)
+		details, err := json.Marshal(a)
+		if err != nil {
+			e.log.Warn().Err(err).Str("artist", a.ArtistName).Msg("marshaling Lidarr artist for cache")
+			continue
+		}
 		entries = append(entries, db.LibraryCache{
 			Source: "lidarr", ExtID: a.MBID,
 			ArrID: int64(a.ID), ArrTitle: a.ArtistName, Details: string(details),
 		})
 	}
 	for _, a := range albums {
-		details, _ := json.Marshal(a)
+		details, err := json.Marshal(a)
+		if err != nil {
+			e.log.Warn().Err(err).Str("album", a.Title).Msg("marshaling Lidarr album for cache")
+			continue
+		}
 		entries = append(entries, db.LibraryCache{
 			Source: "lidarr-album", ExtID: a.ForeignAlbumID,
 			ArrID: int64(a.ID), ArrTitle: a.Title, Details: string(details),
@@ -441,7 +457,11 @@ func (e *Executor) updateBookClientCache(ctx context.Context, books []model.Book
 	var entries []db.LibraryCache
 	for _, b := range books {
 		bookID, _ := strconv.Atoi(b.BookID)
-		details, _ := json.Marshal(b)
+		details, err := json.Marshal(b)
+		if err != nil {
+			e.log.Warn().Err(err).Str("book", b.Title).Msg("marshaling book for cache")
+			continue
+		}
 		// Index by ISBN13
 		if b.Isbn != "" {
 			entries = append(entries, db.LibraryCache{
@@ -872,7 +892,10 @@ func (e *Executor) handleSkipLibrary(ctx context.Context, evt db.EventWithTitle,
 	switch evt.Title.MediaType {
 	case model.MediaTypeTV, model.MediaTypeAnime:
 		if tvdbID := evt.Title.TvdbID; tvdbID > 0 {
-			existing, _ := e.sonarr.Exists(ctx, tvdbID)
+			existing, err := e.sonarr.Exists(ctx, tvdbID)
+			if err != nil {
+				e.log.Warn().Err(err).Str("title", evt.Title.Title).Msg("checking Sonarr, proceeding without existence info")
+			}
 			if existing == nil {
 				if lookup, err := e.sonarr.Lookup(ctx, tvdbID); err == nil && lookup != nil {
 					e.log.Info().Msgf("  Sonarr: %s (%d)", lookup.Title, lookup.Year)
@@ -902,7 +925,10 @@ func (e *Executor) handleSkipLibrary(ctx context.Context, evt db.EventWithTitle,
 		}
 	case model.MediaTypeMovie:
 		if tmdbID := evt.Title.TmdbID; tmdbID > 0 {
-			existing, _ := e.radarr.Exists(ctx, tmdbID)
+			existing, err := e.radarr.Exists(ctx, tmdbID)
+			if err != nil {
+				e.log.Warn().Err(err).Str("title", evt.Title.Title).Msg("checking Radarr, proceeding without existence info")
+			}
 			if existing == nil {
 				if lookup, err := e.radarr.Lookup(ctx, tmdbID); err == nil && lookup != nil {
 					e.log.Info().Msgf("  Radarr: %s (%d)", lookup.Title, lookup.Year)
@@ -1191,7 +1217,11 @@ func (e *Executor) ProcessPhase3Pickers(ctx context.Context) {
 		// Skip TV/anime candidates for series the user rejected adding to library
 		if c.TvdbID > 0 {
 			if _, rejected := e.skipRejectedTvdbIDs[c.TvdbID]; rejected {
-				existing, _ := e.sonarr.Exists(ctx, c.TvdbID)
+				existing, err := e.sonarr.Exists(ctx, c.TvdbID)
+				if err != nil {
+					e.log.Warn().Err(err).Str("title", c.Title).Msg("checking Sonarr for rejected item, skipping")
+					continue
+				}
 				if existing == nil {
 					e.log.Info().Str("title", c.Title).Int("tvdb", c.TvdbID).Msg("skipping phase 3: user rejected library add")
 					continue
