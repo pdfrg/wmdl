@@ -304,9 +304,9 @@ show a placeholder.
 
 ### `wmdl process`
 
-For each approved release: searches Prowlarr, scores by quality preferences, opens
-a release picker TUI, then sends the chosen release to your download client and
-adds it to your library manager.
+Approved releases are searched via Prowlarr, scored by quality preferences, and
+presented in a TUI picker for release selection. Chosen releases are sent to the
+download client and added to your library manager.
 
 ```bash
 wmdl process                         # all pending approved items
@@ -315,8 +315,14 @@ wmdl process --refresh-cache         # force re-fetch *arr library caches
 ```
 
 Two display modes (configurable via `process_mode`):
-- `batch` (default): Searches all items first, then presents pickers
-- `interactive`: Searches and presents each item just-in-time
+- `batch` (default): Searches all items first, then presents a **single
+  multi-item TUI** listing all pending releases. Navigate items with `j`/`k`,
+  drill into releases with `enter`, toggle with `space`, confirm with `enter`,
+  skip with `s`, or abort with `q`. Phase 3 collection/series gap items appear
+  under a separate section header. The TUI runs once — pick decisions for all
+  items before returning to the CLI.
+- `interactive`: Searches and presents each item one at a time, useful for
+  seeing results immediately after each search.
 
 **Skip handling:** If you skip a Prowlarr result, wmdl offers to add the item
 to the *arr as monitored so it can search on its own schedule.
@@ -471,7 +477,11 @@ External APIs enrich each discovered item:
 1. Tiered Prowlarr search (preferred indexer → resolution-specific → fallbacks)
 2. Results filtered by title, year, season number, media type
 3. Releases scored and sorted by quality preferences
-4. TUI picker to select the best release (multi-select enabled)
+4. TUI picker to select releases:
+   - **Batch mode:** A single multi-item TUI lists all pending releases (video,
+     music, books, and pre-computed Phase 3 gaps). Navigate items, pick releases
+     per item, skip unwanted items — all in one session.
+   - **Interactive mode:** One picker per item, shown immediately after its search
 5. Torrents added to download client
 6. Download records saved to SQLite
 
@@ -689,6 +699,11 @@ Alternatively, a cron job calling `importAlternate` every 10–30 minutes:
 */15 * * * * curl "http://lazylibrarian:5299/api?apikey=KEY&cmd=importAlternate&library=eBook"
 */15 * * * * curl "http://lazylibrarian:5299/api?apikey=KEY&cmd=importAlternate&library=AudioBook"
 ```
+**Important:** Without moving the imported file(s) to another location, the next LL import call will re-import
+the same files again. Unfortunately, LL does not skip items already present in the library.
+The same file will be copied again to the same library Author/Book directory with a different filename.
+If you don't need to retain the file in your download client for seeding, you can avoid this behavior by
+deselecting `Settings > Processing > Keep original files`.
 
 A Gotify notification script for LL's external script hook is at
 [scripts/ll-gotify.example.sh](scripts/ll-gotify.example.sh).
