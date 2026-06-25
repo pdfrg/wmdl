@@ -187,18 +187,22 @@ func (p *BookshopProvider) Scrape() ([]ScrapedItem, error) {
 		}
 	}
 
-	// Extract descriptions — they appear after the desktop title block
-	descPattern := regexp.MustCompile(`<h1 class="title">([^<]+)</h1>.*?<p class="text-sm lg:text-base">([^<]+)`)
-	descMatches := descPattern.FindAllStringSubmatch(html, -1)
-	for _, m := range descMatches {
-		if len(m) < 3 {
-			continue
+	// Extract descriptions from the rendered annotation blocks.
+	// Structure: <div class="bulleted-lists list-rich-text text-sm lg:text-base"><p>DESCRIPTION</p></div>
+	annRe := regexp.MustCompile(`<div class="bulleted-lists list-rich-text text-sm lg:text-base"><p>(.*?)</p></div>`)
+	annMatches := annRe.FindAllStringSubmatch(html, -1)
+	stripTagsRe := regexp.MustCompile(`<[^>]*>`)
+	for i, m := range annMatches {
+		if i >= len(books) {
+			break
 		}
-		title := strings.TrimSpace(htmlUnescape(m[1]))
-		desc := strings.TrimSpace(htmlUnescape(m[2]))
-		if e, ok := bookMap[title]; ok {
-			e.Desc = desc
-			bookMap[title] = e
+		desc := stripTagsRe.ReplaceAllString(m[1], "")
+		desc = htmlUnescape(strings.TrimSpace(desc))
+		if desc != "" {
+			if e, ok := bookMap[books[i].Title]; ok {
+				e.Desc = desc
+				bookMap[books[i].Title] = e
+			}
 		}
 	}
 
