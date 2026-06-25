@@ -433,11 +433,32 @@ traditional physical media release day). Automated setups run `wmdl discover`
 every Wednesday morning by default.
 
 **Example:** Physical release day is Tuesday May 19. The WMDL week is Wednesday
-May 13 – Tuesday May 19. Streaming releases are discovered with a lookback
-(typically 8 weeks) to account for earlier streaming premieres.
+May 13 – Tuesday May 19.  Running `discover` any time from Wednesday May 20 to
+Tuesday May 26 will search using May 13-19 as the atomic week.
 
 All media types (movies, TV, music, anime, books) use the same Wed–Tue window,
 with optional `lookback_weeks` to look back N atomic weeks.
+
+Streaming releases are discovered with a default 8 week lookback to allow time for
+user and critic reviews and ratings to be meaningful, and to allow series with a one
+episode per week release cadence to complete and season packs to become available.
+Some series have seasons of >8 episodes and during `process` will have no meaningful results.
+There are 3 ways to manage: A) Set `lookback_weeks` to 10 or more. B) If presented with a choice of
+unwanted torrents, skip, and later when asked, add to Sonarr as monitored. Sonarr will then
+search for all missing episodes for that season and auto-grab any upcoming episodes.
+C) Skip, do not add to Sonarr, and when `process` completes, check output of `wmdl status -v`
+to ensure item is being tracked. Check for air date of last episode (e.g. on TVDB),
+allow an additional 1-2 weeks for season packs to be released, then re-run `wmdl process`
+with appropriate `--week` flag.
+
+To see all media as soon as possible after release date, set `lookback_weeks: 0`
+for all types.
+
+When decreasing the value of `lookback_weeks` (e.g. from 8 to 2) with an existing database,
+consider running `wmdl discover --lookback movie:2-8` so no releases are missed.
+This command will add all streaming movies released between 2 to 8 weeks ago to the current
+atomic week. Check `wmdl discover --help` for guidance. Then simply run `review` 
+and `process` as usual.
 
 ## Architecture
 
@@ -556,7 +577,7 @@ library:
   - **Phase A:** Recently completed anime meeting score/member thresholds
   - **Phase B:** Currently-airing anime above higher thresholds — added directly
     to Sonarr without Prowlarr search (since episodes are still releasing)
-- **FlixPatrol** — also catches anime; can be deduped against Jikan results
+- **FlixPatrol** — also catches some anime; can be deduped against Jikan results
 
 ### Filters
 
@@ -584,7 +605,7 @@ determines which seasons qualify.
 - **Goodreads** (`goodreads`) — chromedp scraper for monthly popular-by-date (requires browser)
 - **Goodreads Blog** (`goodreads_blog`) — HTTP+goquery scraper for weekly/editors blog posts
 - **Bookshop** (`bookshop`) — chromedp scraper for curated weekly new releases (requires browser)
-- **LitHub BookMarks** (`bookmarks`) — HTTP+regex scraper for "highbrow" literary content
+- **LitHub BookMarks** (`bookmarks`) — HTTP+regex scraper for more "highbrow" literary content
 
 ### Enrichment
 
@@ -600,7 +621,9 @@ Audiobook format priority: `m4b > mp3 > flac > aac > opus`
 
 Books support independent tracking of ebooks and audiobooks. When `default_format: "both"`,
 wmdl processes each format independently — separate Prowlarr search, download, and
-library add for each format.
+library add for each format.  In the `review` TUI, pressing `a` to approve an item will default to
+the `default_format` setting.  Repeated presses of `a` will cycle both, ebook, audiobook, with
+corresponding visual indicators (green circle, e-reader, headphones) in the TUI.
 
 ### Dedup Merge
 
@@ -609,10 +632,9 @@ When the same book is found by multiple scrapers, sources are merged — e.g.
 
 ### Bookshop Future-Week Pre-Population
 
-Bookshop.org has no archive URLs for past weeks, so it always scrapes the current
-real ISO week. Books found during a timeshifted run are stored under their actual
-release week (from the enrichment-provided release date), not the timeshifted target.
-They appear naturally when `wmdl discover` eventually reaches that week.
+Bookshop.org has no archive URLs for past weeks, so `discover` always scrapes the current
+week's releases. If `timeshift_weeks` >0, books are stored under a **future** WMDL
+atomic week and appear when expected in `review` and `process`.
 
 ### Library: LazyLibrarian
 
@@ -674,7 +696,7 @@ into a single book entry.
 > (Goodreads, Google Books, etc.), the IDs will differ and every series member may
 > appear as "missing" each run. In the WebUI, Config > Settings > Importing > Primary Information Source >
 > "HardCover", then deselect "Use multiple sources for book/author information", deselect
-> "Enable OpenLibrary api...", deselect "Enable Deutsche Nationalbibliothek api...", *select*
+> "Enable OpenLibrary api...", deselect "Enable Deutsche Nationalbibliothek api...", **select**
 > "Enable HardCover api...", Google Books API box > empty, GoodReads API box > empty, press
 > "Save Changes" button at top right. To enter your HardCover API token in the WebUI, go
 > to Config > push "User Admin" button right under the top bar > Select user > pick your LL
