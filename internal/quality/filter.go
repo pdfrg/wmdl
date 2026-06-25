@@ -29,12 +29,13 @@ type ParsedRelease struct {
 }
 
 type QualityPrefs struct {
-	TargetResolution int
-	PreferHDR        bool
-	SourcePriority   []string
-	CodecPriority    []string
-	PreferredGroups  []string
-	MinSeeders       int
+	TargetResolution  int
+	PreferHDR         bool
+	SourcePriority    []string
+	CodecPriority     []string
+	PreferredGroups   []string
+	MinSeeders        int
+	PreferredIndexerID int
 }
 
 var (
@@ -172,10 +173,18 @@ func Score(r ParsedRelease, prefs QualityPrefs) int {
 	score += codecScore(r.Codec, prefs.CodecPriority)
 	score += groupBonus(r.ReleaseGroup, prefs.PreferredGroups)
 	score += seederScore(r.Seeders, prefs.MinSeeders)
+	score += preferredIndexerBonus(r.IndexerID, prefs.PreferredIndexerID)
 	if r.ExtraWords {
 		score -= 100000
 	}
 	return score
+}
+
+func preferredIndexerBonus(releaseIndexerID, preferredIndexerID int) int {
+	if preferredIndexerID > 0 && releaseIndexerID == preferredIndexerID {
+		return 250
+	}
+	return 0
 }
 
 func resolutionScore(res, target int) int {

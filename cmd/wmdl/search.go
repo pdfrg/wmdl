@@ -196,7 +196,7 @@ func (s *searcher) searchMovie(ctx context.Context, query string) error {
 	}
 
 	exact, _ := quality.PartitionReleases(releases, query, sFlags.year, 0, "movie")
-	prefs := qualityPrefs(s.cfg, "movie")
+	prefs := qualityPrefs(s.cfg, "movie", s.prowl.PreferredIndexerID(search.CatMovie))
 	top := quality.SortAndTop(exact, prefs, s.cfg.ShowTopN)
 	if len(top) == 0 {
 		fmt.Fprintf(os.Stderr, "  No matching releases found.\n")
@@ -291,7 +291,11 @@ func (s *searcher) searchTV(ctx context.Context, query string, isAnime bool) err
 			continue
 		}
 
-		prefs := qualityPrefs(s.cfg, "tv")
+		cat := search.CatTV
+		if isAnime {
+			cat = search.CatAnime
+		}
+		prefs := qualityPrefs(s.cfg, "tv", s.prowl.PreferredIndexerID(cat))
 		exact, _ := quality.PartitionReleases(prowlReleases, seasonLabel, sFlags.year, season, "tv")
 		top := quality.SortAndTop(exact, prefs, s.cfg.ShowTopN)
 		if len(top) == 0 {
@@ -734,7 +738,7 @@ func (s *searcher) checkCollectionGaps(ctx context.Context, tmdbID int) error {
 		}
 
 		exact, _ := quality.PartitionReleases(releases, mTitle, enrich.Year, 0, "movie")
-		prefs := qualityPrefs(s.cfg, "movie")
+		prefs := qualityPrefs(s.cfg, "movie", s.prowl.PreferredIndexerID(search.CatMovie))
 		top := quality.SortAndTop(exact, prefs, s.cfg.ShowTopN)
 		if len(top) == 0 {
 			fmt.Fprintf(os.Stderr, "  No matching releases.\n")
@@ -766,7 +770,7 @@ func (s *searcher) checkCollectionGaps(ctx context.Context, tmdbID int) error {
 
 // ─── Quality helpers ──────────────────────────────────────
 
-func qualityPrefs(cfg *config.Config, mt string) quality.QualityPrefs {
+func qualityPrefs(cfg *config.Config, mt string, preferredID int) quality.QualityPrefs {
 	var qc config.MediaQualityConfig
 	switch mt {
 	case "tv":
@@ -788,12 +792,13 @@ func qualityPrefs(cfg *config.Config, mt string) quality.QualityPrefs {
 	}
 
 	return quality.QualityPrefs{
-		TargetResolution: res,
-		PreferHDR:        qc.PreferHDR,
-		SourcePriority:   qc.SourcePriority,
-		CodecPriority:    qc.CodecPriority,
-		PreferredGroups:  cfg.PreferredGroups,
-		MinSeeders:       cfg.MinSeeders,
+		TargetResolution:  res,
+		PreferHDR:         qc.PreferHDR,
+		SourcePriority:    qc.SourcePriority,
+		CodecPriority:     qc.CodecPriority,
+		PreferredGroups:   cfg.PreferredGroups,
+		MinSeeders:        cfg.MinSeeders,
+		PreferredIndexerID: preferredID,
 	}
 }
 

@@ -9,10 +9,11 @@ import (
 )
 
 type MusicQualityPrefs struct {
-	FormatPriority  []string
-	BitratePriority []string
-	MinSeeders      int
-	PreferredGroups []string
+	FormatPriority    []string
+	BitratePriority   []string
+	MinSeeders        int
+	PreferredGroups   []string
+	PreferredIndexerID int
 }
 
 var (
@@ -54,6 +55,7 @@ func ScoreMusic(r ParsedRelease, prefs MusicQualityPrefs) int {
 	score += musicBitrateScore(r.Codec, prefs.BitratePriority)
 	score += groupBonus(r.ReleaseGroup, prefs.PreferredGroups)
 	score += seederScore(r.Seeders, prefs.MinSeeders)
+	score += preferredIndexerBonus(r.IndexerID, prefs.PreferredIndexerID)
 	return score
 }
 

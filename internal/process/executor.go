@@ -549,7 +549,13 @@ func (e *Executor) SearchEvent(ctx context.Context, evt db.EventWithTitle) *Sear
 		return &SearchResult{Event: evt, Season: season, Stripped: stripped}
 	}
 
-	prefs := buildQualityPrefs(e.cfg, title.MediaType)
+	cat := search.CatMovie
+	if title.MediaType == model.MediaTypeTV {
+		cat = search.CatTV
+	} else if title.MediaType == model.MediaTypeAnime {
+		cat = search.CatAnime
+	}
+	prefs := buildQualityPrefs(e.cfg, title.MediaType, e.prowl.PreferredIndexerID(cat))
 	top := quality.SortAndTop(releases, prefs, e.cfg.ShowTopN)
 
 	return &SearchResult{
@@ -1360,7 +1366,13 @@ func (e *Executor) SearchAllCandidates(ctx context.Context, candidates []Phase3C
 			continue
 		}
 
-		prefs := buildQualityPrefs(e.cfg, c.MediaType)
+		cat := search.CatMovie
+		if c.MediaType == model.MediaTypeTV {
+			cat = search.CatTV
+		} else if c.MediaType == model.MediaTypeAnime {
+			cat = search.CatAnime
+		}
+		prefs := buildQualityPrefs(e.cfg, c.MediaType, e.prowl.PreferredIndexerID(cat))
 		top := quality.SortAndTop(releases, prefs, e.cfg.ShowTopN)
 
 		entry := Phase3SearchEntry{Candidate: c, Top: top}
@@ -1544,7 +1556,7 @@ func (e *Executor) ProcessPhase3Pickers(ctx context.Context) {
 					continue
 				}
 
-				prefs := buildQualityPrefs(e.cfg, model.MediaTypeMovie)
+				prefs := buildQualityPrefs(e.cfg, model.MediaTypeMovie, e.prowl.PreferredIndexerID(search.CatMovie))
 				top := quality.SortAndTop(releases, prefs, e.cfg.ShowTopN)
 				if len(top) == 0 {
 					continue
@@ -1603,7 +1615,13 @@ func (e *Executor) ProcessPhase3Pickers(ctx context.Context) {
 					continue
 				}
 
-				prefs := buildQualityPrefs(e.cfg, p3s.MediaType)
+				cat := search.CatMovie
+				if p3s.MediaType == model.MediaTypeTV {
+					cat = search.CatTV
+				} else if p3s.MediaType == model.MediaTypeAnime {
+					cat = search.CatAnime
+				}
+				prefs := buildQualityPrefs(e.cfg, p3s.MediaType, e.prowl.PreferredIndexerID(cat))
 				top := quality.SortAndTop(releases, prefs, e.cfg.ShowTopN)
 				if len(top) == 0 {
 					continue
@@ -1963,7 +1981,13 @@ func (e *Executor) searchPhase3Season(ctx context.Context, s struct {
 		return
 	}
 
-	prefs := buildQualityPrefs(e.cfg, s.MediaType)
+	cat := search.CatMovie
+	if s.MediaType == model.MediaTypeTV {
+		cat = search.CatTV
+	} else if s.MediaType == model.MediaTypeAnime {
+		cat = search.CatAnime
+	}
+	prefs := buildQualityPrefs(e.cfg, s.MediaType, e.prowl.PreferredIndexerID(cat))
 	top := quality.SortAndTop(releases, prefs, e.cfg.ShowTopN)
 	if len(top) == 0 {
 		e.log.Info().Str("title", s.SeriesTitle).Int("season", s.SeasonNumber).Msg("no results for earlier season")
@@ -2883,10 +2907,11 @@ func (e *Executor) SearchMusicRelease(ctx context.Context, ae db.EventWithAlbum)
 	}
 
 	prefs := quality.MusicQualityPrefs{
-		FormatPriority:  e.cfg.Quality.Music.FormatPriority,
-		BitratePriority: e.cfg.Quality.Music.BitratePriority,
-		MinSeeders:      e.cfg.MinSeeders,
-		PreferredGroups: e.cfg.PreferredGroups,
+		FormatPriority:    e.cfg.Quality.Music.FormatPriority,
+		BitratePriority:   e.cfg.Quality.Music.BitratePriority,
+		MinSeeders:        e.cfg.MinSeeders,
+		PreferredGroups:   e.cfg.PreferredGroups,
+		PreferredIndexerID: e.prowl.PreferredIndexerID(search.CatMusic),
 	}
 	top := quality.SortMusicTop(releases, prefs, e.cfg.ShowTopN)
 
@@ -3301,7 +3326,7 @@ func (e *Executor) SearchBook(ctx context.Context, evt db.EventWithBook, format 
 				fuzzyPool = mergeReleases(fuzzyPool, fuzzy)
 				e.log.Debug().Msgf("→ %d exact, %d fuzzy (exact total: %d)", len(exact), len(fuzzy), len(exactPool))
 				if len(exactPool) >= e.cfg.ShowTopN {
-					return e.buildBookSearchResult(evt, exactPool, fuzzyPool, format)
+					return e.buildBookSearchResult(evt, exactPool, fuzzyPool, format, preferredID)
 				}
 			}
 		}
@@ -3328,15 +3353,15 @@ func (e *Executor) SearchBook(ctx context.Context, evt db.EventWithBook, format 
 			fuzzyPool = mergeReleases(fuzzyPool, fuzzy)
 			e.log.Debug().Msgf("→ %d exact, %d fuzzy (exact total: %d)", len(exact), len(fuzzy), len(exactPool))
 			if len(exactPool) >= e.cfg.ShowTopN {
-				return e.buildBookSearchResult(evt, exactPool, fuzzyPool, format)
+				return e.buildBookSearchResult(evt, exactPool, fuzzyPool, format, preferredID)
 			}
 		}
 	}
 
-	return e.buildBookSearchResult(evt, exactPool, fuzzyPool, format)
+	return e.buildBookSearchResult(evt, exactPool, fuzzyPool, format, preferredID)
 }
 
-func (e *Executor) buildBookSearchResult(evt db.EventWithBook, exactPool, fuzzyPool []quality.ParsedRelease, format model.BookFormat) *BookSearchResult {
+func (e *Executor) buildBookSearchResult(evt db.EventWithBook, exactPool, fuzzyPool []quality.ParsedRelease, format model.BookFormat, preferredID int) *BookSearchResult {
 	label := string(format)
 	if len(exactPool) == 0 && len(fuzzyPool) == 0 {
 		e.Unfound = append(e.Unfound, fmt.Sprintf("%s by %s [%s]", evt.Book.Title, evt.Author.Name, label))
@@ -3373,7 +3398,7 @@ func (e *Executor) buildBookSearchResult(evt db.EventWithBook, exactPool, fuzzyP
 		return &BookSearchResult{Event: evt, Format: format}
 	}
 
-	prefs := buildBookQualityPrefs(e.cfg)
+	prefs := buildBookQualityPrefs(e.cfg, preferredID)
 	showTopN := e.cfg.ShowTopN
 
 	var top []quality.ParsedBookRelease
@@ -3843,16 +3868,17 @@ func (e *Executor) checkBookSeriesGaps(ctx context.Context, evt db.EventWithBook
 	}
 }
 
-func buildBookQualityPrefs(cfg *config.Config) quality.BookQualityPrefs {
+func buildBookQualityPrefs(cfg *config.Config, preferredID int) quality.BookQualityPrefs {
 	return quality.BookQualityPrefs{
 		EbookFormatPriority:     cfg.Quality.Books.Ebooks.FormatPriority,
 		AudiobookFormatPriority: cfg.Quality.Books.Audiobooks.FormatPriority,
 		MinSeeders:              cfg.MinSeeders,
 		PreferredGroups:         cfg.PreferredGroups,
+		PreferredIndexerID:      preferredID,
 	}
 }
 
-func buildQualityPrefs(cfg *config.Config, mediaType model.MediaType) quality.QualityPrefs {
+func buildQualityPrefs(cfg *config.Config, mediaType model.MediaType, preferredID int) quality.QualityPrefs {
 	var qc config.MediaQualityConfig
 	if mediaType == model.MediaTypeTV {
 		qc = cfg.Quality.TV
@@ -3871,11 +3897,12 @@ func buildQualityPrefs(cfg *config.Config, mediaType model.MediaType) quality.Qu
 	}
 
 	return quality.QualityPrefs{
-		TargetResolution: res,
-		PreferHDR:        qc.PreferHDR,
-		SourcePriority:   qc.SourcePriority,
-		CodecPriority:    qc.CodecPriority,
-		PreferredGroups:  cfg.PreferredGroups,
-		MinSeeders:       cfg.MinSeeders,
+		TargetResolution:  res,
+		PreferHDR:         qc.PreferHDR,
+		SourcePriority:    qc.SourcePriority,
+		CodecPriority:     qc.CodecPriority,
+		PreferredGroups:   cfg.PreferredGroups,
+		MinSeeders:        cfg.MinSeeders,
+		PreferredIndexerID: preferredID,
 	}
 }
