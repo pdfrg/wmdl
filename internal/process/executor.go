@@ -81,7 +81,9 @@ type Executor struct {
 		SeriesTitle  string
 		MediaType    model.MediaType
 	}
-	skipRejectedTvdbIDs map[int]struct{}
+	skipRejectedTvdbIDs         map[int]struct{}
+	phase3BatchProcessedMovies  map[int]bool            // TMDB IDs of movies processed via BatchPicker
+	phase3BatchProcessedSeasons map[string]map[int]bool // seriesTitle -> set of season numbers processed via BatchPicker
 }
 
 func NewExecutor(logger zerolog.Logger, cfg *config.Config, database *db.DB) *Executor {
@@ -113,16 +115,18 @@ func NewExecutor(logger zerolog.Logger, cfg *config.Config, database *db.DB) *Ex
 		"audiobooks": cfg.Prowlarr.IndexerIDs.Audiobooks,
 	}
 	return &Executor{
-		log:                 logger,
-		cfg:                 cfg,
-		db:                  database,
-		prowl:               search.NewProwlarrClient(cfg.Prowlarr.URL, cfg.Prowlarr.APIKey, cfg.Prowlarr.Timeout, catMap),
-		dl:                  dl,
-		radarr:              radarr,
-		sonarr:              sonarr,
-		lidarr:              lidarr,
-		bookClient:          bookClient,
-		skipRejectedTvdbIDs: make(map[int]struct{}),
+		log:                         logger,
+		cfg:                         cfg,
+		db:                          database,
+		prowl:                       search.NewProwlarrClient(cfg.Prowlarr.URL, cfg.Prowlarr.APIKey, cfg.Prowlarr.Timeout, catMap),
+		dl:                          dl,
+		radarr:                      radarr,
+		sonarr:                      sonarr,
+		lidarr:                      lidarr,
+		bookClient:                  bookClient,
+		skipRejectedTvdbIDs:         make(map[int]struct{}),
+		phase3BatchProcessedMovies:  make(map[int]bool),
+		phase3BatchProcessedSeasons: make(map[string]map[int]bool),
 	}
 }
 
@@ -466,6 +470,13 @@ func (e *Executor) updateBookClientCache(ctx context.Context, books []model.Book
 		if b.Isbn != "" {
 			entries = append(entries, db.LibraryCache{
 				Source: "book-client", ExtID: b.Isbn,
+				ArrID: int64(bookID), ArrTitle: b.Title, Details: string(details),
+			})
+		}
+		// Index by HC BookID (used for LL book existence checks in review TUI)
+		if b.BookID != "" {
+			entries = append(entries, db.LibraryCache{
+				Source: "book-client-hc", ExtID: b.BookID,
 				ArrID: int64(bookID), ArrTitle: b.Title, Details: string(details),
 			})
 		}
@@ -971,6 +982,17 @@ func (e *Executor) processPhase3BatchItem(ctx context.Context, item *BatchItem) 
 		}
 	}
 	e.log.Info().Str("title", sr.Event.Title.Title).Msg("phase 3 item downloaded")
+
+	// Track this item as processed via BatchPicker so it won't be re-asked
+	// during library decisions or re-processed in ProcessPhase3Pickers.
+	if sr.Event.Title.MediaType == model.MediaTypeMovie && sr.Event.Title.TmdbID > 0 {
+		e.phase3BatchProcessedMovies[sr.Event.Title.TmdbID] = true
+	} else if (sr.Event.Title.MediaType == model.MediaTypeTV || sr.Event.Title.MediaType == model.MediaTypeAnime) && item.SearchResult.Season > 0 {
+		if e.phase3BatchProcessedSeasons[sr.Event.Title.Title] == nil {
+			e.phase3BatchProcessedSeasons[sr.Event.Title.Title] = make(map[int]bool)
+		}
+		e.phase3BatchProcessedSeasons[sr.Event.Title.Title][item.SearchResult.Season] = true
+	}
 }
 
 func (e *Executor) processMusicBatchItem(ctx context.Context, item *BatchItem) *MusicAlbumResult {
@@ -1541,8 +1563,8 @@ func (e *Executor) ProcessPhase3Pickers(ctx context.Context) {
 		} else {
 			fmt.Fprintln(os.Stderr, "\n── Additional collection movies (from library adds) ──")
 			for _, p3m := range e.phase3Movies {
-				// Skip if already handled via pre-searched phase 3
-				if e.hasPhase3Movie(p3m.TMDBID) {
+				// Skip if already handled via pre-searched phase 3 or BatchPicker
+				if e.hasPhase3Movie(p3m.TMDBID) || e.phase3BatchProcessedMovies[p3m.TMDBID] {
 					continue
 				}
 
@@ -1603,8 +1625,8 @@ func (e *Executor) ProcessPhase3Pickers(ctx context.Context) {
 		} else {
 			fmt.Fprintln(os.Stderr, "\n── Additional earlier seasons (from library adds) ──")
 			for _, p3s := range e.phase3Seasons {
-				// Skip if already handled via pre-searched phase 3
-				if e.hasPhase3Season(p3s.SeriesTitle, p3s.SeasonNumber) {
+				// Skip if already handled via pre-searched phase 3 or BatchPicker
+				if e.hasPhase3Season(p3s.SeriesTitle, p3s.SeasonNumber) || e.phase3BatchProcessedSeasons[p3s.SeriesTitle][p3s.SeasonNumber] {
 					continue
 				}
 
@@ -1852,6 +1874,11 @@ processPicked:
 					if item.Season > 1 {
 						missing := e.checkExistingSonarrSeasons(ctx, existing, item.Season)
 						for _, missingS := range missing {
+							// Skip earlier seasons already handled via BatchPicker Phase 3
+							if e.phase3BatchProcessedSeasons[existing.Title][missingS.SeasonNumber] {
+								e.log.Info().Str("series", existing.Title).Int("season", missingS.SeasonNumber).Msg("already processed via batch picker, skipping")
+								continue
+							}
 							enqueue := false
 							if searchNow { // auto/yolo modes
 								enqueue = true
@@ -2598,6 +2625,11 @@ func (e *Executor) addToSonarr(ctx context.Context, evt db.EventWithTitle, tvdbI
 	if season > 1 && added.ID > 0 {
 		mode := e.cfg.MediaTypeMode(evt.Title.MediaType)
 		for s := 1; s < season; s++ {
+			// Skip earlier seasons already handled via BatchPicker Phase 3
+			if e.phase3BatchProcessedSeasons[title][s] {
+				e.log.Info().Str("title", title).Int("season", s).Msg("already processed via batch picker, skipping")
+				continue
+			}
 			enqueue := false
 			if mode == "auto" || mode == "yolo" {
 				enqueue = true
@@ -2911,10 +2943,10 @@ func (e *Executor) SearchMusicRelease(ctx context.Context, ae db.EventWithAlbum)
 	}
 
 	prefs := quality.MusicQualityPrefs{
-		FormatPriority:    e.cfg.Quality.Music.FormatPriority,
-		BitratePriority:   e.cfg.Quality.Music.BitratePriority,
-		MinSeeders:        e.cfg.MinSeeders,
-		PreferredGroups:   e.cfg.PreferredGroups,
+		FormatPriority:     e.cfg.Quality.Music.FormatPriority,
+		BitratePriority:    e.cfg.Quality.Music.BitratePriority,
+		MinSeeders:         e.cfg.MinSeeders,
+		PreferredGroups:    e.cfg.PreferredGroups,
 		PreferredIndexerID: e.prowl.PreferredIndexerID(search.CatMusic),
 	}
 	top := quality.SortMusicTop(releases, prefs, e.cfg.ShowTopN)
@@ -3901,12 +3933,12 @@ func buildQualityPrefs(cfg *config.Config, mediaType model.MediaType, preferredI
 	}
 
 	return quality.QualityPrefs{
-		TargetResolution:  res,
-		PreferHDR:         qc.PreferHDR,
-		SourcePriority:    qc.SourcePriority,
-		CodecPriority:     qc.CodecPriority,
-		PreferredGroups:   cfg.PreferredGroups,
-		MinSeeders:        cfg.MinSeeders,
+		TargetResolution:   res,
+		PreferHDR:          qc.PreferHDR,
+		SourcePriority:     qc.SourcePriority,
+		CodecPriority:      qc.CodecPriority,
+		PreferredGroups:    cfg.PreferredGroups,
+		MinSeeders:         cfg.MinSeeders,
 		PreferredIndexerID: preferredID,
 	}
 }

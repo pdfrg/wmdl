@@ -29,12 +29,12 @@ type ParsedRelease struct {
 }
 
 type QualityPrefs struct {
-	TargetResolution  int
-	PreferHDR         bool
-	SourcePriority    []string
-	CodecPriority     []string
-	PreferredGroups   []string
-	MinSeeders        int
+	TargetResolution   int
+	PreferHDR          bool
+	SourcePriority     []string
+	CodecPriority      []string
+	PreferredGroups    []string
+	MinSeeders         int
 	PreferredIndexerID int
 }
 

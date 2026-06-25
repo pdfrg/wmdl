@@ -94,6 +94,21 @@ type libInfo struct {
 
 func (it *itemState) libraryInfo(dbCache map[string]*db.LibraryCache) libInfo {
 	if it.bookEvent != nil {
+		be := it.bookEvent
+		// Check by HC ID (book-client-hc) first, then fall back to ISBN
+		var c *db.LibraryCache
+		if be.Book.HardcoverID > 0 {
+			c = dbCache["book-client-hc:"+strconv.Itoa(be.Book.HardcoverID)]
+		}
+		if c == nil && be.Book.ISBN13 != "" {
+			c = dbCache["book-client:"+be.Book.ISBN13]
+		}
+		if c != nil {
+			return libInfo{
+				label:  fmt.Sprintf("✓ LazyLibrarian — %s", c.ArrTitle),
+				status: libFull,
+			}
+		}
 		return libInfo{status: libNone}
 	}
 	if it.albumEvent != nil {
@@ -215,6 +230,37 @@ func (it *itemState) collectionStr(dbCache map[string]*db.LibraryCache) string {
 		}
 	}
 	return fmt.Sprintf("Collection: %s (%d/%d)", collData.Name, owned, len(collData.Movies))
+}
+
+func (it *itemState) bookSeriesStr(dbCache map[string]*db.LibraryCache) string {
+	if it.bookEvent == nil || it.bookEvent.Book.SeriesID == "" {
+		return ""
+	}
+	seriesID := it.bookEvent.Book.SeriesID
+	seriesName := it.bookEvent.Book.SeriesName
+	key := "book-series:" + seriesID
+	c := dbCache[key]
+	if c == nil || c.Details == "" {
+		return ""
+	}
+	var members []db.BookSeriesMember
+	if err := json.Unmarshal([]byte(c.Details), &members); err != nil {
+		return ""
+	}
+	if len(members) == 0 {
+		return ""
+	}
+	owned := 0
+	for _, m := range members {
+		if dbCache["book-client-hc:"+strconv.Itoa(m.HardcoverID)] != nil {
+			owned++
+		}
+	}
+	label := seriesName
+	if label == "" {
+		label = "Series"
+	}
+	return fmt.Sprintf("Series: %s (%d/%d)", label, owned, len(members))
 }
 
 type posterReadyMsg struct {
@@ -355,6 +401,14 @@ func buildLibraryCacheMap(database *db.DB, events []db.EventWithTitle, albumEven
 				seen[key] = true
 			}
 		}
+		// Lookup by HC ID for library status check
+		if be.Book.HardcoverID > 0 {
+			key := "book-client-hc:" + strconv.Itoa(be.Book.HardcoverID)
+			if !seen[key] {
+				lookups = append(lookups, struct{ Source, ExtID string }{"book-client-hc", strconv.Itoa(be.Book.HardcoverID)})
+				seen[key] = true
+			}
+		}
 	}
 	result, err := database.GetLibraryCacheMap(ctx, lookups)
 	if err != nil {
@@ -414,6 +468,91 @@ func buildLibraryCacheMap(database *db.DB, events []db.EventWithTitle, albumEven
 					for k, v := range memberResult {
 						result[k] = v
 					}
+				}
+			}
+		}
+	}
+
+	// Phase 3: fetch book series member data and add book-client-hc lookups
+	var bookSeriesLookups []struct{ Source, ExtID string }
+	for _, be := range bookEvents {
+		if be.Book.SeriesID != "" {
+			key := "book-series:" + be.Book.SeriesID
+			if !seen[key] {
+				bookSeriesLookups = append(bookSeriesLookups, struct{ Source, ExtID string }{"book-series", be.Book.SeriesID})
+				seen[key] = true
+			}
+		}
+	}
+	if len(bookSeriesLookups) > 0 {
+		seriesResult, err := database.GetLibraryCacheMap(ctx, bookSeriesLookups)
+		if err != nil {
+			seriesResult = nil
+		} else {
+			for k, v := range seriesResult {
+				result[k] = v
+			}
+		}
+
+		var memberLookups []struct{ Source, ExtID string }
+
+		// Phase 1: series with pre-warmed cache entries
+		if seriesResult != nil {
+			for _, be := range bookEvents {
+				if be.Book.SeriesID == "" {
+					continue
+				}
+				sk := "book-series:" + be.Book.SeriesID
+				if seriesResult[sk] != nil && seriesResult[sk].Details != "" {
+					var members []db.BookSeriesMember
+					if err := json.Unmarshal([]byte(seriesResult[sk].Details), &members); err == nil {
+						for _, m := range members {
+							mk := "book-client-hc:" + strconv.Itoa(m.HardcoverID)
+							if !seen[mk] {
+								memberLookups = append(memberLookups, struct{ Source, ExtID string }{"book-client-hc", strconv.Itoa(m.HardcoverID)})
+								seen[mk] = true
+							}
+						}
+					}
+				}
+			}
+		}
+
+		// Phase 2: series without pre-warmed cache entries — query local DB
+		for _, be := range bookEvents {
+			if be.Book.SeriesID == "" {
+				continue
+			}
+			sk := "book-series:" + be.Book.SeriesID
+			if result[sk] != nil {
+				continue // already have cache entry
+			}
+			members, qErr := database.GetBookSeriesMembers(ctx, be.Book.SeriesID)
+			if qErr != nil || len(members) == 0 {
+				continue
+			}
+			mJSON, mErr := json.Marshal(members)
+			if mErr == nil {
+				result[sk] = &db.LibraryCache{
+					Source:  "book-series",
+					ExtID:   be.Book.SeriesID,
+					Details: string(mJSON),
+				}
+			}
+			for _, m := range members {
+				mk := "book-client-hc:" + strconv.Itoa(m.HardcoverID)
+				if !seen[mk] {
+					memberLookups = append(memberLookups, struct{ Source, ExtID string }{"book-client-hc", strconv.Itoa(m.HardcoverID)})
+					seen[mk] = true
+				}
+			}
+		}
+
+		if len(memberLookups) > 0 {
+			memberResult, err := database.GetLibraryCacheMap(ctx, memberLookups)
+			if err == nil {
+				for k, v := range memberResult {
+					result[k] = v
 				}
 			}
 		}
@@ -1615,6 +1754,11 @@ func (t *TUI) buildBookContent(be *db.EventWithBook, rw int, maxLines int) strin
 			b.WriteString(style.Render("Library:"))
 			b.WriteString("\n")
 			b.WriteString(style.Render("  " + info.label))
+		}
+
+		if seriesStr := it.bookSeriesStr(t.libraryCache); seriesStr != "" {
+			b.WriteString("\n")
+			b.WriteString(rtStyle.Render("  " + seriesStr))
 		}
 	}
 

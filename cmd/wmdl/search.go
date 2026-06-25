@@ -792,12 +792,12 @@ func qualityPrefs(cfg *config.Config, mt string, preferredID int) quality.Qualit
 	}
 
 	return quality.QualityPrefs{
-		TargetResolution:  res,
-		PreferHDR:         qc.PreferHDR,
-		SourcePriority:    qc.SourcePriority,
-		CodecPriority:     qc.CodecPriority,
-		PreferredGroups:   cfg.PreferredGroups,
-		MinSeeders:        cfg.MinSeeders,
+		TargetResolution:   res,
+		PreferHDR:          qc.PreferHDR,
+		SourcePriority:     qc.SourcePriority,
+		CodecPriority:      qc.CodecPriority,
+		PreferredGroups:    cfg.PreferredGroups,
+		MinSeeders:         cfg.MinSeeders,
 		PreferredIndexerID: preferredID,
 	}
 }

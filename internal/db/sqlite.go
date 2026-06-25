@@ -2526,6 +2526,35 @@ func (d *DB) DeleteBookTx(ctx context.Context, tx *sql.Tx, id int64) error {
 	return nil
 }
 
+type BookSeriesMember struct {
+	HardcoverID int
+	Title       string
+}
+
+func (d *DB) GetBookSeriesMembers(ctx context.Context, seriesID string) ([]BookSeriesMember, error) {
+	rows, err := d.db.QueryContext(ctx, `
+		SELECT hardcover_id, title FROM books
+		WHERE series_id = ? AND hardcover_id > 0
+		ORDER BY title
+	`, seriesID)
+	if err != nil {
+		return nil, fmt.Errorf("querying book series members: %w", err)
+	}
+	defer rows.Close()
+	var members []BookSeriesMember
+	for rows.Next() {
+		var m BookSeriesMember
+		if err := rows.Scan(&m.HardcoverID, &m.Title); err != nil {
+			return nil, fmt.Errorf("scanning book series member: %w", err)
+		}
+		members = append(members, m)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return members, nil
+}
+
 // FindPendingBookEventsByISBNTx is the transactional variant of
 // FindPendingBookEventsByISBN.
 func (d *DB) FindPendingBookEventsByISBNTx(ctx context.Context, tx *sql.Tx) (map[string][]BookISBNEntry, error) {

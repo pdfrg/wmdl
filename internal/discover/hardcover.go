@@ -17,6 +17,12 @@ type HardcoverClient struct {
 	http   *http.Client
 }
 
+type SeriesBook struct {
+	HCID     int
+	Title    string
+	Position int
+}
+
 type HCBookResult struct {
 	ID          int
 	Title       string
@@ -249,6 +255,67 @@ func (c *HardcoverClient) SearchBook(ctx context.Context, title, author string) 
 	}
 
 	return c.GetBook(ctx, id)
+}
+
+// GetSeriesBooks fetches all books in a series, deduplicated by position
+// (one book per position — the most popular edition). Uses the recommended
+// query from https://docs.hardcover.app/api/guides/gettingbooksinseries/
+func (c *HardcoverClient) GetSeriesBooks(ctx context.Context, seriesID int) ([]SeriesBook, error) {
+	q := `query GetSeriesBooks($id: Int!) {
+		series(where: {id: {_eq: $id}}, limit: 1) {
+			id name
+			book_series(
+				distinct_on: position
+				order_by: [{position: asc}, {book: {users_count: desc}}]
+				where: {
+					book: {canonical_id: {_is_null: true}, is_partial_book: {_eq: false}}
+					compilation: {_eq: false}
+				}
+			) {
+				position
+				book { id title }
+			}
+		}
+	}`
+	respBody, err := c.query(ctx, q, map[string]any{"id": seriesID})
+	if err != nil {
+		return nil, fmt.Errorf("hc get series: %w", err)
+	}
+	var gqlResp struct {
+		Data struct {
+			Series []struct {
+				ID         int    `json:"id"`
+				Name       string `json:"name"`
+				BookSeries []struct {
+					Position *int `json:"position"`
+					Book     struct {
+						ID    int    `json:"id"`
+						Title string `json:"title"`
+					} `json:"book"`
+				} `json:"book_series"`
+			} `json:"series"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(respBody, &gqlResp); err != nil {
+		return nil, fmt.Errorf("hc get series decode: %w", err)
+	}
+	if len(gqlResp.Data.Series) == 0 {
+		return nil, nil
+	}
+	s := gqlResp.Data.Series[0]
+	var books []SeriesBook
+	for _, bs := range s.BookSeries {
+		pos := 0
+		if bs.Position != nil {
+			pos = *bs.Position
+		}
+		books = append(books, SeriesBook{
+			HCID:     bs.Book.ID,
+			Title:    bs.Book.Title,
+			Position: pos,
+		})
+	}
+	return books, nil
 }
 
 func (c *HardcoverClient) searchBooks(ctx context.Context, query string, vars map[string]any) (*HCBookResult, error) {

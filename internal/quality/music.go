@@ -9,10 +9,10 @@ import (
 )
 
 type MusicQualityPrefs struct {
-	FormatPriority    []string
-	BitratePriority   []string
-	MinSeeders        int
-	PreferredGroups   []string
+	FormatPriority     []string
+	BitratePriority    []string
+	MinSeeders         int
+	PreferredGroups    []string
 	PreferredIndexerID int
 }
 
