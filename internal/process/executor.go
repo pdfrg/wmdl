@@ -550,9 +550,10 @@ func (e *Executor) SearchEvent(ctx context.Context, evt db.EventWithTitle) *Sear
 	}
 
 	cat := search.CatMovie
-	if title.MediaType == model.MediaTypeTV {
+	switch title.MediaType {
+	case model.MediaTypeTV:
 		cat = search.CatTV
-	} else if title.MediaType == model.MediaTypeAnime {
+	case model.MediaTypeAnime:
 		cat = search.CatAnime
 	}
 	prefs := buildQualityPrefs(e.cfg, title.MediaType, e.prowl.PreferredIndexerID(cat))
@@ -1367,9 +1368,10 @@ func (e *Executor) SearchAllCandidates(ctx context.Context, candidates []Phase3C
 		}
 
 		cat := search.CatMovie
-		if c.MediaType == model.MediaTypeTV {
+		switch c.MediaType {
+		case model.MediaTypeTV:
 			cat = search.CatTV
-		} else if c.MediaType == model.MediaTypeAnime {
+		case model.MediaTypeAnime:
 			cat = search.CatAnime
 		}
 		prefs := buildQualityPrefs(e.cfg, c.MediaType, e.prowl.PreferredIndexerID(cat))
@@ -1616,9 +1618,10 @@ func (e *Executor) ProcessPhase3Pickers(ctx context.Context) {
 				}
 
 				cat := search.CatMovie
-				if p3s.MediaType == model.MediaTypeTV {
+				switch p3s.MediaType {
+				case model.MediaTypeTV:
 					cat = search.CatTV
-				} else if p3s.MediaType == model.MediaTypeAnime {
+				case model.MediaTypeAnime:
 					cat = search.CatAnime
 				}
 				prefs := buildQualityPrefs(e.cfg, p3s.MediaType, e.prowl.PreferredIndexerID(cat))
@@ -1982,9 +1985,10 @@ func (e *Executor) searchPhase3Season(ctx context.Context, s struct {
 	}
 
 	cat := search.CatMovie
-	if s.MediaType == model.MediaTypeTV {
+	switch s.MediaType {
+	case model.MediaTypeTV:
 		cat = search.CatTV
-	} else if s.MediaType == model.MediaTypeAnime {
+	case model.MediaTypeAnime:
 		cat = search.CatAnime
 	}
 	prefs := buildQualityPrefs(e.cfg, s.MediaType, e.prowl.PreferredIndexerID(cat))
