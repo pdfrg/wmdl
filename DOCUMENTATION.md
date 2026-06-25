@@ -668,6 +668,19 @@ into a single book entry.
   scans to auto-mark new releases as wanted. wmdl always calls `unqueueBook` after
   `addBook` in full mode to revert to `Skipped`, preventing LL from searching in parallel.
 
+> **Metadata provider:** Phase 3 series gap detection matches Hardcover book IDs
+> against LL's internal `bookid`. This works correctly only when LL is configured
+> with **Hardcover as its sole metadata provider**. If LL uses additional providers
+> (Goodreads, Google Books, etc.), the IDs will differ and every series member may
+> appear as "missing" each run. In the WebUI, Config > Settings > Importing > Primary Information Source >
+> "HardCover", then deselect "Use multiple sources for book/author information", deselect
+> "Enable OpenLibrary api...", deselect "Enable Deutsche Nationalbibliothek api...", *select*
+> "Enable HardCover api...", Google Books API box > empty, GoodReads API box > empty, press
+> "Save Changes" button at top right. To enter your HardCover API token in the WebUI, go
+> to Config > push "User Admin" button right under the top bar > Select user > pick your LL
+> username > HardCover Token > enter the entire token including "Bearer" > press "Save" button
+> at bottom.
+
 **Download client categories:** Set both `ebooks` and `audiobooks` to the same category
 (e.g. `"Books"`) whose save path points to LL's Alternate Import Folder. On download
 completion, the external trigger script changes the torrent's category to a seeding-only

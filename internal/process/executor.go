@@ -110,6 +110,10 @@ func NewExecutor(logger zerolog.Logger, cfg *config.Config, database *db.DB) *Ex
 		}
 		bookClient = bc
 	}
+	var hc *discover.HardcoverClient
+	if cfg.Hardcover.APIKey != "" {
+		hc = discover.NewHardcoverClient(cfg.Hardcover.APIKey)
+	}
 	catMap := map[string]int{
 		"videos":     cfg.Prowlarr.IndexerIDs.Videos,
 		"music":      cfg.Prowlarr.IndexerIDs.Music,
@@ -127,7 +131,7 @@ func NewExecutor(logger zerolog.Logger, cfg *config.Config, database *db.DB) *Ex
 		sonarr:                      sonarr,
 		lidarr:                      lidarr,
 		bookClient:                  bookClient,
-		hc:                          discover.NewHardcoverClient(cfg.Hardcover.APIKey),
+		hc:                          hc,
 		skipRejectedTvdbIDs:         make(map[int]struct{}),
 		phase3BatchProcessedMovies:  make(map[int]bool),
 		phase3BatchProcessedSeasons: make(map[string]map[int]bool),
@@ -3913,6 +3917,10 @@ func (e *Executor) ComputeBookPhase3Candidates(ctx context.Context, events []db.
 				Book: &model.Book{
 					Title:       hcb.Title,
 					HardcoverID: hcb.HCID,
+					ISBN13:      hcb.ISBN13,
+					ISBN10:      hcb.ISBN10,
+					ASIN:        "", // HC doesn't provide ASIN
+					ReleaseYear: hcb.ReleaseYear,
 				},
 				Author: &model.Author{
 					Name: hcb.Author,
@@ -3943,18 +3951,6 @@ func (e *Executor) processPhase3BookBatchItem(ctx context.Context, item *BatchIt
 		return
 	}
 
-	// Add to LL
-	if _, err := e.bookClient.AddBook(ctx, hcID); err != nil {
-		e.log.Warn().Err(err).Str("book", ae.Book.Title).Msg("book phase 3: addBook failed")
-	} else {
-		if err := e.bookClient.UnqueueBook(ctx, hcID, model.BookFormatEbook); err != nil {
-			e.log.Warn().Err(err).Str("book", ae.Book.Title).Msg("book phase 3: unqueueBook ebook")
-		}
-		if err := e.bookClient.UnqueueBook(ctx, hcID, model.BookFormatAudiobook); err != nil {
-			e.log.Warn().Err(err).Str("book", ae.Book.Title).Msg("book phase 3: unqueueBook audiobook")
-		}
-	}
-
 	// Map ParsedRelease selections back to ParsedBookRelease by GUID
 	var chosen []quality.ParsedBookRelease
 	for _, sel := range item.Selected {
@@ -3969,6 +3965,7 @@ func (e *Executor) processPhase3BookBatchItem(ctx context.Context, item *BatchIt
 		return
 	}
 
+	// Download selected releases before adding to LL
 	category := e.cfg.Downloader.Categories.Ebooks
 	if sr.Format == model.BookFormatAudiobook && e.cfg.Downloader.Categories.Audiobooks != "" {
 		category = e.cfg.Downloader.Categories.Audiobooks
@@ -3984,6 +3981,19 @@ func (e *Executor) processPhase3BookBatchItem(ctx context.Context, item *BatchIt
 			}
 		}
 	}
+
+	// Add to LL only after successful selection (user committed)
+	if _, err := e.bookClient.AddBook(ctx, hcID); err != nil {
+		e.log.Warn().Err(err).Str("book", ae.Book.Title).Msg("book phase 3: addBook failed")
+	} else {
+		if err := e.bookClient.UnqueueBook(ctx, hcID, model.BookFormatEbook); err != nil {
+			e.log.Warn().Err(err).Str("book", ae.Book.Title).Msg("book phase 3: unqueueBook ebook")
+		}
+		if err := e.bookClient.UnqueueBook(ctx, hcID, model.BookFormatAudiobook); err != nil {
+			e.log.Warn().Err(err).Str("book", ae.Book.Title).Msg("book phase 3: unqueueBook audiobook")
+		}
+	}
+
 	e.log.Info().Str("book", ae.Book.Title).Msg("book phase 3 item downloaded")
 }
 

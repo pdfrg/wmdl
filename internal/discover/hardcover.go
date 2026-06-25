@@ -18,10 +18,13 @@ type HardcoverClient struct {
 }
 
 type SeriesBook struct {
-	HCID     int
-	Title    string
-	Position int
-	Author   string
+	HCID        int
+	Title       string
+	Position    int
+	Author      string
+	ISBN13      string
+	ISBN10      string
+	ReleaseYear int
 }
 
 type HCBookResult struct {
@@ -274,12 +277,15 @@ func (c *HardcoverClient) GetSeriesBooks(ctx context.Context, seriesID int) ([]S
 				}
 			) {
 				position
-				book {
-					id title
-					contributions(where: {role: {_eq: "Author"}}, limit: 1) {
-						author { id name }
-					}
+			book {
+				id title release_year
+				default_physical_edition { isbn_13 isbn_10 }
+				default_ebook_edition { isbn_13 isbn_10 }
+				default_audio_edition { isbn_13 isbn_10 }
+				contributions(where: {role: {_eq: "Author"}}, limit: 1) {
+					author { id name }
 				}
+			}
 			}
 		}
 	}`
@@ -295,8 +301,21 @@ func (c *HardcoverClient) GetSeriesBooks(ctx context.Context, seriesID int) ([]S
 				BookSeries []struct {
 					Position *int `json:"position"`
 					Book     struct {
-						ID            int    `json:"id"`
-						Title         string `json:"title"`
+						ID              int    `json:"id"`
+						Title           string `json:"title"`
+						ReleaseYear     int    `json:"release_year"`
+						PhysicalEdition *struct {
+							ISBN13 string `json:"isbn_13"`
+							ISBN10 string `json:"isbn_10"`
+						} `json:"default_physical_edition"`
+						EbookEdition *struct {
+							ISBN13 string `json:"isbn_13"`
+							ISBN10 string `json:"isbn_10"`
+						} `json:"default_ebook_edition"`
+						AudioEdition *struct {
+							ISBN13 string `json:"isbn_13"`
+							ISBN10 string `json:"isbn_10"`
+						} `json:"default_audio_edition"`
 						Contributions []struct {
 							Author struct {
 								ID   int    `json:"id"`
@@ -325,11 +344,25 @@ func (c *HardcoverClient) GetSeriesBooks(ctx context.Context, seriesID int) ([]S
 		if len(bs.Book.Contributions) > 0 {
 			author = bs.Book.Contributions[0].Author.Name
 		}
+		// Coalesce ISBN from physical → ebook → audio editions
+		isbn13, isbn10 := "", ""
+		if bs.Book.PhysicalEdition != nil {
+			isbn13, isbn10 = bs.Book.PhysicalEdition.ISBN13, bs.Book.PhysicalEdition.ISBN10
+		}
+		if isbn13 == "" && bs.Book.EbookEdition != nil {
+			isbn13, isbn10 = bs.Book.EbookEdition.ISBN13, bs.Book.EbookEdition.ISBN10
+		}
+		if isbn13 == "" && bs.Book.AudioEdition != nil {
+			isbn13, isbn10 = bs.Book.AudioEdition.ISBN13, bs.Book.AudioEdition.ISBN10
+		}
 		books = append(books, SeriesBook{
-			HCID:     bs.Book.ID,
-			Title:    bs.Book.Title,
-			Position: pos,
-			Author:   author,
+			HCID:        bs.Book.ID,
+			Title:       bs.Book.Title,
+			Position:    pos,
+			Author:      author,
+			ISBN13:      isbn13,
+			ISBN10:      isbn10,
+			ReleaseYear: bs.Book.ReleaseYear,
 		})
 	}
 	return books, nil
