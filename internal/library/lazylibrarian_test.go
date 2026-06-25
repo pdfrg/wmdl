@@ -258,15 +258,17 @@ func TestLazyLibrarianClient_ErrorResponse(t *testing.T) {
 
 func TestLazyLibrarianClient_GetSeriesMembers(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Response format returned by LL: [[members...], total, prefix]
 		w.Write([]byte(`[
-			{"position":1,"title":"Book One","author_name":"Author A","author_id":"100","book_id":"1001","pubdate":"2026-01-15"},
-			{"position":2,"title":"Book Two","author_name":"Author A","author_id":"100","book_id":"1002"}
+			[[1,"Book One","Author A",1001,100,"2026-01-15","","",1001],[2,"Book Two","Author A",1002,100,"","","",1002]],
+			0,
+			"HC"
 		]`))
 	}))
 	defer srv.Close()
 
 	c := NewLazyLibrarianClient(srv.URL, "key", 10)
-	members, err := c.GetSeriesMembers(context.Background(), "HCseries1")
+	members, err := c.GetSeriesMembers(context.Background(), "series1")
 	if err != nil {
 		t.Fatalf("GetSeriesMembers() error: %v", err)
 	}

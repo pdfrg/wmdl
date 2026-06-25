@@ -654,6 +654,17 @@ func runProcessForWeek(ctx context.Context, database *db.DB, cfg *config.Config,
 			}
 		}
 
+		// Compute and search book Phase 3 candidates (missing series members)
+		if hasBooks && exec.BookClientAvailable() && exec.HCClientAvailable() {
+			bookMode := cfg.MediaTypeMode(model.MediaTypeBook)
+			if bookMode == "full" || bookMode == "prowlarr-grab" {
+				exec.ComputeBookPhase3Candidates(ctx, bookEventsForProcess)
+				if len(exec.BookPhase3SearchPhase) > 0 {
+					log.Info().Int("count", len(exec.BookPhase3SearchPhase)).Msg("book phase 3 candidates to pick")
+				}
+			}
+		}
+
 		// Optional notification: searches complete
 		if cfg.Notifier.SearchCompleteNotify {
 			notify, err := notifier.New(cfg.Notifier)
@@ -819,6 +830,29 @@ func runProcessForWeek(ctx context.Context, database *db.DB, cfg *config.Config,
 				}
 			}
 			exec.Phase3SearchPhase = remaining
+		}
+
+		// Collect book Phase 3 items into BatchPicker
+		if hasBooks && exec.BookClientAvailable() && exec.HCClientAvailable() {
+			bookMode := cfg.MediaTypeMode(model.MediaTypeBook)
+			if bookMode == "full" || bookMode == "prowlarr-grab" {
+				for _, sr := range exec.BookPhase3SearchPhase {
+					if len(sr.Top) == 0 {
+						continue
+					}
+					parsed := make([]quality.ParsedRelease, len(sr.Top))
+					for i, br := range sr.Top {
+						parsed[i] = br.ParsedRelease
+					}
+					batchItems = append(batchItems, &process.BatchItem{
+						ID:         fmt.Sprintf("bp3-%d-%s", sr.Event.Book.HardcoverID, sr.Format),
+						Label:      fmt.Sprintf("%s by %s [%s]", sr.Event.Book.Title, sr.Event.Author.Name, sr.Format),
+						Releases:   parsed,
+						Phase3:     true,
+						BookResult: sr,
+					})
+				}
+			}
 		}
 
 		// Run the batch picker — single TUI session

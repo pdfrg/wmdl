@@ -15,6 +15,7 @@ import (
 
 	"github.com/pdfrg/wmdl/internal/config"
 	"github.com/pdfrg/wmdl/internal/db"
+	"github.com/pdfrg/wmdl/internal/discover"
 	"github.com/pdfrg/wmdl/internal/download"
 	"github.com/pdfrg/wmdl/internal/library"
 	"github.com/pdfrg/wmdl/internal/model"
@@ -70,12 +71,14 @@ type Executor struct {
 	sonarr     *library.SonarrClient
 	lidarr     *library.LidarrClient
 	bookClient library.BookClient
+	hc         *discover.HardcoverClient
 
-	Unfound           []string
-	Skipped           []string
-	Phase3SearchPhase []Phase3SearchEntry
-	phase3Movies      []Phase3Movie
-	phase3Seasons     []struct {
+	Unfound               []string
+	Skipped               []string
+	Phase3SearchPhase     []Phase3SearchEntry
+	BookPhase3SearchPhase []*BookSearchResult
+	phase3Movies          []Phase3Movie
+	phase3Seasons         []struct {
 		SeriesID     int
 		SeasonNumber int
 		SeriesTitle  string
@@ -124,6 +127,7 @@ func NewExecutor(logger zerolog.Logger, cfg *config.Config, database *db.DB) *Ex
 		sonarr:                      sonarr,
 		lidarr:                      lidarr,
 		bookClient:                  bookClient,
+		hc:                          discover.NewHardcoverClient(cfg.Hardcover.APIKey),
 		skipRejectedTvdbIDs:         make(map[int]struct{}),
 		phase3BatchProcessedMovies:  make(map[int]bool),
 		phase3BatchProcessedSeasons: make(map[string]map[int]bool),
@@ -915,6 +919,9 @@ func (e *Executor) ProcessBatchResults(ctx context.Context, items []*BatchItem) 
 		}
 
 		switch {
+		case item.Phase3 && item.BookResult != nil:
+			e.processPhase3BookBatchItem(ctx, item)
+
 		case item.Phase3:
 			e.processPhase3BatchItem(ctx, item)
 
@@ -3780,6 +3787,10 @@ func (e *Executor) BookClientAvailable() bool {
 	return e.bookClient != nil
 }
 
+func (e *Executor) HCClientAvailable() bool {
+	return e.hc != nil
+}
+
 func (e *Executor) ProcessBookLibraryDecisions(ctx context.Context, events []db.EventWithBook, downloaded map[int64]*BookDownloadInfo) {
 	mode := e.cfg.MediaTypeMode(model.MediaTypeBook)
 	autoConfirm := mode == "auto" || mode == "yolo"
@@ -3844,64 +3855,136 @@ func (e *Executor) ProcessBookLibraryDecisions(ctx context.Context, events []db.
 		}
 
 		e.log.Info().Str("book", title).Str("ll_id", bookID).Msg("LazyLibrarian: added")
+	}
+}
 
-		// Phase 3: series gap detection
-		if evt.Book.SeriesID != "" {
-			searchNow := mode == "arr" || mode == "auto" || mode == "yolo"
-			e.checkBookSeriesGaps(ctx, evt, searchNow)
+// ComputeBookPhase3Candidates computes candidates for missing series books
+// by fetching the full series from HC and subtracting books already in LL.
+func (e *Executor) ComputeBookPhase3Candidates(ctx context.Context, events []db.EventWithBook) {
+	if e.hc == nil || e.bookClient == nil {
+		return
+	}
+	seenSeries := make(map[string]bool)
+	for _, evt := range events {
+		if evt.Book.SeriesID == "" || evt.Book.HardcoverID == 0 {
+			continue
+		}
+		if seenSeries[evt.Book.SeriesID] {
+			continue
+		}
+		seenSeries[evt.Book.SeriesID] = true
+
+		seriesID, err := strconv.Atoi(evt.Book.SeriesID)
+		if err != nil {
+			continue
+		}
+
+		// Get all HC series members
+		hcBooks, err := e.hc.GetSeriesBooks(ctx, seriesID)
+		if err != nil {
+			e.log.Warn().Err(err).Str("series", evt.Book.SeriesName).Msg("book phase 3: GetSeriesBooks failed")
+			continue
+		}
+		if len(hcBooks) == 0 {
+			continue
+		}
+
+		// Get books already in LL for this series
+		llMembers, err := e.bookClient.GetSeriesMembers(ctx, evt.Book.SeriesID)
+		if err != nil {
+			e.log.Warn().Err(err).Str("series", evt.Book.SeriesName).Msg("book phase 3: GetSeriesMembers failed, assuming none")
+		}
+		owned := make(map[string]bool)
+		for _, m := range llMembers {
+			owned[m.BookID] = true
+		}
+
+		// Find missing books
+		var missing int
+		for _, hcb := range hcBooks {
+			hcIDStr := strconv.Itoa(hcb.HCID)
+			if owned[hcIDStr] {
+				continue
+			}
+			synthEvent := db.EventWithBook{
+				Event: &model.BookReleaseEvent{
+					FormatPref: model.BookFormatBoth,
+				},
+				Book: &model.Book{
+					Title:       hcb.Title,
+					HardcoverID: hcb.HCID,
+				},
+				Author: &model.Author{
+					Name: hcb.Author,
+				},
+			}
+			for _, format := range []model.BookFormat{model.BookFormatEbook, model.BookFormatAudiobook} {
+				sr := e.SearchBook(ctx, synthEvent, format)
+				if sr != nil && len(sr.Top) > 0 {
+					e.BookPhase3SearchPhase = append(e.BookPhase3SearchPhase, sr)
+					missing++
+				}
+			}
+		}
+		if missing > 0 {
+			e.log.Info().Int("count", missing).Str("series", evt.Book.SeriesName).Msg("book phase 3 candidates found")
 		}
 	}
 }
 
-func (e *Executor) checkBookSeriesGaps(ctx context.Context, evt db.EventWithBook, searchNow bool) {
-	members, err := e.bookClient.GetSeriesMembers(ctx, evt.Book.SeriesID)
-	if err != nil {
-		e.log.Warn().Err(err).Str("book", evt.Book.Title).Str("series", evt.Book.SeriesName).Msg("series gap: GetSeriesMembers failed")
+func (e *Executor) processPhase3BookBatchItem(ctx context.Context, item *BatchItem) {
+	sr := item.BookResult
+	if sr == nil {
+		return
+	}
+	ae := sr.Event
+	hcID := strconv.Itoa(ae.Book.HardcoverID)
+	if hcID == "0" || hcID == "" {
 		return
 	}
 
-	var added int
-	for _, m := range members {
-		if m.BookID == "" {
-			continue
+	// Add to LL
+	if _, err := e.bookClient.AddBook(ctx, hcID); err != nil {
+		e.log.Warn().Err(err).Str("book", ae.Book.Title).Msg("book phase 3: addBook failed")
+	} else {
+		if err := e.bookClient.UnqueueBook(ctx, hcID, model.BookFormatEbook); err != nil {
+			e.log.Warn().Err(err).Str("book", ae.Book.Title).Msg("book phase 3: unqueueBook ebook")
 		}
-
-		// Skip future releases
-		if m.PubDate != "" {
-			t, parseErr := time.Parse("2006-01-02", m.PubDate)
-			if parseErr != nil {
-				if len(m.PubDate) >= 4 {
-					t, parseErr = time.Parse("2006", m.PubDate[:4])
-				}
-			}
-			if parseErr == nil && t.After(time.Now()) {
-				e.log.Debug().Str("book", m.Title).Str("pubdate", m.PubDate).Msg("series gap: future release, skipping")
-				continue
-			}
+		if err := e.bookClient.UnqueueBook(ctx, hcID, model.BookFormatAudiobook); err != nil {
+			e.log.Warn().Err(err).Str("book", ae.Book.Title).Msg("book phase 3: unqueueBook audiobook")
 		}
-
-		// AddBook is idempotent — safe for books already in LL
-		if _, err := e.bookClient.AddBook(ctx, m.BookID); err != nil {
-			e.log.Warn().Err(err).Str("book", m.Title).Msg("series gap: addBook failed")
-			continue
-		}
-
-		if !searchNow {
-			if err := e.bookClient.UnqueueBook(ctx, m.BookID, model.BookFormatEbook); err != nil {
-				e.log.Warn().Err(err).Str("book", m.Title).Msg("series gap: unqueueBook ebook")
-			}
-			if err := e.bookClient.UnqueueBook(ctx, m.BookID, model.BookFormatAudiobook); err != nil {
-				e.log.Warn().Err(err).Str("book", m.Title).Msg("series gap: unqueueBook audiobook")
-			}
-		}
-
-		added++
-		e.log.Info().Str("book", m.Title).Str("author", m.AuthorName).Int("position", m.Position).Msg("series gap: added to LazyLibrarian")
 	}
 
-	if added > 0 {
-		e.log.Info().Str("series", evt.Book.SeriesName).Int("added", added).Msg("series gap check complete")
+	// Map ParsedRelease selections back to ParsedBookRelease by GUID
+	var chosen []quality.ParsedBookRelease
+	for _, sel := range item.Selected {
+		for _, br := range sr.Top {
+			if br.Guid == sel.Guid {
+				chosen = append(chosen, br)
+				break
+			}
+		}
 	}
+	if len(chosen) == 0 {
+		return
+	}
+
+	category := e.cfg.Downloader.Categories.Ebooks
+	if sr.Format == model.BookFormatAudiobook && e.cfg.Downloader.Categories.Audiobooks != "" {
+		category = e.cfg.Downloader.Categories.Audiobooks
+	}
+	for _, br := range chosen {
+		uri := br.DownloadURL
+		if uri == "" {
+			uri = br.MagnetURL
+		}
+		if uri != "" {
+			if _, err := e.dl.AddTorrent(ctx, uri, download.WithCategory(category)); err != nil {
+				e.log.Warn().Err(err).Str("book", ae.Book.Title).Msg("book phase 3: add to client failed")
+			}
+		}
+	}
+	e.log.Info().Str("book", ae.Book.Title).Msg("book phase 3 item downloaded")
 }
 
 func buildBookQualityPrefs(cfg *config.Config, preferredID int) quality.BookQualityPrefs {

@@ -21,6 +21,7 @@ type SeriesBook struct {
 	HCID     int
 	Title    string
 	Position int
+	Author   string
 }
 
 type HCBookResult struct {
@@ -273,7 +274,12 @@ func (c *HardcoverClient) GetSeriesBooks(ctx context.Context, seriesID int) ([]S
 				}
 			) {
 				position
-				book { id title }
+				book {
+					id title
+					contributions(where: {role: {_eq: "Author"}}, limit: 1) {
+						author { id name }
+					}
+				}
 			}
 		}
 	}`
@@ -289,8 +295,14 @@ func (c *HardcoverClient) GetSeriesBooks(ctx context.Context, seriesID int) ([]S
 				BookSeries []struct {
 					Position *int `json:"position"`
 					Book     struct {
-						ID    int    `json:"id"`
-						Title string `json:"title"`
+						ID            int    `json:"id"`
+						Title         string `json:"title"`
+						Contributions []struct {
+							Author struct {
+								ID   int    `json:"id"`
+								Name string `json:"name"`
+							} `json:"author"`
+						} `json:"contributions"`
 					} `json:"book"`
 				} `json:"book_series"`
 			} `json:"series"`
@@ -309,10 +321,15 @@ func (c *HardcoverClient) GetSeriesBooks(ctx context.Context, seriesID int) ([]S
 		if bs.Position != nil {
 			pos = *bs.Position
 		}
+		author := ""
+		if len(bs.Book.Contributions) > 0 {
+			author = bs.Book.Contributions[0].Author.Name
+		}
 		books = append(books, SeriesBook{
 			HCID:     bs.Book.ID,
 			Title:    bs.Book.Title,
 			Position: pos,
+			Author:   author,
 		})
 	}
 	return books, nil

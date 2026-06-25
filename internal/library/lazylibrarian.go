@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -187,26 +188,51 @@ func (c *LazyLibrarianClient) GetAllBooks(ctx context.Context) ([]model.BookStat
 }
 
 func (c *LazyLibrarianClient) GetSeriesMembers(ctx context.Context, seriesID string) ([]*model.SeriesMember, error) {
+	// LL stores series with "HC" prefix for Hardcover IDs.
+	// The API expects param "id" (not "series").
 	params := url.Values{
-		"cmd":    {"getSeriesMembers"},
-		"series": {seriesID},
+		"cmd": {"getSeriesMembers"},
+		"id":  {"HC" + seriesID},
 	}
-	var raw []llSeriesMember
+	// Response is a top-level array: [members, total, prefix]
+	// where `members` is an array of arrays: [pos, title, author, bookID, authorID, pubDate, ...]
+	var rawResp []json.RawMessage
 	if err := c.retry(ctx, func() error {
-		return c.doJSON(ctx, params, &raw)
+		return c.doJSON(ctx, params, &rawResp)
 	}); err != nil {
 		return nil, err
 	}
-	members := make([]*model.SeriesMember, 0, len(raw))
-	for _, m := range raw {
-		members = append(members, &model.SeriesMember{
-			Position:   m.Position,
-			Title:      m.Title,
-			AuthorName: m.AuthorName,
-			AuthorID:   m.AuthorID,
-			BookID:     m.BookID,
-			PubDate:    m.PubDate,
-		})
+	if len(rawResp) < 2 {
+		return nil, nil
+	}
+	var membersRaw []json.RawMessage
+	if err := json.Unmarshal(rawResp[0], &membersRaw); err != nil {
+		return nil, nil
+	}
+	members := make([]*model.SeriesMember, 0, len(membersRaw))
+	for _, mRaw := range membersRaw {
+		var row []any
+		if err := json.Unmarshal(mRaw, &row); err != nil || len(row) < 4 {
+			continue
+		}
+		m := &model.SeriesMember{}
+		if pos, ok := row[0].(float64); ok {
+			m.Position = int(pos)
+		}
+		m.Title, _ = row[1].(string)
+		m.AuthorName, _ = row[2].(string)
+		if id, ok := row[3].(float64); ok {
+			m.BookID = strconv.Itoa(int(id))
+		}
+		if len(row) > 4 {
+			if id, ok := row[4].(float64); ok {
+				m.AuthorID = strconv.Itoa(int(id))
+			}
+		}
+		if len(row) > 5 {
+			m.PubDate, _ = row[5].(string)
+		}
+		members = append(members, m)
 	}
 	return members, nil
 }
@@ -281,13 +307,4 @@ type llBook struct {
 	BookFile    string `json:"bookfile"`
 	AudioFile   string `json:"audiofile"`
 	BookIsbn    string `json:"bookisbn"`
-}
-
-type llSeriesMember struct {
-	Position   int    `json:"position"`
-	Title      string `json:"title"`
-	AuthorName string `json:"author_name"`
-	AuthorID   string `json:"author_id"`
-	BookID     string `json:"book_id"`
-	PubDate    string `json:"pubdate"`
 }
