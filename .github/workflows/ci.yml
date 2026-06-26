@@ -10,7 +10,7 @@ jobs:
   ci:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - uses: actions/setup-go@v5
         with:
@@ -29,7 +29,8 @@ jobs:
       - name: Build
         run: go build -ldflags="-X main.version=$(git describe --tags --dirty --always 2>/dev/null || echo dev)" ./cmd/wmdl
 
-      - name: Lint
-        uses: golangci/golangci-lint-action@v6
+      - name: Run golangci-lint
+        uses: golangci/golangci-lint-action@v7
         with:
-          version: latest
+          version: v2.12.2
+          install-mode: goinstall
