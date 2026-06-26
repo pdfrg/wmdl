@@ -24,3 +24,6 @@
 
 ![process_torrents](assets/wmdl_process_torrents2.png)
 
+## Status (verbose)
+
+![status_verbose](assets/wmdl_status_verbose.png)
