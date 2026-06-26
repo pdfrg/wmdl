@@ -179,6 +179,14 @@ movies=`full`, books=`yolo`).
   phase 3, etc.). `arr` prompts only for library adds. `auto` and `yolo` auto-confirm
   all prompts.
 
+**All the above too confusing? In summary:**
+
+- `full`: Recommended for maximum control. Pick the exact torrent you want, confirm every addition to libraries.
+- `prowlarr-grab`: Same as `full`, but with manual (or non-*arr) library organization.
+- `arr`: You have detailed custom settings in the *arr apps and trust them to get the right torrent. Confirm additions to libraries.
+- `auto`: Same as *arr, but auto-add to library (mismatches are rare).
+- `yolo`: Download everything, no questions asked. HDD prices are a non-issue.
+
 **Note on `process_mode`:** This is a separate, orthogonal setting (`batch` or
 `interactive`) that controls how the release picker presents results — all at once
 vs one at a time. It has no effect in `arr`/`auto`/`yolo` modes since the picker is
