@@ -49,6 +49,24 @@ $EDITOR ~/.config/wmdl/config.yaml   # add TMDB API key + Prowlarr URL + downloa
 wmdl all
 ```
 
+## Requirements
+
+- **To build from source**: Go 1.26+. Or just grab a binary from [releases](https://github.com/pdfrg/wmdl/releases).
+- TMDB API key. Account sign-up [here](https://www.themoviedb.org/signup). API key [here](https://www.themoviedb.org/settings/api).  
+- Prowlarr
+- Download client — qBittorrent (recommended), Transmission, or Deluge
+
+## Recommended
+
+- Chromium-based browser — Brave (recommended), Chrome, Chromium, Edge, Vivaldi, Opera. Required for Goodreads,
+Bookshop, AllMusic, and Rotten Tomatoes chromedp-based scrapers. Other scrapers work without any browser.
+- Radarr, Sonarr, Lidarr, LazyLibrarian — required for `arr, auto, yolo` modes. `full, prowlarr-grab` work without.
+- Terminal with Kitty image protocol support — Kitty, Ghostty, or Rio. Required for TUI rendering of movie/TV posters,
+album and book covers.
+- Notifier — Gotify (recommended), Slack, Discord, or ntfy
+- Hardcover API key — book metadata. Strongly recommended, but not strictly required, OpenLibrary fallback available.
+Account sign-up [here](https://hardcover.app/login).  API key [here](https://hardcover.app/account/api).
+
 ## Documentation
 
 See [DOCUMENTATION.md](DOCUMENTATION.md) for commands, configuration reference, architecture, and automation.

@@ -83,6 +83,9 @@ prowlarr:
     audiobooks: 0   # audiobooks
 ```
 
+If `indexer_id` is configured (not 0), wmdl searches preferred indexer first.  If < `show_top_n` (default 10)
+results are obtained from preferred indexer, fallback searches using all indexers will be performed.
+
 ### Download Client
 
 ```yaml
