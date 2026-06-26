@@ -7,7 +7,7 @@ review them in a TUI, then auto-search torrents and add them to your media libra
 manually browsing release calendars and copy-pasting titles into Prowlarr. `wmdl` automates
 the weekly ritual:
 
-![wmdl-review-tui](assets/wmdl-review.png)
+![wmdl-review-tui](assets/wmdl_review_anime.png)
 
 | Media | Scrapers | Library |
 |-------|----------|---------|
@@ -20,7 +20,9 @@ the weekly ritual:
 Compatible with qBittorrent, Transmission, or Deluge. Notifies via Gotify, Slack, Discord,
 ntfy, or generic webhook.
 
-![wmdl-process-tui](assets/wmdl-process.png)
+![wmdl-process-tui](assets/wmdl_process_torrents1.png)
+
+**See more [SCREENSHOTS](SCREENSHOTS.md).**
 
 ## Features
 

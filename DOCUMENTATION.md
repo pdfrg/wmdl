@@ -49,6 +49,11 @@ notifier:
   token: ""
   search_complete_notify: false   # notify when batch search finishes
 ```
+For `process_mode: batch` (default), all Prowlarr searches in run consecutively.
+If you have approved numerous items in `review`, this process can take a long time.  
+Setting `search_complete_nofity: true` allows you to start `process`, walk away, and
+come back to the TUI picker when the notification is received. wmdl makes every effort
+to respect the user's time and attention.
 
 A custom Go template can override the JSON payload via `custom_template` with fields
 `{{.Title}}`, `{{.Message}}`, `{{.Priority}}`.
