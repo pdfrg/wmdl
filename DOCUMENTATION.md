@@ -1,7 +1,5 @@
 # wmdl Documentation
 
-<img src="assets/wmdl-icon.png" alt="wmdl-icon" width="200" align="left" style="margin-right: 20px; margin-top: -20px; margin-bottom: 20px;">
-
 ## Installation
 
 ```bash
@@ -144,18 +142,47 @@ library:
 
 ### Processing Modes
 
-Each media type has a `mode` setting that controls how much wmdl automates:
+Each media type (movies, TV, anime, music, books) has a `mode` setting that controls
+how much wmdl automates across the three pipeline stages: **discover**, **review**,
+and **process**. Modes are independent per media type — you can mix them (e.g.,
+movies=`full`, books=`yolo`).
 
-| Mode | Prowlarr Search | Download | Library Add | TUI Required |
-|------|:---:|:---:|:---:|:---:|
-| `full` | wmdl searches | wmdl downloads | wmdl adds | Yes |
-| `prowlarr-grab` | wmdl searches | Prowlarr routes | wmdl adds | Yes |
-| `arr` | *arr handles | *arr handles | wmdl adds (monitored) | Yes |
-| `auto` | *arr handles | *arr handles | wmdl adds (monitored) | Review only |
-| `yolo` | *arr handles | *arr handles | wmdl adds (monitored) | No |
+#### Mode Reference
 
-In `arr`/`auto`/`yolo` modes, wmdl adds the title to the *arr as monitored with
-a `SearchNow` trigger so the *arr searches on its own schedule.
+| Mode | Prowlarr Search | Release Picker | Download | Library Add | SearchNow | Review TUI | Prompts |
+|------|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
+| **full** | wmdl | shown | wmdl | prompted | no | shown | all interactive |
+| **prowlarr-grab** | wmdl | shown | Prowlarr route | skipped | — | shown | all interactive |
+| **arr** | skipped (*arr) | skipped | skipped (*arr) | auto | yes | shown | library prompts only |
+| **auto** | skipped (*arr) | skipped | skipped (*arr) | auto | yes | shown | all auto-confirmed |
+| **yolo** | skipped (*arr) | skipped | skipped (*arr) | auto | yes | skipped | all auto-confirmed |
+
+**Pipeline stage breakdown:**
+
+- **Discover** — identical for all modes: scrapers run, discovered items stored as `pending`.
+- **Review** — `yolo` items are auto-approved before the TUI opens; all other modes present
+  items in the review TUI for approval or rejection. If *all* items are yolo, the review
+  TUI is skipped entirely.
+- **Process — Searching:** `full` and `prowlarr-grab` search Prowlarr for torrents.
+  `arr`/`auto`/`yolo` skip Prowlarr entirely — the *arr handles searching on its own
+  schedule after wmdl adds the item.
+- **Process — Picker:** `full` and `prowlarr-grab` show the release picker TUI for
+  selecting which torrent to download. `arr`/`auto`/`yolo` skip the picker.
+- **Process — Download:** `full` downloads via your configured download client.
+  `prowlarr-grab` tells Prowlarr to route the download to its configured client.
+  `arr`/`auto`/`yolo` skip download — the *arr handles it.
+- **Process — Library:** `full` prompts you to confirm the *arr add (no SearchNow, so
+  it won't trigger a duplicate search). `prowlarr-grab` does not add to any library.
+  `arr`/`auto`/`yolo` auto-add to the *arr with `SearchNow=true` so the *arr searches
+  and downloads on its own schedule.
+- **Process — Prompts:** `full` and `prowlarr-grab` ask before every action (library add,
+  phase 3, etc.). `arr` prompts only for library adds. `auto` and `yolo` auto-confirm
+  all prompts.
+
+**Note on `process_mode`:** This is a separate, orthogonal setting (`batch` or
+`interactive`) that controls how the release picker presents results — all at once
+vs one at a time. It has no effect in `arr`/`auto`/`yolo` modes since the picker is
+skipped.
 
 ### Quality Scoring
 
@@ -713,12 +740,19 @@ folder (e.g. `"Ebooks"` / `"Audiobooks"`) outside the import path.
 
 #### Modes
 
-| Mode | Prowlarr | LL add | LL search | Download |
-|------|----------|--------|-----------|----------|
-| full | wmdl | `addBook` + `unqueueBook` (Skipped) | No | wmdl |
-| arr | ❌ | `addBook` (Wanted) | Yes (scheduled) | LL |
-| auto | ❌ | auto-yes | Yes | LL |
-| yolo | ❌ | auto-yes | Yes | LL |
+| Mode | Prowlarr | LL Add | LL Search | Download |
+|------|:---:|:---:|:---:|:---:|
+| **full** | wmdl searches | `addBook` + `unqueueBook` (Skipped) | No | wmdl |
+| **prowlarr-grab** | wmdl searches | skipped | No | Prowlarr route |
+| **arr** | skipped | `addBook` (Wanted) | Yes (scheduled) | LL |
+| **auto** | skipped | auto `addBook` (Wanted) | Yes (scheduled) | LL |
+| **yolo** | skipped | auto `addBook` (Wanted) | Yes (scheduled) | LL |
+
+- **Skipped** status (`full` mode): wmdl prevents LL from searching in parallel while
+  wmdl manages the download. An external trigger (qBittorrent completion hook or cron)
+  must call `importAlternate` to tell LL to scan the import folder.
+- **Wanted** status (`arr`/`auto`/`yolo` modes): wmdl marks the book so LL will search
+  for and download it on its own schedule.
 
 #### External Import Trigger
 

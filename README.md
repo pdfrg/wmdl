@@ -1,8 +1,8 @@
-# wmdl
+# wmdl — Weekly Media Discovery & downLoader
 
 [![CI](https://github.com/pdfrg/wmdl/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/pdfrg/wmdl/actions/workflows/ci.yml)
 
-**Weekly Media Downloader** — discover new movies, TV, music, anime, and books each week,
+Discover new movies, TV, music, anime, and books each week,
 review them in a TUI, then auto-search torrents and add them to your media library. Stop
 manually browsing release calendars and copy-pasting titles into Prowlarr. `wmdl` automates
 the weekly ritual:
