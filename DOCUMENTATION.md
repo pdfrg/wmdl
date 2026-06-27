@@ -719,6 +719,7 @@ reason(s) noted:
 | [Listenarr](https://github.com/Listenarrs/Listenarr) | audiobook only |
 | [ReadMeABook](https://github.com/kikootwo/readmeabook) | request-based, audiobook first, ebooks only via "shadow library" |
 | [Bookshelf](https://github.com/pennydreadful/bookshelf) | requires separate instances for ebooks and audiobooks |
+| [Librarry](https://github.com/bandoracer/librarry) | Go-based Readarr replacement, Hardcover-native metadata, active early alpha — most promising long-term candidate |
 
 #### Prerequisites
 
