@@ -2,6 +2,7 @@ package download
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -64,16 +65,19 @@ func (q *QbittorrentClient) login(ctx context.Context) error {
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
+	switch resp.StatusCode {
+	case http.StatusOK:
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return fmt.Errorf("qbittorrent login: reading response: %w", err)
+		}
+		if strings.Contains(string(body), "Fails") {
+			return fmt.Errorf("qbittorrent login failed: invalid credentials")
+		}
+	case http.StatusNoContent:
+		// qBittorrent >= 5.2.0 returns 204 on success
+	default:
 		return fmt.Errorf("qbittorrent login returned %d", resp.StatusCode)
-	}
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return fmt.Errorf("qbittorrent login: reading response: %w", err)
-	}
-	if strings.Contains(string(body), "Fails") {
-		return fmt.Errorf("qbittorrent login failed: invalid credentials")
 	}
 
 	q.mu.Lock()
@@ -102,6 +106,28 @@ func (q *QbittorrentClient) AddTorrent(ctx context.Context, torrentURL string, o
 
 func (q *QbittorrentClient) AddMagnet(ctx context.Context, magnetURI string, opts ...Option) (string, error) {
 	return q.add(ctx, "urls", magnetURI, opts...)
+}
+
+// addResponse is the JSON response from qBittorrent >= 5.2.0 for torrents/add.
+type addResponse struct {
+	AddedTorrentIDs []string `json:"added_torrent_ids"`
+	FailureCount    int      `json:"failure_count"`
+	PendingCount    int      `json:"pending_count"`
+	SuccessCount    int      `json:"success_count"`
+}
+
+// parseAddResponse extracts the first torrent ID from the add response.
+// On qBittorrent >= 5.2.0 the response is JSON; on older versions it's plain text.
+func parseAddResponse(body []byte) string {
+	var r addResponse
+	if err := json.Unmarshal(body, &r); err != nil {
+		// old qBittorrent returns "Ok." — no ID available
+		return ""
+	}
+	if len(r.AddedTorrentIDs) > 0 {
+		return r.AddedTorrentIDs[0]
+	}
+	return ""
 }
 
 func (q *QbittorrentClient) add(ctx context.Context, field, value string, opts ...Option) (string, error) {
@@ -150,13 +176,24 @@ func (q *QbittorrentClient) add(ctx context.Context, field, value string, opts .
 			continue
 		}
 
-		if resp.StatusCode != http.StatusOK {
+		switch resp.StatusCode {
+		case http.StatusOK:
+			body, err := io.ReadAll(resp.Body)
+			if err != nil {
+				return "", fmt.Errorf("qbittorrent add: reading response: %w", err)
+			}
+			// qBittorrent >= 5.2.0 returns JSON; older returns "Ok." text
+			torrentID := parseAddResponse(body)
+			return torrentID, nil
+		case http.StatusAccepted, http.StatusNoContent:
+			// qBittorrent >= 5.2.0 may return 202 (queued) or 204 (success)
+			return "", nil
+		case http.StatusConflict:
+			// qBittorrent >= 5.2.0 returns 409 for duplicates or invalid input
+			return "", fmt.Errorf("qbittorrent add rejected: duplicate or invalid")
+		default:
 			return "", fmt.Errorf("qbittorrent add returned %d", resp.StatusCode)
 		}
-
-		_, _ = io.Copy(io.Discard, resp.Body)
-		break
 	}
-
 	return "", nil
 }
