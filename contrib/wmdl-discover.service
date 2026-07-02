@@ -20,6 +20,6 @@ ExecStart=%h/go/bin/wmdl discover --headless
 # Hardening
 ProtectSystem=strict
 ProtectHome=read-only
-ReadWritePaths=%h/.local/share/wmdl
+ReadWritePaths=%h/.local/share/wmdl %h/.local/state/wmdl
 PrivateTmp=true
 NoNewPrivileges=true
