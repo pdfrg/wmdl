@@ -1348,29 +1348,24 @@ func (d *DB) upsertBook(ctx context.Context, q querier, b *model.Book) (int64, e
 			return 0, fmt.Errorf("checking existing book by isbn: %w", err)
 		}
 		if existing != nil {
-			// Preserve the existing author_id — ISBN identifies the
-			// work, not the author. Different sources may enrich with
-			// different authors for the same ISBN (e.g. duplicate
-			// OpenLibrary records), so we trust the first binding.
-			_, err := q.ExecContext(ctx, `
-				UPDATE books SET
-					title = ?, subtitle = ?, hardcover_id = ?,
-					hardcover_slug = ?, olid = ?, isbn10 = ?, asin = ?,
-					pages = ?, audio_seconds = ?, description = ?,
-					release_date = ?, release_year = ?,
-					rating = ?, ratings_count = ?, shelvings_count = ?, image_url = ?,
-					language = ?, publisher = ?, tags = ?, literary_type = ?,
-					series_id = ?, series_name = ?
-				WHERE id = ?
-			`, b.Title, b.Subtitle, b.HardcoverID,
-				b.HardcoverSlug, b.OLID, b.ISBN10, b.ASIN,
-				b.Pages, b.AudioSeconds, b.Description,
-				b.ReleaseDate, b.ReleaseYear,
-				b.Rating, b.RatingsCount, b.ShelvingsCount, b.ImageURL,
-				b.Language, b.Publisher, b.Tags, b.LiteraryType,
-				b.SeriesID, b.SeriesName, existing.ID)
-			if err != nil {
+			if err := d.updateBookFields(ctx, q, b, existing.ID); err != nil {
 				return 0, fmt.Errorf("updating existing book by isbn: %w", err)
+			}
+			return existing.ID, nil
+		}
+	}
+
+	// When Hardcover ID is known, use it for work-level dedup
+	// (HC ID identifies the work, not the edition — unlike ISBN
+	// which varies across hardcover/paperback/ebook editions).
+	if b.HardcoverID > 0 {
+		existing, err := d.getBookByHardcoverID(ctx, q, b.HardcoverID)
+		if err != nil {
+			return 0, fmt.Errorf("checking existing book by hardcover_id: %w", err)
+		}
+		if existing != nil {
+			if err := d.updateBookFields(ctx, q, b, existing.ID); err != nil {
+				return 0, fmt.Errorf("updating existing book by hardcover_id: %w", err)
 			}
 			return existing.ID, nil
 		}
@@ -1455,6 +1450,56 @@ func (d *DB) getBookByISBN(ctx context.Context, q querier, isbn13 string) (*mode
 
 func (d *DB) GetBookByISBN(ctx context.Context, isbn13 string) (*model.Book, error) {
 	return d.getBookByISBN(ctx, d.db, isbn13)
+}
+
+func (d *DB) getBookByHardcoverID(ctx context.Context, q querier, hcID int) (*model.Book, error) {
+	if hcID <= 0 {
+		return nil, nil
+	}
+	var b model.Book
+	err := q.QueryRowContext(ctx, `
+		SELECT id, author_id, title, subtitle, hardcover_id, hardcover_slug, olid, isbn10, isbn13, asin,
+		       pages, audio_seconds, description, release_date, release_year,
+		       rating, ratings_count, shelvings_count, image_url, language, publisher, tags, literary_type,
+		       series_id, series_name, created_at
+		FROM books WHERE hardcover_id = ?
+	`, hcID).Scan(
+		&b.ID, &b.AuthorID, &b.Title, &b.Subtitle, &b.HardcoverID, &b.HardcoverSlug, &b.OLID,
+		&b.ISBN10, &b.ISBN13, &b.ASIN,
+		&b.Pages, &b.AudioSeconds, &b.Description, &b.ReleaseDate, &b.ReleaseYear,
+		&b.Rating, &b.RatingsCount, &b.ShelvingsCount, &b.ImageURL, &b.Language, &b.Publisher, &b.Tags, &b.LiteraryType,
+		&b.SeriesID, &b.SeriesName, &b.CreatedAt)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("querying book by hardcover_id: %w", err)
+	}
+	return &b, nil
+}
+
+func (d *DB) updateBookFields(ctx context.Context, q querier, b *model.Book, existingID int64) error {
+	_, err := q.ExecContext(ctx, `
+		UPDATE books SET
+			title = ?, subtitle = ?, hardcover_id = ?,
+			hardcover_slug = ?, olid = ?, isbn10 = ?, asin = ?,
+			pages = ?, audio_seconds = ?, description = ?,
+			release_date = ?, release_year = ?,
+			rating = ?, ratings_count = ?, shelvings_count = ?, image_url = ?,
+			language = ?, publisher = ?, tags = ?, literary_type = ?,
+			series_id = ?, series_name = ?
+		WHERE id = ?
+	`, b.Title, b.Subtitle, b.HardcoverID,
+		b.HardcoverSlug, b.OLID, b.ISBN10, b.ASIN,
+		b.Pages, b.AudioSeconds, b.Description,
+		b.ReleaseDate, b.ReleaseYear,
+		b.Rating, b.RatingsCount, b.ShelvingsCount, b.ImageURL,
+		b.Language, b.Publisher, b.Tags, b.LiteraryType,
+		b.SeriesID, b.SeriesName, existingID)
+	if err != nil {
+		return fmt.Errorf("updating book fields: %w", err)
+	}
+	return nil
 }
 
 func (d *DB) CreateBookReleaseEvent(ctx context.Context, e *model.BookReleaseEvent) (int64, error) {
@@ -2486,6 +2531,51 @@ func (d *DB) FindPendingBookEventsByISBN(ctx context.Context) (map[string][]Book
 		}
 		if len(seen) >= 2 {
 			results[isbn] = entries
+		}
+	}
+	return results, nil
+}
+
+// FindPendingBookEventsByHardcoverIDTx returns all pending book release events
+// grouped by hardcover_id, for use in post-scrape deduplication. Only groups
+// with more than one unique book_id are returned.
+func (d *DB) FindPendingBookEventsByHardcoverIDTx(ctx context.Context, tx *sql.Tx) (map[int][]BookISBNEntry, error) {
+	rows, err := tx.QueryContext(ctx, `
+		SELECT b.hardcover_id, b.id, e.id
+		FROM books b
+		JOIN book_release_events e ON e.book_id = b.id
+		WHERE b.hardcover_id > 0 AND e.status = 'pending'
+		ORDER BY b.hardcover_id, b.id, e.id
+	`)
+	if err != nil {
+		return nil, fmt.Errorf("querying pending events by hardcover_id: %w", err)
+	}
+	defer rows.Close()
+
+	raw := make(map[int][]BookISBNEntry)
+	for rows.Next() {
+		var hcID int
+		var bookID, eventID int64
+		if err := rows.Scan(&hcID, &bookID, &eventID); err != nil {
+			return nil, fmt.Errorf("scanning pending event row: %w", err)
+		}
+		raw[hcID] = append(raw[hcID], BookISBNEntry{
+			BookID:  bookID,
+			EventID: eventID,
+		})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	results := make(map[int][]BookISBNEntry)
+	for hcID, entries := range raw {
+		seen := make(map[int64]bool)
+		for _, e := range entries {
+			seen[e.BookID] = true
+		}
+		if len(seen) >= 2 {
+			results[hcID] = entries
 		}
 	}
 	return results, nil

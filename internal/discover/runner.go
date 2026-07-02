@@ -2177,70 +2177,33 @@ func mergeBookItems(a, b *ScrapedItem) {
 // single transaction to prevent TOCTOU races with concurrent discover runs.
 func (r *Runner) deduplicateBookEvents(ctx context.Context) error {
 	return r.db.Transaction(ctx, func(tx *sql.Tx) error {
-		groups, err := r.db.FindPendingBookEventsByISBNTx(ctx, tx)
+		merged := 0
+
+		// Phase 1: ISBN-based dedup
+		isbnGroups, err := r.db.FindPendingBookEventsByISBNTx(ctx, tx)
 		if err != nil {
-			return fmt.Errorf("finding duplicate book events: %w", err)
+			return fmt.Errorf("finding duplicate book events by isbn: %w", err)
 		}
 
-		merged := 0
-		for isbn, entries := range groups {
-			bookEvents := make(map[int64][]int64)
-			bookIDs := make([]int64, 0, len(entries))
-			for _, e := range entries {
-				if _, ok := bookEvents[e.BookID]; !ok {
-					bookIDs = append(bookIDs, e.BookID)
-				}
-				bookEvents[e.BookID] = append(bookEvents[e.BookID], e.EventID)
+		for isbn, entries := range isbnGroups {
+			n := r.mergeBookEventGroup(ctx, tx, entries)
+			merged += n
+			if n > 0 {
+				r.log.Info().Str("isbn", isbn).Int("merged", n).Msg("dedup: merged duplicate books by isbn13")
 			}
-			sort.Slice(bookIDs, func(i, j int) bool { return bookIDs[i] < bookIDs[j] })
-			survivorBookID := bookIDs[0]
+		}
 
-			for _, dupBookID := range bookIDs[1:] {
-				dupEventIDs := bookEvents[dupBookID]
-				survivorEventIDs := bookEvents[survivorBookID]
-				if len(survivorEventIDs) == 0 {
-					continue
-				}
-				survivorEventID := survivorEventIDs[0]
+		// Phase 2: Hardcover ID-based dedup (work-level, catches different editions of same work)
+		hcGroups, err := r.db.FindPendingBookEventsByHardcoverIDTx(ctx, tx)
+		if err != nil {
+			return fmt.Errorf("finding duplicate book events by hardcover_id: %w", err)
+		}
 
-				survivorEvent, err := r.db.GetLatestBookReleaseEventTx(ctx, tx, survivorBookID)
-				if err != nil {
-					r.log.Warn().Err(err).Int64("survivor_event", survivorEventID).Msg("dedup: fetch survivor event failed")
-					continue
-				}
-				if survivorEvent == nil {
-					continue
-				}
-
-				for _, dupEventID := range dupEventIDs {
-					dupEvent, err := r.db.GetLatestBookReleaseEventTx(ctx, tx, dupBookID)
-					if err != nil || dupEvent == nil {
-						continue
-					}
-
-					a := &ScrapedItem{Source: survivorEvent.Source, Notes: survivorEvent.Notes}
-					b := &ScrapedItem{Source: dupEvent.Source, Notes: dupEvent.Notes}
-					mergeBookItems(a, b)
-					survivorEvent.Source = a.Source
-					survivorEvent.Notes = a.Notes
-
-					if err := r.db.DeleteBookReleaseEventTx(ctx, tx, dupEventID); err != nil {
-						r.log.Warn().Err(err).Int64("event", dupEventID).Msg("dedup: delete duplicate event failed")
-					}
-					merged++
-				}
-
-				if err := r.db.UpdateBookReleaseEventSourceAndNotesTx(ctx, tx, survivorEventID, survivorEvent.Source, survivorEvent.Notes); err != nil {
-					r.log.Warn().Err(err).Int64("event", survivorEventID).Msg("dedup: update survivor event failed")
-				}
-
-				if err := r.db.DeleteBookTx(ctx, tx, dupBookID); err != nil {
-					r.log.Warn().Err(err).Int64("book", dupBookID).Msg("dedup: delete duplicate book failed")
-				}
-			}
-
-			if len(bookIDs) > 1 {
-				r.log.Info().Str("isbn", isbn).Int("merged", len(bookIDs)-1).Msg("dedup: merged duplicate books by isbn13")
+		for hcID, entries := range hcGroups {
+			n := r.mergeBookEventGroup(ctx, tx, entries)
+			merged += n
+			if n > 0 {
+				r.log.Info().Int("hardcover_id", hcID).Int("merged", n).Msg("dedup: merged duplicate books by hardcover_id")
 			}
 		}
 
@@ -2249,6 +2212,68 @@ func (r *Runner) deduplicateBookEvents(ctx context.Context) error {
 		}
 		return nil
 	})
+}
+
+func (r *Runner) mergeBookEventGroup(ctx context.Context, tx *sql.Tx, entries []db.BookISBNEntry) int {
+	bookEvents := make(map[int64][]int64)
+	bookIDs := make([]int64, 0, len(entries))
+	for _, e := range entries {
+		if _, ok := bookEvents[e.BookID]; !ok {
+			bookIDs = append(bookIDs, e.BookID)
+		}
+		bookEvents[e.BookID] = append(bookEvents[e.BookID], e.EventID)
+	}
+	if len(bookIDs) < 2 {
+		return 0
+	}
+	sort.Slice(bookIDs, func(i, j int) bool { return bookIDs[i] < bookIDs[j] })
+	survivorBookID := bookIDs[0]
+
+	merged := 0
+	for _, dupBookID := range bookIDs[1:] {
+		dupEventIDs := bookEvents[dupBookID]
+		survivorEventIDs := bookEvents[survivorBookID]
+		if len(survivorEventIDs) == 0 {
+			continue
+		}
+		survivorEventID := survivorEventIDs[0]
+
+		survivorEvent, err := r.db.GetLatestBookReleaseEventTx(ctx, tx, survivorBookID)
+		if err != nil {
+			r.log.Warn().Err(err).Int64("survivor_event", survivorEventID).Msg("dedup: fetch survivor event failed")
+			continue
+		}
+		if survivorEvent == nil {
+			continue
+		}
+
+		for _, dupEventID := range dupEventIDs {
+			dupEvent, err := r.db.GetLatestBookReleaseEventTx(ctx, tx, dupBookID)
+			if err != nil || dupEvent == nil {
+				continue
+			}
+
+			a := &ScrapedItem{Source: survivorEvent.Source, Notes: survivorEvent.Notes}
+			b := &ScrapedItem{Source: dupEvent.Source, Notes: dupEvent.Notes}
+			mergeBookItems(a, b)
+			survivorEvent.Source = a.Source
+			survivorEvent.Notes = a.Notes
+
+			if err := r.db.DeleteBookReleaseEventTx(ctx, tx, dupEventID); err != nil {
+				r.log.Warn().Err(err).Int64("event", dupEventID).Msg("dedup: delete duplicate event failed")
+			}
+			merged++
+		}
+
+		if err := r.db.UpdateBookReleaseEventSourceAndNotesTx(ctx, tx, survivorEventID, survivorEvent.Source, survivorEvent.Notes); err != nil {
+			r.log.Warn().Err(err).Int64("event", survivorEventID).Msg("dedup: update survivor event failed")
+		}
+
+		if err := r.db.DeleteBookTx(ctx, tx, dupBookID); err != nil {
+			r.log.Warn().Err(err).Int64("book", dupBookID).Msg("dedup: delete duplicate book failed")
+		}
+	}
+	return merged
 }
 
 // isUpgrade checks if a new release type is an upgrade over a previous download's source type.
