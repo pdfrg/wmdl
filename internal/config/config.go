@@ -22,6 +22,7 @@ type Config struct {
 	Library          LibraryConfig    `mapstructure:"library"`
 	Quality          QualityConfig    `mapstructure:"quality"`
 	MediaTypes       MediaTypesConfig `mapstructure:"media_types"`
+	Hooks            HooksConfig      `mapstructure:"hooks"`
 	ShowTopN         int              `mapstructure:"show_top_n"`
 	MinSeeders       int              `mapstructure:"min_seeders"`
 	PreferredGroups  []string         `mapstructure:"preferred_release_groups"`
@@ -29,6 +30,11 @@ type Config struct {
 	ProcessMode      string           `mapstructure:"process_mode"`
 	CheckCollections bool             `mapstructure:"check_collections"`
 	CacheTTLHours    int              `mapstructure:"cache_ttl_hours"`
+}
+
+type HooksConfig struct {
+	PreDiscover  string `mapstructure:"pre_discover"`
+	PostDiscover string `mapstructure:"post_discover"`
 }
 
 type LogConfig struct {
@@ -551,6 +557,9 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("library.lidarr.monitor", "all")
 	v.SetDefault("library.lazylibrarian.timeout", 120)
 	v.SetDefault("library.book_backend", "lazylibrarian")
+
+	v.SetDefault("hooks.pre_discover", "")
+	v.SetDefault("hooks.post_discover", "")
 
 	v.SetDefault("media_types.physical_lookback_weeks", 0)
 	v.SetDefault("media_types.movies.enabled", true)

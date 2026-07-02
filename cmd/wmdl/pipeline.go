@@ -13,6 +13,7 @@ import (
 	"github.com/pdfrg/wmdl/internal/config"
 	"github.com/pdfrg/wmdl/internal/db"
 	"github.com/pdfrg/wmdl/internal/discover"
+	"github.com/pdfrg/wmdl/internal/hook"
 	"github.com/pdfrg/wmdl/internal/model"
 	"github.com/pdfrg/wmdl/internal/notifier"
 	"github.com/pdfrg/wmdl/internal/process"
@@ -21,6 +22,11 @@ import (
 )
 
 func runDiscoverForWeek(ctx context.Context, database *db.DB, cfg *config.Config, year, week int, headless bool, typeFilter model.MediaType, lookbackOverrides discover.LookbackOverrides) (discovered bool, err error) {
+	if err := hook.Run(ctx, cfg.Hooks.PreDiscover); err != nil {
+		return false, fmt.Errorf("pre-discover hook: %w", err)
+	}
+	defer hook.RunDeferred(ctx, cfg.Hooks.PostDiscover, "post-discover")
+
 	ws, err := database.GetWeekState(ctx, year, week)
 	if err != nil {
 		return false, fmt.Errorf("checking week state: %w", err)

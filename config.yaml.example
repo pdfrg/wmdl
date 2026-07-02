@@ -50,6 +50,39 @@ tmdb:
   api_key: ""
   access_token: ""
 
+# ─── Hooks (optional) ─────────────────────────────────────
+# Shell commands run before/after `wmdl discover`. Useful to free
+# bandwidth during scraping. The pre-hook must exit 0 or discover
+# is aborted; the post-hook runs even on failure (warning only).
+#
+# ── Docker (pause container, no API needed) ──
+# hooks:
+#   pre_discover: "docker pause qbittorrent"
+#   post_discover: "docker unpause qbittorrent"
+#
+# ── qBittorrent speed limits ──
+# hooks:
+#   pre_discover: "curl -s -X POST http://localhost:8080/api/v2/transfer/setSpeedLimitsMode -d 'mode=1'"
+#   post_discover: "curl -s -X POST http://localhost:8080/api/v2/transfer/setSpeedLimitsMode -d 'mode=0'"
+#
+# ── Transmission speed limits ──
+# hooks:
+#   pre_discover: "curl -s -X POST http://localhost:9091/transmission/rpc -H 'X-Transmission-Session-Id: ...' -d '{\"method\":\"session-set\",\"arguments\":{\"speed-limit-down-enabled\":true}}'"
+#   post_discover: "curl -s -X POST http://localhost:9091/transmission/rpc -H 'X-Transmission-Session-Id: ...' -d '{\"method\":\"session-set\",\"arguments\":{\"speed-limit-down-enabled\":false}}'"
+#
+# ── Downloader on a LAN server (via SSH) ──
+# hooks:
+#   pre_discover: "ssh nas 'docker pause qbittorrent'"
+#   post_discover: "ssh nas 'docker unpause qbittorrent'"
+#
+# ── Custom script ──
+# hooks:
+#   pre_discover: "/home/mds/scripts/pre-discover.sh"
+#   post_discover: "/home/mds/scripts/post-discover.sh"
+# hooks:
+#   pre_discover: ""
+#   post_discover: ""
+
 # ─── Download Client ───────────────────────────────────────
 downloader:
   type: "qbittorrent"  # qbittorrent, transmission, deluge
