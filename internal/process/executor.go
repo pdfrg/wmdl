@@ -1266,6 +1266,42 @@ func (e *Executor) ComputePhase3Candidates(ctx context.Context, events []db.Even
 				continue
 			}
 			if existing == nil || existing.Collection == nil || existing.Collection.TMDBID == 0 {
+				// Phase 3 Stage 2: check local TMDB collection cache for movies not yet in Radarr
+				if ev.Title.CollectionID > 0 {
+					allMovies, err := e.radarr.GetAllMovies(ctx)
+					if err == nil {
+						movieByTMDB := make(map[int]library.RadarrMovie, len(allMovies))
+						for _, m := range allMovies {
+							movieByTMDB[m.TMDBID] = m
+						}
+						if c, cErr := e.db.GetLibraryCache(ctx, "tmdb-collection", strconv.Itoa(ev.Title.CollectionID)); cErr == nil && c != nil {
+							var data struct {
+								Name   string `json:"name"`
+								Movies []struct {
+									TmdbID int    `json:"tmdb_id"`
+									Title  string `json:"title"`
+									Year   int    `json:"year"`
+								} `json:"movies"`
+							}
+							if json.Unmarshal([]byte(c.Details), &data) == nil {
+								for _, m := range data.Movies {
+									if m.TmdbID == tmdbID {
+										continue
+									}
+									if ex, ok := movieByTMDB[m.TmdbID]; ok && ex.HasFile {
+										continue
+									}
+									candidates = append(candidates, Phase3Candidate{
+										Title:     m.Title,
+										Year:      m.Year,
+										MediaType: model.MediaTypeMovie,
+										TmdbID:    m.TmdbID,
+									})
+								}
+							}
+						}
+					}
+				}
 				continue
 			}
 
@@ -2761,7 +2797,9 @@ func (e *Executor) checkCollectionGaps(ctx context.Context, tmdbID int, colTMDBI
 			continue
 		}
 		var missing []library.RadarrMovie
+		seen := make(map[int]bool)
 		for _, m := range col.Movies {
+			seen[m.TMDBID] = true
 			if m.TMDBID == tmdbID {
 				continue
 			}
@@ -2773,6 +2811,36 @@ func (e *Executor) checkCollectionGaps(ctx context.Context, tmdbID int, colTMDBI
 				continue
 			}
 			missing = append(missing, m)
+		}
+
+		// Supplement from local TMDB cache in case Radarr hasn't synced all collection members yet
+		if c, cErr := e.db.GetLibraryCache(ctx, "tmdb-collection", strconv.Itoa(colTMDBID)); cErr == nil && c != nil {
+			var data struct {
+				Name   string `json:"name"`
+				Movies []struct {
+					TmdbID int    `json:"tmdb_id"`
+					Title  string `json:"title"`
+					Year   int    `json:"year"`
+				} `json:"movies"`
+			}
+			if json.Unmarshal([]byte(c.Details), &data) == nil {
+				for _, cm := range data.Movies {
+					if seen[cm.TmdbID] {
+						continue
+					}
+					if cm.TmdbID == tmdbID {
+						continue
+					}
+					if ex, ok := movieByTMDB[cm.TmdbID]; ok && ex.HasFile {
+						continue
+					}
+					missing = append(missing, library.RadarrMovie{
+						TMDBID: cm.TmdbID,
+						Title:  cm.Title,
+						Year:   cm.Year,
+					})
+				}
+			}
 		}
 		if len(missing) == 0 {
 			e.log.Info().Str("collection", col.Name).Msg("no missing movies in collection")
