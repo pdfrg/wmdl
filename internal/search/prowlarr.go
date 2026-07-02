@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -152,7 +153,8 @@ func (p *ProwlarrClient) Search(ctx context.Context, params SearchParams) ([]qua
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("prowlarr returned %d", resp.StatusCode)
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+		return nil, fmt.Errorf("prowlarr returned %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 
 	var results []prowlarrRelease

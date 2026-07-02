@@ -2156,7 +2156,8 @@ func (e *Executor) searchRelease(ctx context.Context, title *model.Title, stripp
 					Categories: cats,
 				})
 				if err != nil {
-					return nil, err
+					e.log.Warn().Err(err).Str("query", q).Msg("preferred indexer search failed")
+					break
 				}
 				exact, fuzzy := quality.PartitionReleases(results, sanitized, title.Year, season, string(title.MediaType))
 				exactPool = mergeReleases(exactPool, exact)
@@ -2182,7 +2183,8 @@ func (e *Executor) searchRelease(ctx context.Context, title *model.Title, stripp
 				Categories: cats,
 			})
 			if err != nil {
-				return nil, err
+				e.log.Warn().Err(err).Str("query", q).Msg("prowlarr search failed")
+				continue
 			}
 			exact, fuzzy := quality.PartitionReleases(results, sanitized, title.Year, season, string(title.MediaType))
 			exactPool = mergeReleases(exactPool, exact)
@@ -2959,7 +2961,8 @@ func (e *Executor) searchMusicRelease(ctx context.Context, artist, album string,
 				Categories: []int{search.CatMusic},
 			})
 			if err != nil {
-				return nil, err
+				e.log.Warn().Err(err).Str("query", q).Msg("preferred indexer search failed")
+				break
 			}
 			exact, fuzzy := quality.PartitionMusicReleases(results, artist, album)
 			exactPool = mergeReleases(exactPool, exact)
@@ -2977,7 +2980,8 @@ func (e *Executor) searchMusicRelease(ctx context.Context, artist, album string,
 		e.log.Info().Msgf("[%d/%d] searching all: %s", i+1, numTiers, q)
 		results, err := e.prowl.SearchMusic(ctx, q)
 		if err != nil {
-			return nil, err
+			e.log.Warn().Err(err).Str("query", q).Msg("prowlarr music search failed")
+			continue
 		}
 		exact, fuzzy := quality.PartitionMusicReleases(results, artist, album)
 		exactPool = mergeReleases(exactPool, exact)
