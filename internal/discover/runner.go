@@ -1016,9 +1016,116 @@ func (r *Runner) Run(ctx context.Context) error {
 		r.log.Warn().Err(err).Msg("library cache failed (will be fetched during process)")
 	}
 
-	// Send notification (up to 5 items, from all media types)
+	// Send notification with per-source breakdown and all titles
 	if r.notify != nil && totalEvents > 0 {
-		msg := fmt.Sprintf("**%d new release%s** ready for review:\n", totalEvents, map[bool]string{true: "s", false: ""}[totalEvents != 1])
+		msg := fmt.Sprintf("**%d new release%s** ready for review:\n",
+			totalEvents, map[bool]string{true: "s", false: ""}[totalEvents != 1])
+
+		// Build per-source counts from allItems (pre-dedup — scraper health)
+		sourceCounts := make(map[string]int)
+		sourceNotes := make(map[string]string)
+		for _, item := range allItems {
+			label := sourceDisplayName(item.Source, item.MediaType)
+			sourceCounts[label]++
+		}
+
+		// Add expected-but-zero entries for configured scrapers
+		if wantMovie && r.cfg.MediaTypes.Movies.Enabled {
+			for _, s := range r.cfg.MediaTypes.Movies.Scrapers {
+				switch s {
+				case "tmdb-discover":
+					if _, ok := sourceCounts["tmdb movies"]; !ok {
+						sourceCounts["tmdb movies"] = 0
+					}
+				case "flixpatrol":
+					if _, ok := sourceCounts["flixpatrol movies"]; !ok {
+						sourceCounts["flixpatrol movies"] = 0
+					}
+				default:
+					label := sourceDisplayName(s, model.MediaTypeMovie)
+					if _, ok := sourceCounts[label]; !ok {
+						sourceCounts[label] = 0
+					}
+				}
+			}
+		}
+		if wantTV && r.cfg.MediaTypes.TV.Enabled {
+			for _, s := range r.cfg.MediaTypes.TV.Scrapers {
+				switch s {
+				case "tmdb-discover":
+					if _, ok := sourceCounts["tmdb tv"]; !ok {
+						sourceCounts["tmdb tv"] = 0
+					}
+				case "flixpatrol":
+					if _, ok := sourceCounts["flixpatrol tv"]; !ok {
+						sourceCounts["flixpatrol tv"] = 0
+					}
+				default:
+					label := sourceDisplayName(s, model.MediaTypeTV)
+					if _, ok := sourceCounts[label]; !ok {
+						sourceCounts[label] = 0
+					}
+				}
+			}
+		}
+
+		if wantAnime && r.cfg.MediaTypes.Anime.Enabled {
+			if _, ok := sourceCounts["jikan (completed)"]; !ok {
+				sourceCounts["jikan (completed)"] = 0
+			}
+			if r.cfg.MediaTypes.Anime.PhaseBEnabled {
+				if _, ok := sourceCounts["jikan (airing)"]; !ok {
+					sourceCounts["jikan (airing)"] = 0
+				}
+			}
+		}
+
+		if wantMusic && r.cfg.MediaTypes.Music.Enabled {
+			for _, s := range r.cfg.MediaTypes.Music.Scrapers {
+				label := sourceDisplayName(s, model.MediaTypeMusic)
+				if _, ok := sourceCounts[label]; !ok {
+					sourceCounts[label] = 0
+				}
+				if s == "allmusic" && sourceCounts[label] == 0 {
+					checkYear, checkWeek := r.targetYear, r.targetWeek
+					if !r.hasTargetWeek {
+						checkYear, checkWeek = time.Now().ISOWeek()
+					}
+					weekStart, weekEnd := wmdlWeekRange(checkYear, checkWeek)
+					scrapeMonth, _ := computeAllMusicTarget(weekStart, weekEnd)
+					if scrapeMonth == 0 {
+						sourceNotes[label] = "not a boundary week"
+					}
+				}
+			}
+		}
+
+		if wantBooks && r.cfg.MediaTypes.Books.Enabled {
+			for _, s := range r.cfg.MediaTypes.Books.Scrapers {
+				label := sourceDisplayName(s, model.MediaTypeBook)
+				if _, ok := sourceCounts[label]; !ok {
+					sourceCounts[label] = 0
+				}
+			}
+		}
+
+		// Sort labels for consistent ordering
+		labels := make([]string, 0, len(sourceCounts))
+		for l := range sourceCounts {
+			labels = append(labels, l)
+		}
+		sort.Strings(labels)
+
+		// Add per-source lines
+		for _, l := range labels {
+			if note, ok := sourceNotes[l]; ok {
+				msg += fmt.Sprintf("\n\t%s: %d (%s)", l, sourceCounts[l], note)
+			} else {
+				msg += fmt.Sprintf("\n\t%s: %d", l, sourceCounts[l])
+			}
+		}
+
+		// Build title list from dedup'd items
 		type namedItem struct {
 			title string
 			year  int
@@ -1036,19 +1143,16 @@ func (r *Runner) Run(ctx context.Context) error {
 		for _, item := range bookItems {
 			notifyItems = append(notifyItems, namedItem{item.ArtistName + " — " + item.Title, item.Year})
 		}
-		count := 0
+
+		// Show all titles (no cap)
 		for _, item := range notifyItems {
-			if count >= 5 {
-				msg += fmt.Sprintf("\n+ %d more", totalEvents-count)
-				break
-			}
 			if item.year > 0 {
 				msg += fmt.Sprintf("\n- %s (%d)", item.title, item.year)
 			} else {
 				msg += fmt.Sprintf("\n- %s", item.title)
 			}
-			count++
 		}
+
 		if err := r.notify.Send("wmdl: New Releases", msg, 5); err != nil {
 			r.log.Warn().Err(err).Msg("notification failed")
 		}
@@ -1079,6 +1183,24 @@ func programWeekFromItems(items []ScrapedItem) (int, int) {
 		return t.ISOWeek()
 	}
 	return time.Now().ISOWeek()
+}
+
+// sourceDisplayName returns the human-readable label for a scraper source + media type pair.
+func sourceDisplayName(source string, mt model.MediaType) string {
+	switch source {
+	case "tmdb-discover":
+		return "tmdb " + string(mt)
+	case "flixpatrol":
+		return "flixpatrol " + string(mt)
+	case "goodreads_blog":
+		return "goodreads blog"
+	case "jikan":
+		return "jikan (completed)"
+	case "jikan-airing":
+		return "jikan (airing)"
+	default:
+		return source
+	}
 }
 
 func (r *Runner) processItem(ctx context.Context, item ScrapedItem, progYear, progWeek int) error {
