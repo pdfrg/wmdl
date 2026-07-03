@@ -30,6 +30,7 @@ type Config struct {
 	ProcessMode      string           `mapstructure:"process_mode"`
 	CheckCollections bool             `mapstructure:"check_collections"`
 	CacheTTLHours    int              `mapstructure:"cache_ttl_hours"`
+	IncludeBacklog   bool             `mapstructure:"include_backlog"`
 }
 
 type HooksConfig struct {
@@ -531,6 +532,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("process_mode", "batch")
 	v.SetDefault("check_collections", true)
 	v.SetDefault("cache_ttl_hours", 48)
+	v.SetDefault("include_backlog", false)
 	v.SetDefault("log.level", "info")
 
 	v.SetDefault("quality.movies.resolution", "2160p")

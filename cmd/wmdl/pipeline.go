@@ -306,7 +306,7 @@ func runReviewForWeek(ctx context.Context, database *db.DB, cfg *config.Config, 
 	return approved, nil
 }
 
-func runProcessForWeek(ctx context.Context, database *db.DB, cfg *config.Config, year, week int, typeFilter model.MediaType) error {
+func runProcessForWeek(ctx context.Context, database *db.DB, cfg *config.Config, year, week int, typeFilter model.MediaType, backlog bool) error {
 	var target *model.WeekState
 	var err error
 
@@ -348,6 +348,10 @@ func runProcessForWeek(ctx context.Context, database *db.DB, cfg *config.Config,
 		} else {
 			return fmt.Errorf("week %d-W%02d has not been fully reviewed — run 'wmdl review' first", year, week)
 		}
+	}
+
+	if backlog {
+		log.Info().Msgf("backlog: processing week %d-W%02d", year, week)
 	}
 
 	allEvents, err := database.ListEventsByWeekWithTitles(ctx, year, week)
@@ -408,6 +412,9 @@ func runProcessForWeek(ctx context.Context, database *db.DB, cfg *config.Config,
 
 	case len(downloaded) > 0 && len(pending) == 0:
 		log.Info().Msgf("All %d releases for %d-W%02d already downloaded.", len(downloaded), year, week)
+		if backlog {
+			return nil
+		}
 		if modes["yolo"] {
 			log.Info().Msg("yolo mode: re-processing all")
 		} else if !promptYesNo(ctx, "Continue anyway (re-process all)?") {
@@ -417,25 +424,30 @@ func runProcessForWeek(ctx context.Context, database *db.DB, cfg *config.Config,
 
 	case len(downloaded) > 0 && len(pending) > 0:
 		log.Info().Msgf("%d/%d releases already downloaded for %d-W%02d.", len(downloaded), len(pending)+len(downloaded), year, week)
-		for {
-			log.Info().Msg("[a] re-process all  [u] only not-yet-downloaded  [q] quit")
-			fmt.Fprintf(os.Stderr, "Choose: ")
-			var choice string
-			if _, err := fmt.Scanln(&choice); err != nil {
-				return nil
+		if backlog {
+			log.Info().Msg("backlog: processing only not-yet-downloaded items")
+			events = pending
+		} else {
+			for {
+				log.Info().Msg("[a] re-process all  [u] only not-yet-downloaded  [q] quit")
+				fmt.Fprintf(os.Stderr, "Choose: ")
+				var choice string
+				if _, err := fmt.Scanln(&choice); err != nil {
+					return nil
+				}
+				switch choice {
+				case "a":
+					events = append(pending, downloaded...)
+				case "u":
+					events = pending
+				case "q":
+					return nil
+				default:
+					log.Info().Msg("Invalid choice.")
+					continue
+				}
+				break
 			}
-			switch choice {
-			case "a":
-				events = append(pending, downloaded...)
-			case "u":
-				events = pending
-			case "q":
-				return nil
-			default:
-				log.Info().Msg("Invalid choice.")
-				continue
-			}
-			break
 		}
 
 	default:

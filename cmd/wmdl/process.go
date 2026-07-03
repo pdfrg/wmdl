@@ -62,6 +62,11 @@ and send it to the download client.`,
 
 			ctx := cmd.Context()
 
+			backlog, _ := cmd.Flags().GetBool("backlog")
+			if backlog {
+				return runBacklog(ctx, database, cfg, typeFilter)
+			}
+
 			var targetYear, targetWeek int
 
 			if cmd.Flags().Changed("week") {
@@ -107,10 +112,19 @@ and send it to the download client.`,
 				}
 			}
 
-			return runProcessForWeek(ctx, database, cfg, targetYear, targetWeek, typeFilter)
+			if err := runProcessForWeek(ctx, database, cfg, targetYear, targetWeek, typeFilter, false); err != nil {
+				return err
+			}
+
+			if cfg.IncludeBacklog && !cmd.Flags().Changed("week") {
+				return runBacklog(ctx, database, cfg, typeFilter)
+			}
+
+			return nil
 		},
 	}
 	addWeekFlag(cmd)
+	cmd.Flags().Bool("backlog", false, "Process remaining items from all processed weeks")
 	cmd.Flags().String("type", "", "Media type to process (anime, movie, tv, music, book)")
 	cmd.Flags().Bool("refresh-cache", false, "Force re-fetch of library cache from *arr services")
 	return cmd
@@ -130,4 +144,42 @@ func promptYesNo(ctx context.Context, prompt string) bool {
 	case <-ctx.Done():
 		return false
 	}
+}
+
+func runBacklog(ctx context.Context, database *db.DB, cfg *config.Config, typeFilter model.MediaType) error {
+	states, err := database.GetWeekStates(ctx, 0)
+	if err != nil {
+		return fmt.Errorf("loading week states: %w", err)
+	}
+
+	var backlogWeeks []*model.WeekState
+	for _, s := range states {
+		if !s.Processed {
+			continue
+		}
+		dl, app, err := database.GetWeekProcessCounts(ctx, s.Year, s.Week)
+		if err != nil {
+			log.Warn().Err(err).Msgf("getting process counts for %d-W%02d", s.Year, s.Week)
+			continue
+		}
+		if app > 0 && dl < app {
+			s.DownloadedCount = dl
+			s.ApprovedCount = app
+			backlogWeeks = append(backlogWeeks, s)
+		}
+	}
+
+	if len(backlogWeeks) == 0 {
+		log.Info().Msg("No backlog weeks to process.")
+		return nil
+	}
+
+	for _, s := range backlogWeeks {
+		log.Info().Msgf("backlog: processing %d-W%02d (%d items remaining)", s.Year, s.Week, s.ApprovedCount-s.DownloadedCount)
+		if err := runProcessForWeek(ctx, database, cfg, s.Year, s.Week, typeFilter, true); err != nil {
+			log.Warn().Err(err).Msgf("backlog: week %d-W%02d failed", s.Year, s.Week)
+		}
+	}
+
+	return nil
 }

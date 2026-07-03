@@ -268,6 +268,7 @@ poster_mode: "auto"               # auto, kitty, text, off
 process_mode: "batch"             # batch or interactive
 check_collections: true           # Phase 3 collection gap checking
 cache_ttl_hours: 48               # *arr library cache lifetime
+include_backlog: false            # after 'process', retry previously-unfound items from past weeks
 ```
 
 ## Commands
@@ -355,6 +356,7 @@ download client and added to your library manager.
 wmdl process                         # all pending approved items
 wmdl process --type tv               # TV only
 wmdl process --refresh-cache         # force re-fetch *arr library caches
+wmdl process --backlog               # retry previously-unfound items from all processed weeks
 ```
 
 Two display modes (configurable via `process_mode`):
@@ -369,6 +371,12 @@ Two display modes (configurable via `process_mode`):
 
 **Skip handling:** If you skip a Prowlarr result, wmdl offers to add the item
 to the *arr as monitored so it can search on its own schedule.
+
+**Backlog retry:** Items that had no matching releases during a prior `wmdl process`
+remain as "remaining items" (`wmdl status -v`). Retry them across all processed weeks:
+- `wmdl process --backlog` — one-shot retry for all weeks with remaining items
+- Set `include_backlog: true` in config to automatically retry backlog weeks after
+  every normal `wmdl process` (skipped when `--week` is explicitly specified)
 
 ### `wmdl search`
 

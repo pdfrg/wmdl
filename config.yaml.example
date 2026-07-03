@@ -287,3 +287,4 @@ process_mode: "batch"       # batch — search all items before TUI (recommended
                             # interactive — search each item just-in-time
 check_collections: true     # check Radarr collections for gap movies (Phase 3)
 cache_ttl_hours: 48         # how long *arr/ABS library caches live in DB
+include_backlog: false      # when running process, also retry previously-unfound items

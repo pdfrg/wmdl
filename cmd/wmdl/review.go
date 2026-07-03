@@ -77,7 +77,7 @@ func newReviewCmd() *cobra.Command {
 			if approved > 0 && term.IsTerminal(int(os.Stdin.Fd())) {
 				fmt.Fprintln(os.Stderr)
 				if promptYesNo(cmd.Context(), "Process this week now?") {
-					return runProcessForWeek(cmd.Context(), database, cfg, targetYear, targetWeek, "")
+					return runProcessForWeek(cmd.Context(), database, cfg, targetYear, targetWeek, "", false)
 				}
 			}
 
