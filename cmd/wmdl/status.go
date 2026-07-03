@@ -143,7 +143,7 @@ Use --verbose to list items that were approved but not yet downloaded.`,
 					}
 				}
 
-				fmt.Fprintf(os.Stderr, "\nRun the command(s) above to search and download remaining items.\n")
+				fmt.Fprintf(os.Stderr, "\nRun the command(s) above to search and download remaining items,\nor run \"wmdl process --backlog\" to retry all weeks at once.\n")
 			}
 
 			if len(todo) == 0 && len(remaining) == 0 {
