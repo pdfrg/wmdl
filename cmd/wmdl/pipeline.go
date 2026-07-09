@@ -22,9 +22,7 @@ import (
 )
 
 func runDiscoverForWeek(ctx context.Context, database *db.DB, cfg *config.Config, year, week int, headless bool, typeFilter model.MediaType, lookbackOverrides discover.LookbackOverrides) (discovered bool, err error) {
-	if err := hook.Run(ctx, cfg.Hooks.PreDiscover); err != nil {
-		return false, fmt.Errorf("pre-discover hook: %w", err)
-	}
+	hook.RunSoft(ctx, cfg.Hooks.PreDiscover, "pre-discover")
 	defer hook.RunDeferred(ctx, cfg.Hooks.PostDiscover, "post-discover")
 
 	ws, err := database.GetWeekState(ctx, year, week)

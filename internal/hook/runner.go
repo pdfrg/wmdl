@@ -28,6 +28,17 @@ func Run(ctx context.Context, cmd string) error {
 	return nil
 }
 
+func RunSoft(ctx context.Context, cmd, label string) {
+	if cmd == "" {
+		return
+	}
+	if err := Run(ctx, cmd); err != nil {
+		log.Warn().Err(err).Str("hook", label).Msg("hook failed (continuing)")
+	} else {
+		log.Debug().Str("hook", label).Msg("hook completed")
+	}
+}
+
 func RunDeferred(ctx context.Context, cmd, label string) {
 	if cmd == "" {
 		return
