@@ -17,9 +17,5 @@ Wants=network-online.target
 Type=oneshot
 ExecStart=%h/go/bin/wmdl discover --headless
 
-# Hardening
-ProtectSystem=strict
-ProtectHome=read-only
-ReadWritePaths=%h/.local/share/wmdl %h/.local/state/wmdl
-PrivateTmp=true
-NoNewPrivileges=true
+# Hardening (minimal — user namespacing from ProtectSystem/ReadWritePaths
+# breaks SSH config file permission checks for hooks that use SSH)
