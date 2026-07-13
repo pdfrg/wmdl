@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/rs/zerolog/log"
 	"github.com/spf13/cobra"
@@ -151,6 +152,8 @@ func promptYesNo(ctx context.Context, prompt string) bool {
 }
 
 func runBacklogBatch(ctx context.Context, database *db.DB, cfg *config.Config, typeFilter model.MediaType, skipYear, skipWeek int) error {
+	startTime := time.Now()
+
 	states, err := database.GetWeekStates(ctx, 0)
 	if err != nil {
 		return fmt.Errorf("loading week states: %w", err)
@@ -283,6 +286,27 @@ func runBacklogBatch(ctx context.Context, database *db.DB, cfg *config.Config, t
 		return nil
 	}
 
+	videoCount := len(allEvents) + len(allAnimeAiring)
+	musicCount := len(allAlbumEvents)
+	bookCount := len(allBookEvents)
+	totalToSearch := videoCount + musicCount + bookCount
+	fmt.Fprintf(os.Stderr, "\n── Backlog Plan ──\n")
+	fmt.Fprintf(os.Stderr, "  %d weeks · %d items", len(weeks), totalToSearch)
+	var typeParts []string
+	if videoCount > 0 {
+		typeParts = append(typeParts, fmt.Sprintf("%d video", videoCount))
+	}
+	if musicCount > 0 {
+		typeParts = append(typeParts, fmt.Sprintf("%d music", musicCount))
+	}
+	if bookCount > 0 {
+		typeParts = append(typeParts, fmt.Sprintf("%d books", bookCount))
+	}
+	if len(typeParts) > 0 {
+		fmt.Fprintf(os.Stderr, " (%s)", strings.Join(typeParts, " · "))
+	}
+	fmt.Fprintln(os.Stderr)
+
 	// ─── Health check (single pass, shared across all weeks) ──
 	health := exec.HealthCheck(ctx, needsProwlarr, needsDownloader, needsLibrary)
 	skipLibrary := !needsLibrary
@@ -400,12 +424,13 @@ func runBacklogBatch(ctx context.Context, database *db.DB, cfg *config.Config, t
 	}
 
 	// ─── Batch search phase (all weeks at once) ───────────────
-	fmt.Fprintf(os.Stderr, "\n── Batch search phase (all weeks) ──\n")
+	fmt.Fprintf(os.Stderr, "\n── Batch search phase ──\n")
 
 	var primaryVideoResults []*process.SearchResult
 	var musicResults []*process.MusicSearchResult
 	var bookResults []*process.BookSearchResult
 
+	searched := 0
 	if cfg.ProcessMode == "batch" || cfg.ProcessMode == "" {
 		var phase3Candidates []process.Phase3Candidate
 		if needsLibrary && (hasSearchable || hasAnimeAiring) {
@@ -437,32 +462,54 @@ func runBacklogBatch(ctx context.Context, database *db.DB, cfg *config.Config, t
 				searchEvents = append(searchEvents, ev)
 			}
 		}
-		if len(searchEvents) > 0 {
-			log.Info().Msgf("Searching %d movie/TV release(s)...", len(searchEvents))
-			primaryVideoResults = exec.SearchAll(ctx, searchEvents)
-		}
-		if len(phase3Candidates) > 0 {
-			exec.SearchAllCandidates(ctx, phase3Candidates)
-		}
-		if hasAlbums {
-			musicResults = exec.SearchMusicAll(ctx, allAlbumEvents)
-		}
-		if hasBooks {
-			bm := cfg.MediaTypeMode(model.MediaTypeBook)
-			if bm != "arr" && bm != "auto" && bm != "yolo" {
-				bookResults = exec.SearchBooksAll(ctx, allBookEvents)
-			}
-		}
+
+		bookPhase3Count := 0
 		if hasBooks && exec.BookClientAvailable() && exec.HCClientAvailable() {
 			bm := cfg.MediaTypeMode(model.MediaTypeBook)
 			if bm == "full" || bm == "prowlarr-grab" {
 				exec.ComputeBookPhase3Candidates(ctx, allBookEvents)
-				if len(exec.BookPhase3SearchPhase) > 0 {
-					log.Info().Int("count", len(exec.BookPhase3SearchPhase)).Msg("book phase 3 candidates to pick")
-				}
+				bookPhase3Count = len(exec.BookPhase3SearchPhase)
 			}
 		}
-		fmt.Fprintf(os.Stderr, "  All searches complete. Starting picker phase...\n")
+
+		totalToSearch := len(searchEvents) + len(phase3Candidates) + len(allAlbumEvents)
+		if hasBooks {
+			bm := cfg.MediaTypeMode(model.MediaTypeBook)
+			if bm != "arr" && bm != "auto" && bm != "yolo" {
+				totalToSearch += len(allBookEvents)
+			}
+		}
+		totalToSearch += bookPhase3Count
+		fmt.Fprintf(os.Stderr, "  Searching %d item(s) across all weeks...\n", totalToSearch)
+
+		if len(searchEvents) > 0 {
+			log.Info().Msgf("Searching %d movie/TV release(s)...", len(searchEvents))
+			primaryVideoResults = exec.SearchAll(ctx, searchEvents)
+			searched += len(searchEvents)
+		}
+		if len(phase3Candidates) > 0 {
+			fmt.Fprintf(os.Stderr, "  Searched %d/%d. Searching %d collection/season gap(s)...\n", searched, totalToSearch, len(phase3Candidates))
+			exec.SearchAllCandidates(ctx, phase3Candidates)
+			searched += len(phase3Candidates)
+		}
+		if hasAlbums {
+			fmt.Fprintf(os.Stderr, "  Searched %d/%d. Searching %d music album(s)...\n", searched, totalToSearch, len(allAlbumEvents))
+			musicResults = exec.SearchMusicAll(ctx, allAlbumEvents)
+			searched += len(allAlbumEvents)
+		}
+		if hasBooks {
+			bm := cfg.MediaTypeMode(model.MediaTypeBook)
+			if bm != "arr" && bm != "auto" && bm != "yolo" {
+				fmt.Fprintf(os.Stderr, "  Searched %d/%d. Searching %d book(s)...\n", searched, totalToSearch, len(allBookEvents))
+				bookResults = exec.SearchBooksAll(ctx, allBookEvents)
+				searched += len(allBookEvents)
+			}
+		}
+		if bookPhase3Count > 0 {
+			fmt.Fprintf(os.Stderr, "  Searched %d/%d. Searching %d book phase 3 candidate(s)...\n", searched, totalToSearch, bookPhase3Count)
+			searched += bookPhase3Count
+		}
+		fmt.Fprintf(os.Stderr, "  Searched %d/%d. All searches complete. Starting picker phase...\n", searched, totalToSearch)
 	} else {
 		fmt.Fprintf(os.Stderr, "  Interactive mode: processing items one at a time...\n")
 	}
@@ -723,7 +770,27 @@ func runBacklogBatch(ctx context.Context, database *db.DB, cfg *config.Config, t
 		}
 	}
 
-	// ─── Log unfound/skipped ──────────────────────────────────
+	// ─── Summary ──────────────────────────────────────────────
+	elapsed := time.Since(startTime).Round(time.Second)
+	downloaded := len(picked) + len(albumResults)
+	if bookDownloadedInfo != nil {
+		downloaded += len(bookDownloadedInfo)
+	}
+	total := len(allEvents) + len(allAlbumEvents) + len(allBookEvents) + len(allAnimeAiring)
+
+	fmt.Fprintf(os.Stderr, "\n── Backlog Complete (%s) ──\n", elapsed)
+	fmt.Fprintf(os.Stderr, "  %d weeks · %d items", len(weeks), total)
+	if downloaded > 0 {
+		fmt.Fprintf(os.Stderr, " · %d downloaded", downloaded)
+	}
+	if len(exec.Unfound) > 0 {
+		fmt.Fprintf(os.Stderr, " · %d unfound", len(exec.Unfound))
+	}
+	if len(exec.Skipped) > 0 {
+		fmt.Fprintf(os.Stderr, " · %d skipped", len(exec.Skipped))
+	}
+	fmt.Fprintln(os.Stderr)
+
 	if len(exec.Unfound) > 0 {
 		log.Warn().Msgf("No results found for %d item(s):", len(exec.Unfound))
 		for _, u := range exec.Unfound {
