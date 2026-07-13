@@ -681,8 +681,8 @@ func runProcessForWeek(ctx context.Context, database *db.DB, cfg *config.Config,
 			}
 		}
 
-		// Optional notification: searches complete
-		if cfg.Notifier.SearchCompleteNotify {
+		// Optional notification: searches complete (skip per-week during backlog)
+		if !backlog && cfg.Notifier.SearchCompleteNotify {
 			notify, err := notifier.New(cfg.Notifier)
 			if err == nil {
 				msg := fmt.Sprintf("%d-W%02d · %d primary + %d music + %d books",
@@ -996,8 +996,8 @@ func runProcessForWeek(ctx context.Context, database *db.DB, cfg *config.Config,
 		}
 	}
 
-	// ─── Yolo notification: send summary if notifier is configured ──
-	if modes["yolo"] && cfg.Notifier.Service != "" {
+	// ─── Yolo notification: send summary if notifier is configured (skip per-week during backlog) ──
+	if !backlog && modes["yolo"] && cfg.Notifier.Service != "" {
 		notify, nErr := notifier.New(cfg.Notifier)
 		if nErr == nil {
 			msg := fmt.Sprintf("%d-W%02d processed", year, week)

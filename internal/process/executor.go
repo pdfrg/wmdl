@@ -3875,6 +3875,15 @@ func (e *Executor) ProcessBookLibraryDecisions(ctx context.Context, events []db.
 		return
 	}
 
+	// Load LL book cache to skip re-prompting for books already in library
+	existingBooks, err := e.bookClient.GetAllBooks(ctx)
+	llBooks := make(map[string]bool)
+	if err == nil {
+		for _, b := range existingBooks {
+			llBooks[b.BookID] = true
+		}
+	}
+
 	for _, evt := range events {
 		if evt.Book.HardcoverID == 0 {
 			e.log.Warn().Str("book", evt.Book.Title).Msg("no HardcoverID, skipping LazyLibrarian")
@@ -3884,6 +3893,18 @@ func (e *Executor) ProcessBookLibraryDecisions(ctx context.Context, events []db.
 		title := evt.Book.Title
 		author := evt.Author.Name
 		bookID := strconv.Itoa(int(evt.Book.HardcoverID))
+
+		if llBooks[bookID] {
+			// Already in LL — skip prompt and AddBook, but still handle
+			// queue/unqueue if there's download info to update status.
+			info := downloaded[evt.Event.ID]
+			if info == nil {
+				// Nothing to update
+				continue
+			}
+			e.applyBookFormatDecisions(ctx, title, bookID, evt.Event.FormatPref, info)
+			continue
+		}
 
 		if !autoConfirm {
 			label := fmt.Sprintf("  Add \"%s\" by %s to LazyLibrarian?", title, author)
@@ -3898,39 +3919,38 @@ func (e *Executor) ProcessBookLibraryDecisions(ctx context.Context, events []db.
 			continue
 		}
 
-		info := downloaded[evt.Event.ID]
-		pref := evt.Event.FormatPref
-
-		// Per-format decisions: if format was downloaded, set Skipped (qbit script handles import).
-		// If format was not downloaded (skipped or no results), set Wanted so LL searches.
-		ebookWanted := pref == model.BookFormatEbook || pref == model.BookFormatBoth
-		audiobookWanted := pref == model.BookFormatAudiobook || pref == model.BookFormatBoth
-
-		if ebookWanted {
-			if info != nil && info.EbookDownloaded {
-				if err := e.bookClient.UnqueueBook(ctx, bookID, model.BookFormatEbook); err != nil {
-					e.log.Warn().Err(err).Str("book", title).Msg("lazylibrarian unqueueBook ebook")
-				}
-			} else {
-				if err := e.bookClient.QueueBook(ctx, bookID, model.BookFormatEbook); err != nil {
-					e.log.Warn().Err(err).Str("book", title).Msg("lazylibrarian queueBook ebook")
-				}
-			}
-		}
-
-		if audiobookWanted {
-			if info != nil && info.AudiobookDownloaded {
-				if err := e.bookClient.UnqueueBook(ctx, bookID, model.BookFormatAudiobook); err != nil {
-					e.log.Warn().Err(err).Str("book", title).Msg("lazylibrarian unqueueBook audiobook")
-				}
-			} else {
-				if err := e.bookClient.QueueBook(ctx, bookID, model.BookFormatAudiobook); err != nil {
-					e.log.Warn().Err(err).Str("book", title).Msg("lazylibrarian queueBook audiobook")
-				}
-			}
-		}
+		e.applyBookFormatDecisions(ctx, title, bookID, evt.Event.FormatPref, downloaded[evt.Event.ID])
 
 		e.log.Info().Str("book", title).Str("ll_id", bookID).Msg("LazyLibrarian: added")
+	}
+}
+
+func (e *Executor) applyBookFormatDecisions(ctx context.Context, title, bookID string, pref model.BookFormat, info *BookDownloadInfo) {
+	ebookWanted := pref == model.BookFormatEbook || pref == model.BookFormatBoth
+	audiobookWanted := pref == model.BookFormatAudiobook || pref == model.BookFormatBoth
+
+	if ebookWanted {
+		if info != nil && info.EbookDownloaded {
+			if err := e.bookClient.UnqueueBook(ctx, bookID, model.BookFormatEbook); err != nil {
+				e.log.Warn().Err(err).Str("book", title).Msg("lazylibrarian unqueueBook ebook")
+			}
+		} else {
+			if err := e.bookClient.QueueBook(ctx, bookID, model.BookFormatEbook); err != nil {
+				e.log.Warn().Err(err).Str("book", title).Msg("lazylibrarian queueBook ebook")
+			}
+		}
+	}
+
+	if audiobookWanted {
+		if info != nil && info.AudiobookDownloaded {
+			if err := e.bookClient.UnqueueBook(ctx, bookID, model.BookFormatAudiobook); err != nil {
+				e.log.Warn().Err(err).Str("book", title).Msg("lazylibrarian unqueueBook audiobook")
+			}
+		} else {
+			if err := e.bookClient.QueueBook(ctx, bookID, model.BookFormatAudiobook); err != nil {
+				e.log.Warn().Err(err).Str("book", title).Msg("lazylibrarian queueBook audiobook")
+			}
+		}
 	}
 }
 
