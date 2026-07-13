@@ -69,7 +69,14 @@ and send it to the download client.`,
 
 			backlog, _ := cmd.Flags().GetBool("backlog")
 			if backlog {
-				return runBacklogBatch(ctx, database, cfg, typeFilter, 0, 0)
+				var backlogYear, backlogWeek int
+				if cmd.Flags().Changed("week") {
+					backlogYear, backlogWeek, err = resolveWeek(cmd)
+					if err != nil {
+						return err
+					}
+				}
+				return runBacklogBatch(ctx, database, cfg, typeFilter, backlogYear, backlogWeek, 0, 0)
 			}
 
 			var targetYear, targetWeek int
@@ -117,12 +124,12 @@ and send it to the download client.`,
 				}
 			}
 
-			if err := runProcessForWeek(ctx, database, cfg, targetYear, targetWeek, typeFilter, false); err != nil {
+			if err := runProcessForWeek(ctx, database, cfg, targetYear, targetWeek, typeFilter); err != nil {
 				return err
 			}
 
 			if cfg.IncludeBacklog && !cmd.Flags().Changed("week") {
-				return runBacklogBatch(ctx, database, cfg, typeFilter, targetYear, targetWeek)
+				return runBacklogBatch(ctx, database, cfg, typeFilter, 0, 0, targetYear, targetWeek)
 			}
 
 			return nil
@@ -151,7 +158,7 @@ func promptYesNo(ctx context.Context, prompt string) bool {
 	}
 }
 
-func runBacklogBatch(ctx context.Context, database *db.DB, cfg *config.Config, typeFilter model.MediaType, skipYear, skipWeek int) error {
+func runBacklogBatch(ctx context.Context, database *db.DB, cfg *config.Config, typeFilter model.MediaType, onlyYear, onlyWeek, skipYear, skipWeek int) error {
 	startTime := time.Now()
 
 	states, err := database.GetWeekStates(ctx, 0)
@@ -162,6 +169,9 @@ func runBacklogBatch(ctx context.Context, database *db.DB, cfg *config.Config, t
 	var backlogWeeks []*model.WeekState
 	for _, s := range states {
 		if !s.Processed {
+			continue
+		}
+		if onlyYear > 0 && (s.Year != onlyYear || s.Week != onlyWeek) {
 			continue
 		}
 		if s.Year == skipYear && s.Week == skipWeek {
@@ -209,9 +219,21 @@ func runBacklogBatch(ctx context.Context, database *db.DB, cfg *config.Config, t
 	for _, s := range backlogWeeks {
 		autoApproveYoloItems(ctx, database, cfg, s.Year, s.Week)
 
-		events, _ := database.ListEventsByWeekWithTitles(ctx, s.Year, s.Week)
-		albumEvents, _ := database.ListAlbumEventsByWeekAndStatus(ctx, s.Year, s.Week, model.StatusApproved)
-		bookEvents, _ := database.ListBookEventsByWeekAndStatus(ctx, s.Year, s.Week, model.StatusApproved)
+		events, err := database.ListEventsByWeekWithTitles(ctx, s.Year, s.Week)
+		if err != nil {
+			log.Warn().Err(err).Msgf("backlog: loading events for %d-W%02d, skipping week", s.Year, s.Week)
+			continue
+		}
+		albumEvents, err := database.ListAlbumEventsByWeekAndStatus(ctx, s.Year, s.Week, model.StatusApproved)
+		if err != nil {
+			log.Warn().Err(err).Msgf("backlog: loading album events for %d-W%02d, skipping week", s.Year, s.Week)
+			continue
+		}
+		bookEvents, err := database.ListBookEventsByWeekAndStatus(ctx, s.Year, s.Week, model.StatusApproved)
+		if err != nil {
+			log.Warn().Err(err).Msgf("backlog: loading book events for %d-W%02d, skipping week", s.Year, s.Week)
+			continue
+		}
 
 		var pending []db.EventWithTitle
 		for _, ev := range events {
@@ -306,6 +328,10 @@ func runBacklogBatch(ctx context.Context, database *db.DB, cfg *config.Config, t
 		fmt.Fprintf(os.Stderr, " (%s)", strings.Join(typeParts, " · "))
 	}
 	fmt.Fprintln(os.Stderr)
+
+	if !modes["yolo"] && !promptYesNo(ctx, "Continue") {
+		return nil
+	}
 
 	// ─── Health check (single pass, shared across all weeks) ──
 	health := exec.HealthCheck(ctx, needsProwlarr, needsDownloader, needsLibrary)
@@ -467,6 +493,7 @@ func runBacklogBatch(ctx context.Context, database *db.DB, cfg *config.Config, t
 		if hasBooks && exec.BookClientAvailable() && exec.HCClientAvailable() {
 			bm := cfg.MediaTypeMode(model.MediaTypeBook)
 			if bm == "full" || bm == "prowlarr-grab" {
+				fmt.Fprintf(os.Stderr, "  Checking book series for missing entries...\n")
 				exec.ComputeBookPhase3Candidates(ctx, allBookEvents)
 				bookPhase3Count = len(exec.BookPhase3SearchPhase)
 			}
@@ -479,7 +506,6 @@ func runBacklogBatch(ctx context.Context, database *db.DB, cfg *config.Config, t
 				totalToSearch += len(allBookEvents)
 			}
 		}
-		totalToSearch += bookPhase3Count
 		fmt.Fprintf(os.Stderr, "  Searching %d item(s) across all weeks...\n", totalToSearch)
 
 		if len(searchEvents) > 0 {
@@ -506,8 +532,7 @@ func runBacklogBatch(ctx context.Context, database *db.DB, cfg *config.Config, t
 			}
 		}
 		if bookPhase3Count > 0 {
-			fmt.Fprintf(os.Stderr, "  Searched %d/%d. Searching %d book phase 3 candidate(s)...\n", searched, totalToSearch, bookPhase3Count)
-			searched += bookPhase3Count
+			fmt.Fprintf(os.Stderr, "  Found %d book phase 3 candidate(s) from series checks.\n", bookPhase3Count)
 		}
 		fmt.Fprintf(os.Stderr, "  Searched %d/%d. All searches complete. Starting picker phase...\n", searched, totalToSearch)
 	} else {
@@ -713,7 +738,9 @@ func runBacklogBatch(ctx context.Context, database *db.DB, cfg *config.Config, t
 			} else if len(bookDownloadedInfo) > 0 {
 				be = allBookEvents
 			}
-			exec.ProcessBookLibraryDecisions(ctx, be, bookDownloadedInfo)
+			if len(be) > 0 {
+				exec.ProcessBookLibraryDecisions(ctx, be, bookDownloadedInfo)
+			}
 		}
 	}
 
@@ -757,7 +784,9 @@ func runBacklogBatch(ctx context.Context, database *db.DB, cfg *config.Config, t
 				} else if len(interactiveInfo) > 0 {
 					be = allBookEvents
 				}
-				exec.ProcessBookLibraryDecisions(ctx, be, interactiveInfo)
+				if len(be) > 0 {
+					exec.ProcessBookLibraryDecisions(ctx, be, interactiveInfo)
+				}
 			}
 		}
 	}
@@ -776,10 +805,8 @@ func runBacklogBatch(ctx context.Context, database *db.DB, cfg *config.Config, t
 	if bookDownloadedInfo != nil {
 		downloaded += len(bookDownloadedInfo)
 	}
-	total := len(allEvents) + len(allAlbumEvents) + len(allBookEvents) + len(allAnimeAiring)
-
 	fmt.Fprintf(os.Stderr, "\n── Backlog Complete (%s) ──\n", elapsed)
-	fmt.Fprintf(os.Stderr, "  %d weeks · %d items", len(weeks), total)
+	fmt.Fprintf(os.Stderr, "  %d weeks · %d items", len(weeks), totalToSearch)
 	if downloaded > 0 {
 		fmt.Fprintf(os.Stderr, " · %d downloaded", downloaded)
 	}
@@ -808,8 +835,7 @@ func runBacklogBatch(ctx context.Context, database *db.DB, cfg *config.Config, t
 	if cfg.Notifier.Service != "" {
 		notify, nErr := notifier.New(cfg.Notifier)
 		if nErr == nil {
-			total := len(allEvents) + len(allAlbumEvents) + len(allBookEvents) + len(allAnimeAiring)
-			msg := fmt.Sprintf("%d weeks · %d items", len(weeks), total)
+			msg := fmt.Sprintf("%d weeks · %d items", len(weeks), totalToSearch)
 			if len(exec.Unfound) > 0 {
 				msg += fmt.Sprintf(" · %d unfound", len(exec.Unfound))
 			}

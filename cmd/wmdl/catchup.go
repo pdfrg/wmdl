@@ -76,7 +76,7 @@ one week at a time — use catchup to handle all outstanding weeks.`,
 
 				if !s.Processed {
 					log.Info().Msgf("Week %d/%d: needs process, running now...", s.Year, s.Week)
-					if err := runProcessForWeek(c.Context(), database, cfg, s.Year, s.Week, "", false); err != nil {
+					if err := runProcessForWeek(c.Context(), database, cfg, s.Year, s.Week, ""); err != nil {
 						log.Warn().Err(err).Msg("process failed")
 					}
 				}
