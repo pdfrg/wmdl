@@ -1943,16 +1943,16 @@ func (t *TUI) buildRightContent(tl *model.Title, ev *model.ReleaseEvent, rw int,
 			creditParts = append(creditParts, fmt.Sprintf("Writer: %s", tl.Writer))
 		}
 		if tl.Actors != "" {
-			// Truncate long actor lists
-			actors := tl.Actors
-			if len(actors) > 80 {
-				actors = actors[:77] + "..."
-			}
-			creditParts = append(creditParts, fmt.Sprintf("Actors: %s", actors))
+			creditParts = append(creditParts, fmt.Sprintf("Actors: %s", tl.Actors))
 		}
 		if len(creditParts) > 0 {
 			b.WriteString("\n")
-			b.WriteString(strings.Join(creditParts, " · "))
+			for i, part := range creditParts {
+				if i > 0 {
+					b.WriteString("\n")
+				}
+				b.WriteString(rtStyle.Width(rw).Render(part))
+			}
 		}
 	}
 
