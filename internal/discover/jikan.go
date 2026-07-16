@@ -1,6 +1,7 @@
 package discover
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -8,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"golang.org/x/time/rate"
 
 	"github.com/pdfrg/wmdl/internal/config"
 	"github.com/pdfrg/wmdl/internal/model"
@@ -22,6 +25,7 @@ type JikanAnimeProvider struct {
 	hasTarget  bool
 	cfg        config.AnimeConfig
 	client     *http.Client
+	limiter    *rate.Limiter
 }
 
 type jikanAnimeResponse struct {
@@ -76,8 +80,9 @@ type jikanAnime struct {
 
 func NewJikanAnimeProvider(cfg config.AnimeConfig) *JikanAnimeProvider {
 	return &JikanAnimeProvider{
-		cfg:    cfg,
-		client: &http.Client{Timeout: 15 * time.Second},
+		cfg:     cfg,
+		client:  &http.Client{Timeout: 15 * time.Second},
+		limiter: rate.NewLimiter(rate.Limit(3), 1),
 	}
 }
 
@@ -108,7 +113,9 @@ func (p *JikanAnimeProvider) Scrape() ([]ScrapedItem, error) {
 	items = append(items, phaseA...)
 
 	if len(phaseA) < p.cfg.MinPhaseBResults && p.cfg.PhaseBEnabled {
-		time.Sleep(time.Second)
+		if err := p.limiter.Wait(context.Background()); err != nil {
+			return nil, fmt.Errorf("rate limit: %w", err)
+		}
 		phaseB, err := p.scrapePhaseB()
 		if err != nil {
 			return nil, fmt.Errorf("phase B: %w", err)
@@ -143,8 +150,6 @@ func (p *JikanAnimeProvider) scrapePhaseA(weekStart, weekEnd time.Time) ([]Scrap
 				continue
 			}
 
-			// Results are sorted by end_date descending. Once we're past
-			// the wmdl week window, stop entirely.
 			if endTime.Before(weekStart) {
 				return phaseA, nil
 			}
@@ -164,7 +169,9 @@ func (p *JikanAnimeProvider) scrapePhaseA(weekStart, weekEnd time.Time) ([]Scrap
 		}
 
 		page++
-		time.Sleep(time.Second)
+		if err := p.limiter.Wait(context.Background()); err != nil {
+			return nil, fmt.Errorf("rate limit: %w", err)
+		}
 	}
 
 	return phaseA, nil
@@ -191,8 +198,6 @@ func (p *JikanAnimeProvider) scrapePhaseB() ([]ScrapedItem, error) {
 			if a.Score <= 0 {
 				continue
 			}
-			// Sorted by score descending — once below threshold, skip rest of page
-			// but continue to next page (same-score items may span pages).
 			if a.Score < p.cfg.PhaseBMinScore {
 				break
 			}
@@ -207,13 +212,22 @@ func (p *JikanAnimeProvider) scrapePhaseB() ([]ScrapedItem, error) {
 			break
 		}
 		page++
-		time.Sleep(time.Second)
+		if err := p.limiter.Wait(context.Background()); err != nil {
+			return nil, fmt.Errorf("rate limit: %w", err)
+		}
 	}
 
 	return phaseB, nil
 }
 
 func (p *JikanAnimeProvider) fetchPage(url string) ([]jikanAnime, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	if err := p.limiter.Wait(ctx); err != nil {
+		return nil, fmt.Errorf("rate limit: %w", err)
+	}
+
 	var lastErr error
 	for attempt := 0; attempt < 3; attempt++ {
 		if attempt > 0 {
@@ -221,7 +235,13 @@ func (p *JikanAnimeProvider) fetchPage(url string) ([]jikanAnime, error) {
 			time.Sleep(delay)
 		}
 
-		resp, err := p.client.Get(url)
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+		if err != nil {
+			lastErr = fmt.Errorf("creating request: %w", err)
+			continue
+		}
+
+		resp, err := p.client.Do(req)
 		if err != nil {
 			lastErr = fmt.Errorf("fetching %s: %w", url, err)
 			continue

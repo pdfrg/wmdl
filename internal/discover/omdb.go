@@ -8,11 +8,14 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"golang.org/x/time/rate"
 )
 
 type OMDBClient struct {
-	http   *http.Client
-	apiKey string
+	http    *http.Client
+	apiKey  string
+	limiter *rate.Limiter
 }
 
 type OMDBResponse struct {
@@ -65,11 +68,16 @@ func NewOMDBClient(apiKey string) *OMDBClient {
 		http: &http.Client{
 			Timeout: 10 * time.Second,
 		},
-		apiKey: apiKey,
+		apiKey:  apiKey,
+		limiter: rate.NewLimiter(rate.Limit(10), 1),
 	}
 }
 
 func (c *OMDBClient) FetchRatings(ctx context.Context, imdbID string) (*OMDBData, error) {
+	if err := c.limiter.Wait(ctx); err != nil {
+		return nil, fmt.Errorf("rate limit wait: %w", err)
+	}
+
 	url := fmt.Sprintf("https://www.omdbapi.com/?i=%s&apikey=%s", imdbID, c.apiKey)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)

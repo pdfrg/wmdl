@@ -1,6 +1,7 @@
 package discover
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -8,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"golang.org/x/time/rate"
 
 	"github.com/pdfrg/wmdl/internal/config"
 	"github.com/pdfrg/wmdl/internal/model"
@@ -24,6 +27,7 @@ type TenraiAnimeProvider struct {
 	hasTarget  bool
 	cfg        config.AnimeConfig
 	client     *http.Client
+	limiter    *rate.Limiter
 }
 
 type tenraiAnimeResponse struct {
@@ -78,8 +82,9 @@ type tenraiAnime struct {
 
 func NewTenraiAnimeProvider(cfg config.AnimeConfig) *TenraiAnimeProvider {
 	return &TenraiAnimeProvider{
-		cfg:    cfg,
-		client: &http.Client{Timeout: 15 * time.Second},
+		cfg:     cfg,
+		client:  &http.Client{Timeout: 15 * time.Second},
+		limiter: rate.NewLimiter(rate.Limit(1), 3),
 	}
 }
 
@@ -110,7 +115,9 @@ func (p *TenraiAnimeProvider) Scrape() ([]ScrapedItem, error) {
 	items = append(items, phaseA...)
 
 	if len(phaseA) < p.cfg.MinPhaseBResults && p.cfg.PhaseBEnabled {
-		time.Sleep(time.Second)
+		if err := p.limiter.Wait(context.Background()); err != nil {
+			return nil, fmt.Errorf("rate limit: %w", err)
+		}
 		phaseB, err := p.scrapePhaseB()
 		if err != nil {
 			return nil, fmt.Errorf("phase B: %w", err)
@@ -164,16 +171,15 @@ func (p *TenraiAnimeProvider) scrapePhaseA(weekStart, weekEnd time.Time) ([]Scra
 		}
 
 		page++
-		time.Sleep(time.Second)
+		if err := p.limiter.Wait(context.Background()); err != nil {
+			return nil, fmt.Errorf("rate limit: %w", err)
+		}
 	}
 
 	return phaseA, nil
 }
 
 func (p *TenraiAnimeProvider) scrapePhaseB() ([]ScrapedItem, error) {
-	// Only fetch the first page — sorted by score descending so we always get
-	// the top 25 highest-scored currently-airing shows. Users tune quantity
-	// via PhaseBMinScore / PhaseBMinMembers.
 	results, err := p.fetchPage(fmt.Sprintf(
 		"%s/anime?status=airing&type=TV&sfw=true&order_by=score&sort=desc&page=1&limit=25", tenraiBaseURL))
 	if err != nil {
@@ -202,6 +208,13 @@ func (p *TenraiAnimeProvider) scrapePhaseB() ([]ScrapedItem, error) {
 }
 
 func (p *TenraiAnimeProvider) fetchPage(url string) ([]tenraiAnime, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	if err := p.limiter.Wait(ctx); err != nil {
+		return nil, fmt.Errorf("rate limit: %w", err)
+	}
+
 	var lastErr error
 	for attempt := 0; attempt < 3; attempt++ {
 		if attempt > 0 {
@@ -209,7 +222,13 @@ func (p *TenraiAnimeProvider) fetchPage(url string) ([]tenraiAnime, error) {
 			time.Sleep(delay)
 		}
 
-		resp, err := p.client.Get(url)
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+		if err != nil {
+			lastErr = fmt.Errorf("creating request: %w", err)
+			continue
+		}
+
+		resp, err := p.client.Do(req)
 		if err != nil {
 			lastErr = fmt.Errorf("fetching %s: %w", url, err)
 			continue

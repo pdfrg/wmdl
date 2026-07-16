@@ -2,6 +2,7 @@ package discover
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -9,6 +10,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"golang.org/x/time/rate"
 
 	"github.com/pdfrg/wmdl/internal/config"
 	"github.com/pdfrg/wmdl/internal/model"
@@ -23,6 +26,7 @@ type AniListProvider struct {
 	hasTarget  bool
 	cfg        config.AnimeConfig
 	client     *http.Client
+	limiter    *rate.Limiter
 }
 
 var anilistPhaseAQuery = `query ($page: Int, $endGt: FuzzyDateInt, $endLt: FuzzyDateInt) {
@@ -121,8 +125,9 @@ type anilistGraphQLRequest struct {
 
 func NewAniListProvider(cfg config.AnimeConfig) *AniListProvider {
 	return &AniListProvider{
-		cfg:    cfg,
-		client: &http.Client{Timeout: 30 * time.Second},
+		cfg:     cfg,
+		client:  &http.Client{Timeout: 30 * time.Second},
+		limiter: rate.NewLimiter(rate.Limit(0.5), 1),
 	}
 }
 
@@ -153,7 +158,9 @@ func (p *AniListProvider) Scrape() ([]ScrapedItem, error) {
 	items = append(items, phaseA...)
 
 	if len(phaseA) < p.cfg.MinPhaseBResults && p.cfg.PhaseBEnabled {
-		time.Sleep(time.Second)
+		if err := p.limiter.Wait(context.Background()); err != nil {
+			return nil, fmt.Errorf("rate limit: %w", err)
+		}
 		phaseB, err := p.scrapePhaseB()
 		if err != nil {
 			return nil, fmt.Errorf("phase B: %w", err)
@@ -199,16 +206,15 @@ func (p *AniListProvider) scrapePhaseA(weekStart, weekEnd time.Time) ([]ScrapedI
 			break
 		}
 		page++
-		time.Sleep(time.Second)
+		if err := p.limiter.Wait(context.Background()); err != nil {
+			return nil, fmt.Errorf("rate limit: %w", err)
+		}
 	}
 
 	return phaseA, nil
 }
 
 func (p *AniListProvider) scrapePhaseB() ([]ScrapedItem, error) {
-	// Only fetch the first page — sorted by SCORE_DESC, POPULARITY_DESC so
-	// we always get the top 25 highest-scored currently-airing shows.
-	// Users tune quantity via PhaseBMinScore / PhaseBMinMembers.
 	media, _, err := p.fetchPage(anilistPhaseBQuery, map[string]any{
 		"page": 1,
 	})
@@ -236,13 +242,20 @@ func (p *AniListProvider) scrapePhaseB() ([]ScrapedItem, error) {
 }
 
 func (p *AniListProvider) fetchPage(query string, vars map[string]any) ([]anilistMedia, bool, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	if err := p.limiter.Wait(ctx); err != nil {
+		return nil, false, fmt.Errorf("rate limit: %w", err)
+	}
+
 	reqBody := anilistGraphQLRequest{Query: query, Variables: vars}
 	bodyJSON, err := json.Marshal(reqBody)
 	if err != nil {
 		return nil, false, fmt.Errorf("marshalling request: %w", err)
 	}
 
-	req, err := http.NewRequest(http.MethodPost, "https://graphql.anilist.co",
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://graphql.anilist.co",
 		bytes.NewReader(bodyJSON))
 	if err != nil {
 		return nil, false, fmt.Errorf("creating request: %w", err)
