@@ -247,12 +247,12 @@ media_types:
     enabled: true
     mode: "full"
     lookback_weeks: 0       # weeks before target to scan for completed anime
-    min_score: 7.0          # minimum MAL score
-    min_members: 50000      # minimum MAL member count
+    min_score: 7.0          # minimum score (Jikan: MAL 0-10, AniList: avgScore/10)
+    min_members: 50000      # minimum member count
     # Phase B: currently-airing anime (adds directly to Sonarr, no Prowlarr search)
     phase_b_enabled: true
-    phase_b_min_score: 7.5
-    phase_b_min_members: 100000
+    phase_b_min_score: 7.0 # AniList averageScore is 0-100; this config uses /10 conversion
+    phase_b_min_members: 50000
     min_phase_b_results: 3
     # If true, skip FlixPatrol items that are also found by Jikan
     filter_flixpatrol_anime: false

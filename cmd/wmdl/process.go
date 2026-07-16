@@ -259,7 +259,7 @@ func runBacklogBatch(ctx context.Context, database *db.DB, cfg *config.Config, t
 		var searchable []db.EventWithTitle
 		var animeAiring []db.EventWithTitle
 		for _, ev := range pending {
-			if ev.Title.MediaType == model.MediaTypeAnime && ev.Event.Source == "jikan-airing" {
+			if ev.Title.MediaType == model.MediaTypeAnime && (ev.Event.Source == "jikan-airing" || ev.Event.Source == "anilist-airing") {
 				animeAiring = append(animeAiring, ev)
 			} else {
 				searchable = append(searchable, ev)

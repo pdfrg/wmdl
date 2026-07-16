@@ -214,26 +214,43 @@ func (p *JikanAnimeProvider) scrapePhaseB() ([]ScrapedItem, error) {
 }
 
 func (p *JikanAnimeProvider) fetchPage(url string) ([]jikanAnime, error) {
-	resp, err := p.client.Get(url)
-	if err != nil {
-		return nil, fmt.Errorf("fetching %s: %w", url, err)
-	}
-	defer resp.Body.Close()
+	var lastErr error
+	for attempt := 0; attempt < 3; attempt++ {
+		if attempt > 0 {
+			delay := time.Duration(1<<attempt) * time.Second
+			time.Sleep(delay)
+		}
 
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("reading response: %w", err)
-	}
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("jikan returned %d: %s", resp.StatusCode, string(body[:min(len(body), 200)]))
+		resp, err := p.client.Get(url)
+		if err != nil {
+			lastErr = fmt.Errorf("fetching %s: %w", url, err)
+			continue
+		}
+
+		body, err := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if err != nil {
+			lastErr = fmt.Errorf("reading response: %w", err)
+			continue
+		}
+
+		if resp.StatusCode >= 500 {
+			lastErr = fmt.Errorf("jikan returned %d: %s", resp.StatusCode, string(body[:min(len(body), 200)]))
+			continue
+		}
+		if resp.StatusCode != http.StatusOK {
+			return nil, fmt.Errorf("jikan returned %d: %s", resp.StatusCode, string(body[:min(len(body), 200)]))
+		}
+
+		var result jikanAnimeResponse
+		if err := json.Unmarshal(body, &result); err != nil {
+			return nil, fmt.Errorf("decoding response: %w", err)
+		}
+
+		return result.Data, nil
 	}
 
-	var result jikanAnimeResponse
-	if err := json.Unmarshal(body, &result); err != nil {
-		return nil, fmt.Errorf("decoding response: %w", err)
-	}
-
-	return result.Data, nil
+	return nil, lastErr
 }
 
 func joinJikanNames(items []jikanNamedItem) string {

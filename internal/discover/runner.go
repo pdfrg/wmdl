@@ -570,6 +570,13 @@ func (r *Runner) Run(ctx context.Context) error {
 	if wantAnime && r.cfg.MediaTypes.Anime.Enabled {
 		lo, hi := r.lookbackRange("anime", r.cfg.MediaTypes.Anime.LookbackWeeks)
 		for wk := lo; wk <= hi; wk++ {
+			anilist := NewAniListProvider(r.cfg.MediaTypes.Anime)
+			if r.hasTargetWeek {
+				animeYear, animeWeek := addISOWeekOffset(r.targetYear, r.targetWeek, wk)
+				anilist.SetWeekRange(animeYear, animeWeek)
+			}
+			providers = append(providers, anilist)
+
 			jikan := NewJikanAnimeProvider(r.cfg.MediaTypes.Anime)
 			if r.hasTargetWeek {
 				animeYear, animeWeek := addISOWeekOffset(r.targetYear, r.targetWeek, wk)
@@ -1070,6 +1077,14 @@ func (r *Runner) Run(ctx context.Context) error {
 		}
 
 		if wantAnime && r.cfg.MediaTypes.Anime.Enabled {
+			if _, ok := sourceCounts["anilist (completed)"]; !ok {
+				sourceCounts["anilist (completed)"] = 0
+			}
+			if r.cfg.MediaTypes.Anime.PhaseBEnabled {
+				if _, ok := sourceCounts["anilist (airing)"]; !ok {
+					sourceCounts["anilist (airing)"] = 0
+				}
+			}
 			if _, ok := sourceCounts["jikan (completed)"]; !ok {
 				sourceCounts["jikan (completed)"] = 0
 			}
@@ -1202,6 +1217,10 @@ func sourceDisplayName(source string, mt model.MediaType) string {
 		return "flixpatrol " + string(mt)
 	case "goodreads_blog":
 		return "goodreads blog"
+	case "anilist":
+		return "anilist (completed)"
+	case "anilist-airing":
+		return "anilist (airing)"
 	case "jikan":
 		return "jikan (completed)"
 	case "jikan-airing":
