@@ -131,32 +131,16 @@ func TestFilterTitle_BlockedGenres(t *testing.T) {
 	})
 }
 
-func TestFilterMusic_BlockedCountries(t *testing.T) {
-	f := &config.ContentFilter{BlockedCountries: []string{"in"}}
-	artist := &model.Artist{Country: "IN"}
-	album := &model.Album{}
-
-	if res := FilterMusic(f, artist, album); res.Passed {
-		t.Error("India artist should be blocked")
-	}
-
-	artist2 := &model.Artist{Country: "US"}
-	if res := FilterMusic(f, artist2, album); !res.Passed {
-		t.Errorf("US artist should pass: %s", res.Reason)
-	}
-}
-
 func TestFilterMusic_BlockedGenres(t *testing.T) {
 	f := &config.ContentFilter{BlockedGenres: []string{"Jazz", "Classical"}}
-	artist := &model.Artist{}
-	album := &model.Album{Genres: "Rock, Jazz, Blues"}
+	release := &model.AlbumRelease{Genres: "Rock, Jazz, Blues"}
 
-	if res := FilterMusic(f, artist, album); res.Passed {
+	if res := FilterMusic(f, release); res.Passed {
 		t.Error("Jazz album should be blocked")
 	}
 
-	album2 := &model.Album{Genres: "Rock, Blues"}
-	if res := FilterMusic(f, artist, album2); !res.Passed {
+	release2 := &model.AlbumRelease{Genres: "Rock, Blues"}
+	if res := FilterMusic(f, release2); !res.Passed {
 		t.Errorf("Rock/Blues should pass: %s", res.Reason)
 	}
 }

@@ -1024,7 +1024,7 @@ func (e *Executor) processMusicBatchItem(ctx context.Context, item *BatchItem) *
 	}
 
 	for _, release := range item.Selected {
-		e.log.Info().Str("release", release.RawTitle).Str("artist", ae.Artist.Name).Str("album", ae.Album.Title).Int("score", release.Score).Msg("selected music release")
+		e.log.Info().Str("release", release.RawTitle).Str("artist", ae.Release.ArtistName).Str("album", ae.Release.Title).Int("score", release.Score).Msg("selected music release")
 		uri := release.DownloadURL
 		if uri == "" {
 			uri = release.MagnetURL
@@ -1172,7 +1172,7 @@ func (e *Executor) handleSkipLibrary(ctx context.Context, evt db.EventWithTitle,
 	}
 }
 
-func (e *Executor) handleSkipLibraryMusic(ctx context.Context, ae db.EventWithAlbum) {
+func (e *Executor) handleSkipLibraryMusic(ctx context.Context, ae db.EventWithAlbumRelease) {
 	if e.lidarr == nil {
 		return
 	}
@@ -1180,20 +1180,20 @@ func (e *Executor) handleSkipLibraryMusic(ctx context.Context, ae db.EventWithAl
 	if mode != "full" {
 		return
 	}
-	artistMbid := ae.Artist.MBID
+	artistMbid := ae.Release.ArtistMBID
 	if artistMbid == "" {
 		return
 	}
 	existing, err := e.lidarr.GetArtist(ctx, artistMbid)
 	if err != nil {
-		e.log.Warn().Err(err).Str("artist", ae.Artist.Name).Msg("lidarr check error during skip")
+		e.log.Warn().Err(err).Str("artist", ae.Release.ArtistName).Msg("lidarr check error during skip")
 		return
 	}
 	if existing != nil {
-		e.log.Info().Str("artist", ae.Artist.Name).Int("lidarr_id", existing.ID).Msg("artist already in Lidarr")
+		e.log.Info().Str("artist", ae.Release.ArtistName).Int("lidarr_id", existing.ID).Msg("artist already in Lidarr")
 		return
 	}
-	if !promptYesNo(ctx, fmt.Sprintf("  Add %s to Lidarr anyway?", ae.Artist.Name)) {
+	if !promptYesNo(ctx, fmt.Sprintf("  Add %s to Lidarr anyway?", ae.Release.ArtistName)) {
 		return
 	}
 	qualProfileID, err := e.lidarr.ResolveQualityProfileID(ctx, e.cfg.Library.Lidarr.QualityProfile)
@@ -1215,7 +1215,7 @@ func (e *Executor) handleSkipLibraryMusic(ctx context.Context, ae db.EventWithAl
 	if monitor == "" {
 		monitor = "all"
 	}
-	added, err := e.lidarr.AddArtist(ctx, artistMbid, ae.Artist.Name, library.AddArtistOptions{
+	added, err := e.lidarr.AddArtist(ctx, artistMbid, ae.Release.ArtistName, library.AddArtistOptions{
 		Monitored:         true,
 		MonitorNewAlbums:  e.cfg.Library.Lidarr.MonitorNewAlbums,
 		QualityProfileID:  qualProfileID,
@@ -1225,11 +1225,11 @@ func (e *Executor) handleSkipLibraryMusic(ctx context.Context, ae db.EventWithAl
 		SearchNow:         true,
 	})
 	if err != nil {
-		e.log.Warn().Err(err).Str("artist", ae.Artist.Name).Msg("failed adding to Lidarr after skip")
+		e.log.Warn().Err(err).Str("artist", ae.Release.ArtistName).Msg("failed adding to Lidarr after skip")
 		return
 	}
 	_ = e.db.SetSetting(ctx, fmt.Sprintf("lidarr_artist_%s", artistMbid), fmt.Sprintf("%d", added.ID))
-	e.log.Info().Int("lidarr_id", added.ID).Str("artist", ae.Artist.Name).Msg("added artist to Lidarr after skip")
+	e.log.Info().Int("lidarr_id", added.ID).Str("artist", ae.Release.ArtistName).Msg("added artist to Lidarr after skip")
 }
 
 // ComputePhase3Candidates pre-computes Phase 3 search candidates for approved
@@ -2907,13 +2907,13 @@ func promptYesNo(ctx context.Context, prompt string) bool {
 // ─── Music album processing ─────────────────────────────────────────────
 
 type MusicSearchResult struct {
-	Event db.EventWithAlbum
+	Event db.EventWithAlbumRelease
 	Top   []quality.ParsedRelease
 	Error error
 }
 
 type MusicAlbumResult struct {
-	Event      db.EventWithAlbum
+	Event      db.EventWithAlbumRelease
 	Downloaded bool
 }
 
@@ -3010,16 +3010,16 @@ func (e *Executor) searchMusicRelease(ctx context.Context, artist, album string,
 	return nil, nil
 }
 
-func (e *Executor) SearchMusicRelease(ctx context.Context, ae db.EventWithAlbum) (*MusicSearchResult, error) {
-	e.log.Info().Str("artist", ae.Artist.Name).Str("album", ae.Album.Title).Int("year", ae.Album.Year).Msg("searching music")
+func (e *Executor) SearchMusicRelease(ctx context.Context, ae db.EventWithAlbumRelease) (*MusicSearchResult, error) {
+	e.log.Info().Str("artist", ae.Release.ArtistName).Str("album", ae.Release.Title).Int("year", ae.Release.Year).Msg("searching music")
 
-	releases, err := e.searchMusicRelease(ctx, ae.Artist.Name, ae.Album.Title, ae.Album.Year)
+	releases, err := e.searchMusicRelease(ctx, ae.Release.ArtistName, ae.Release.Title, ae.Release.Year)
 	if err != nil {
 		return nil, fmt.Errorf("searching music: %w", err)
 	}
 
 	if len(releases) == 0 {
-		e.Unfound = append(e.Unfound, fmt.Sprintf("%s - %s", ae.Artist.Name, ae.Album.Title))
+		e.Unfound = append(e.Unfound, fmt.Sprintf("%s - %s", ae.Release.ArtistName, ae.Release.Title))
 		return &MusicSearchResult{Event: ae}, nil
 	}
 
@@ -3043,14 +3043,14 @@ func (e *Executor) SearchMusicRelease(ctx context.Context, ae db.EventWithAlbum)
 }
 
 // SearchMusicAll searches all music events and returns results.
-func (e *Executor) SearchMusicAll(ctx context.Context, events []db.EventWithAlbum) []*MusicSearchResult {
+func (e *Executor) SearchMusicAll(ctx context.Context, events []db.EventWithAlbumRelease) []*MusicSearchResult {
 	e.log.Info().Msgf("Searching %d music album(s)...", len(events))
 	results := make([]*MusicSearchResult, 0, len(events))
 	for i, ae := range events {
-		e.log.Info().Str("album", ae.Album.Title).Str("artist", ae.Artist.Name).Msgf("[%d/%d] searching", i+1, len(events))
+		e.log.Info().Str("album", ae.Release.Title).Str("artist", ae.Release.ArtistName).Msgf("[%d/%d] searching", i+1, len(events))
 		sr, err := e.SearchMusicRelease(ctx, ae)
 		if err != nil {
-			e.log.Warn().Err(err).Str("album", ae.Album.Title).Str("artist", ae.Artist.Name).Msg("error searching music")
+			e.log.Warn().Err(err).Str("album", ae.Release.Title).Str("artist", ae.Release.ArtistName).Msg("error searching music")
 			continue
 		}
 		results = append(results, sr)
@@ -3073,7 +3073,7 @@ func (e *Executor) PickMusicResults(ctx context.Context, results []*MusicSearchR
 // ProcessMusicAlbumsInteractive processes music albums one at a time in
 // interactive mode: for each event, searches Prowlarr, shows picker, downloads,
 // and returns the results for library processing.
-func (e *Executor) ProcessMusicAlbumsInteractive(ctx context.Context, events []db.EventWithAlbum) []MusicAlbumResult {
+func (e *Executor) ProcessMusicAlbumsInteractive(ctx context.Context, events []db.EventWithAlbumRelease) []MusicAlbumResult {
 	e.log.Info().Msgf("Processing %d music album(s) interactively...", len(events))
 	var albumResults []MusicAlbumResult
 	for _, ae := range events {
@@ -3082,10 +3082,10 @@ func (e *Executor) ProcessMusicAlbumsInteractive(ctx context.Context, events []d
 			return albumResults
 		default:
 		}
-		e.log.Info().Str("artist", ae.Artist.Name).Str("album", ae.Album.Title).Msgf("processing album")
+		e.log.Info().Str("artist", ae.Release.ArtistName).Str("album", ae.Release.Title).Msgf("processing album")
 		sr, err := e.SearchMusicRelease(ctx, ae)
 		if err != nil {
-			e.log.Warn().Err(err).Str("album", ae.Album.Title).Str("artist", ae.Artist.Name).Msg("error searching music")
+			e.log.Warn().Err(err).Str("album", ae.Release.Title).Str("artist", ae.Release.ArtistName).Msg("error searching music")
 			continue
 		}
 		result := e.PickMusicAlbum(ctx, sr)
@@ -3096,7 +3096,7 @@ func (e *Executor) ProcessMusicAlbumsInteractive(ctx context.Context, events []d
 	return albumResults
 }
 
-func (e *Executor) ProcessMusicAlbum(ctx context.Context, ae db.EventWithAlbum) (*MusicAlbumResult, error) {
+func (e *Executor) ProcessMusicAlbum(ctx context.Context, ae db.EventWithAlbumRelease) (*MusicAlbumResult, error) {
 	sr, err := e.SearchMusicRelease(ctx, ae)
 	if err != nil {
 		return nil, err
@@ -3107,19 +3107,19 @@ func (e *Executor) ProcessMusicAlbum(ctx context.Context, ae db.EventWithAlbum) 
 func (e *Executor) PickMusicAlbum(ctx context.Context, sr *MusicSearchResult) *MusicAlbumResult {
 	ae := sr.Event
 	if len(sr.Top) == 0 {
-		e.log.Info().Str("artist", ae.Artist.Name).Str("album", ae.Album.Title).Msg("no music results found")
+		e.log.Info().Str("artist", ae.Release.ArtistName).Str("album", ae.Release.Title).Msg("no music results found")
 		return &MusicAlbumResult{Event: ae}
 	}
 
 	// Show picker
-	selLabel := ae.Artist.Name + " - " + ae.Album.Title
+	selLabel := ae.Release.ArtistName + " - " + ae.Release.Title
 	sel := NewSelector(selLabel, sr.Top)
 	chosen, err := sel.Run()
 	if err != nil {
 		return &MusicAlbumResult{Event: ae}
 	}
 	if len(chosen) == 0 {
-		label := ae.Artist.Name + " - " + ae.Album.Title
+		label := ae.Release.ArtistName + " - " + ae.Release.Title
 		e.Skipped = append(e.Skipped, label)
 		e.handleSkipLibraryMusic(ctx, ae)
 		return &MusicAlbumResult{Event: ae}
@@ -3136,7 +3136,7 @@ func (e *Executor) PickMusicAlbum(ctx context.Context, sr *MusicSearchResult) *M
 	}
 
 	for _, release := range chosen {
-		e.log.Info().Str("release", release.RawTitle).Str("artist", ae.Artist.Name).Str("album", ae.Album.Title).Int("score", release.Score).Msg("selected music release")
+		e.log.Info().Str("release", release.RawTitle).Str("artist", ae.Release.ArtistName).Str("album", ae.Release.Title).Int("score", release.Score).Msg("selected music release")
 		uri := release.DownloadURL
 		if uri == "" {
 			uri = release.MagnetURL
@@ -3218,7 +3218,7 @@ func (e *Executor) ProcessMusicAlbumDecisions(ctx context.Context, results []Mus
 	}
 
 	type albumDecision struct {
-		evt        db.EventWithAlbum
+		evt        db.EventWithAlbumRelease
 		artistMbid string
 	}
 
@@ -3229,22 +3229,22 @@ func (e *Executor) ProcessMusicAlbumDecisions(ctx context.Context, results []Mus
 			continue
 		}
 		ae := r.Event
-		artistMbid := ae.Artist.MBID
+		artistMbid := ae.Release.ArtistMBID
 		if artistMbid == "" {
 			continue
 		}
 
 		existing, err := e.lidarr.GetArtist(ctx, artistMbid)
 		if err != nil {
-			e.log.Warn().Err(err).Str("artist", ae.Artist.Name).Msg("lidarr check error")
+			e.log.Warn().Err(err).Str("artist", ae.Release.ArtistName).Msg("lidarr check error")
 			continue
 		}
 		if existing != nil {
-			e.log.Info().Str("artist", ae.Artist.Name).Int("lidarr_id", existing.ID).Msg("artist already in Lidarr")
+			e.log.Info().Str("artist", ae.Release.ArtistName).Int("lidarr_id", existing.ID).Msg("artist already in Lidarr")
 			continue
 		}
 
-		e.log.Info().Msgf("Add to Lidarr? %s — %s (%d)", ae.Artist.Name, ae.Album.Title, ae.Album.Year)
+		e.log.Info().Msgf("Add to Lidarr? %s — %s (%d)", ae.Release.ArtistName, ae.Release.Title, ae.Release.Year)
 		if autoConfirm || promptYesNo(ctx, "  Add artist to Lidarr?") {
 			decisions = append(decisions, albumDecision{
 				evt:        ae,
@@ -3263,7 +3263,7 @@ decisionsLoop:
 	for _, d := range decisions {
 		ae := d.evt
 	addRetry:
-		e.log.Info().Str("artist", ae.Artist.Name).Msg("adding artist to Lidarr")
+		e.log.Info().Str("artist", ae.Release.ArtistName).Msg("adding artist to Lidarr")
 
 		qualProfileID, err := e.lidarr.ResolveQualityProfileID(ctx, e.cfg.Library.Lidarr.QualityProfile)
 		if err != nil {
@@ -3300,7 +3300,7 @@ decisionsLoop:
 			monitor = "all"
 		}
 
-		added, err := e.lidarr.AddArtist(ctx, d.artistMbid, ae.Artist.Name, library.AddArtistOptions{
+		added, err := e.lidarr.AddArtist(ctx, d.artistMbid, ae.Release.ArtistName, library.AddArtistOptions{
 			Monitored:         true,
 			MonitorNewAlbums:  e.cfg.Library.Lidarr.MonitorNewAlbums,
 			QualityProfileID:  qualProfileID,
@@ -3310,7 +3310,7 @@ decisionsLoop:
 			SearchNow:         false,
 		})
 		if err != nil {
-			e.log.Warn().Err(err).Str("artist", ae.Artist.Name).Msg("failed adding to Lidarr")
+			e.log.Warn().Err(err).Str("artist", ae.Release.ArtistName).Msg("failed adding to Lidarr")
 			switch promptRetry("Lidarr add", err) {
 			case retryActionRetry:
 				goto addRetry
@@ -3321,7 +3321,7 @@ decisionsLoop:
 		}
 
 		_ = e.db.SetSetting(ctx, fmt.Sprintf("lidarr_artist_%s", d.artistMbid), fmt.Sprintf("%d", added.ID))
-		e.log.Info().Int("lidarr_id", added.ID).Str("artist", ae.Artist.Name).Msg("added artist to Lidarr")
+		e.log.Info().Int("lidarr_id", added.ID).Str("artist", ae.Release.ArtistName).Msg("added artist to Lidarr")
 	}
 }
 

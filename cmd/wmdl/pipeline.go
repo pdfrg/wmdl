@@ -89,7 +89,7 @@ func runReviewForWeek(ctx context.Context, database *db.DB, cfg *config.Config, 
 		return 0, fmt.Errorf("loading events: %w", err)
 	}
 
-	albumEvents, err := database.ListAlbumEventsByWeek(ctx, year, week)
+	albumEvents, err := database.ListAlbumReleaseEventsByWeek(ctx, year, week)
 	if err != nil {
 		return 0, fmt.Errorf("loading album events: %w", err)
 	}
@@ -262,7 +262,7 @@ func runReviewForWeek(ctx context.Context, database *db.DB, cfg *config.Config, 
 		}
 	}
 
-	var pendingAlbumEvents []db.EventWithAlbum
+	var pendingAlbumEvents []db.EventWithAlbumRelease
 	for _, ev := range albumEvents {
 		if ev.Event.Status == model.StatusPending {
 			pendingAlbumEvents = append(pendingAlbumEvents, ev)
@@ -336,7 +336,7 @@ func runProcessForWeek(ctx context.Context, database *db.DB, cfg *config.Config,
 	if !target.Reviewed {
 		// After auto-approval, check if any non-yolo items remain pending
 		pending, _ := database.ListEventsByWeekAndStatus(ctx, year, week, model.StatusPending)
-		pendingAlbums, _ := database.ListAlbumEventsByWeekAndStatus(ctx, year, week, model.StatusPending)
+		pendingAlbums, _ := database.ListAlbumReleaseEventsByWeekAndStatus(ctx, year, week, model.StatusPending)
 		pendingBooks, _ := database.ListBookEventsByWeekAndStatus(ctx, year, week, model.StatusPending)
 		if len(pending) == 0 && len(pendingAlbums) == 0 && len(pendingBooks) == 0 {
 			target.Reviewed = true
@@ -356,7 +356,7 @@ func runProcessForWeek(ctx context.Context, database *db.DB, cfg *config.Config,
 		log.Info().Msgf("No video/anime releases found for week %d-W%02d.", year, week)
 	}
 
-	albumEventsForProcess, _ := database.ListAlbumEventsByWeekAndStatus(ctx, year, week, model.StatusApproved)
+	albumEventsForProcess, _ := database.ListAlbumReleaseEventsByWeekAndStatus(ctx, year, week, model.StatusApproved)
 	bookEventsForProcess, _ := database.ListBookEventsByWeekAndStatus(ctx, year, week, model.StatusApproved)
 
 	if typeFilter != "" {
@@ -769,7 +769,7 @@ func runProcessForWeek(ctx context.Context, database *db.DB, cfg *config.Config,
 				}
 				batchItems = append(batchItems, &process.BatchItem{
 					ID:          fmt.Sprintf("m-%d", sr.Event.Event.ID),
-					Label:       fmt.Sprintf("%s - %s", sr.Event.Artist.Name, sr.Event.Album.Title),
+					Label:       fmt.Sprintf("%s - %s", sr.Event.Release.ArtistName, sr.Event.Release.Title),
 					Releases:    sr.Top,
 					MusicResult: sr,
 				})
@@ -1029,7 +1029,7 @@ func autoApproveYoloItems(ctx context.Context, database *db.DB, cfg *config.Conf
 		}
 	}
 
-	albumEvents, err := database.ListAlbumEventsByWeek(ctx, year, week)
+	albumEvents, err := database.ListAlbumReleaseEventsByWeek(ctx, year, week)
 	if err != nil {
 		log.Warn().Err(err).Msg("loading album events for yolo auto-approve")
 		return
@@ -1037,9 +1037,9 @@ func autoApproveYoloItems(ctx context.Context, database *db.DB, cfg *config.Conf
 	for _, ae := range albumEvents {
 		if ae.Event.Status == model.StatusPending && cfg.MediaTypeMode(model.MediaTypeMusic) == "yolo" {
 			if err := database.UpdateAlbumReleaseEventStatus(ctx, ae.Event.ID, model.StatusApproved); err != nil {
-				log.Warn().Err(err).Str("album", ae.Album.Title).Msg("yolo auto-approve failed")
+				log.Warn().Err(err).Str("album", ae.Release.Title).Msg("yolo auto-approve failed")
 			} else {
-				log.Info().Str("album", ae.Album.Title).Str("artist", ae.Artist.Name).Msg("auto-approved (yolo mode)")
+				log.Info().Str("album", ae.Release.Title).Str("artist", ae.Release.ArtistName).Msg("auto-approved (yolo mode)")
 			}
 		}
 	}

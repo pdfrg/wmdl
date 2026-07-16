@@ -88,7 +88,7 @@ func newReviewCmd() *cobra.Command {
 	return cmd
 }
 
-func printReviewExport(events []db.EventWithTitle, albumEvents []db.EventWithAlbum, bookEvents []db.EventWithBook) {
+func printReviewExport(events []db.EventWithTitle, albumEvents []db.EventWithAlbumRelease, bookEvents []db.EventWithBook) {
 	var approved, rejected []string
 	for _, ev := range events {
 		title := ev.Title.Title
@@ -103,7 +103,7 @@ func printReviewExport(events []db.EventWithTitle, albumEvents []db.EventWithAlb
 		}
 	}
 	for _, ae := range albumEvents {
-		title := fmt.Sprintf("%s - %s (%d)", ae.Artist.Name, ae.Album.Title, ae.Album.Year)
+		title := fmt.Sprintf("%s - %s (%d)", ae.Release.ArtistName, ae.Release.Title, ae.Release.Year)
 		switch ae.Event.Status {
 		case model.StatusApproved:
 			approved = append(approved, title)

@@ -53,9 +53,9 @@ const (
 )
 
 type itemState struct {
-	event      db.EventWithTitle  // for movies/TV
-	albumEvent *db.EventWithAlbum // for music (nil for movies/TV)
-	bookEvent  *db.EventWithBook  // for books (nil for movies/TV/music)
+	event      db.EventWithTitle         // for movies/TV
+	albumEvent *db.EventWithAlbumRelease // for music (nil for movies/TV)
+	bookEvent  *db.EventWithBook         // for books (nil for movies/TV/music)
 	decision   decision
 }
 
@@ -74,7 +74,7 @@ func (it *itemState) displayTitle() string {
 		return fmt.Sprintf("%s — %s", it.bookEvent.Author.Name, it.bookEvent.Book.Title)
 	}
 	if it.albumEvent != nil {
-		return fmt.Sprintf("%s - %s", it.albumEvent.Artist.Name, it.albumEvent.Album.Title)
+		return fmt.Sprintf("%s - %s", it.albumEvent.Release.ArtistName, it.albumEvent.Release.Title)
 	}
 	return it.event.Title.Title
 }
@@ -112,19 +112,19 @@ func (it *itemState) libraryInfo(dbCache map[string]*db.LibraryCache) libInfo {
 		return libInfo{status: libNone}
 	}
 	if it.albumEvent != nil {
-		artistKey := "lidarr:" + it.albumEvent.Artist.MBID
-		albumKey := "lidarr-album:" + it.albumEvent.Album.MBID
+		artistKey := "lidarr:" + it.albumEvent.Release.ArtistMBID
+		albumKey := "lidarr-album:" + it.albumEvent.Release.MBID
 		artistCache := dbCache[artistKey]
 		albumCache := dbCache[albumKey]
 		if artistCache != nil && albumCache != nil {
 			return libInfo{
-				label:  fmt.Sprintf("✓ Lidarr — %s [album in library]", it.albumEvent.Artist.Name),
+				label:  fmt.Sprintf("✓ Lidarr — %s [album in library]", it.albumEvent.Release.ArtistName),
 				status: libFull,
 			}
 		}
 		if artistCache != nil {
 			return libInfo{
-				label:  fmt.Sprintf("⚠ Lidarr — %s [artist in library, album not found]", it.albumEvent.Artist.Name),
+				label:  fmt.Sprintf("⚠ Lidarr — %s [artist in library, album not found]", it.albumEvent.Release.ArtistName),
 				status: libPartial,
 			}
 		}
@@ -293,7 +293,7 @@ type TUI struct {
 	defaultBookFormat model.BookFormat
 }
 
-func NewReviewTUIWithEvents(events []db.EventWithTitle, albumEvents []db.EventWithAlbum, bookEvents []db.EventWithBook, database *db.DB, posterMode string, year, week int, prevAnimeWeek string, defaultBookFormat model.BookFormat) (*TUI, error) {
+func NewReviewTUIWithEvents(events []db.EventWithTitle, albumEvents []db.EventWithAlbumRelease, bookEvents []db.EventWithBook, database *db.DB, posterMode string, year, week int, prevAnimeWeek string, defaultBookFormat model.BookFormat) (*TUI, error) {
 	totalItems := len(events) + len(albumEvents) + len(bookEvents)
 	if totalItems == 0 {
 		return nil, fmt.Errorf("no events to review")
@@ -349,7 +349,7 @@ func NewReviewTUIWithEvents(events []db.EventWithTitle, albumEvents []db.EventWi
 	return t, nil
 }
 
-func buildLibraryCacheMap(database *db.DB, events []db.EventWithTitle, albumEvents []db.EventWithAlbum, bookEvents []db.EventWithBook) map[string]*db.LibraryCache {
+func buildLibraryCacheMap(database *db.DB, events []db.EventWithTitle, albumEvents []db.EventWithAlbumRelease, bookEvents []db.EventWithBook) map[string]*db.LibraryCache {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	var lookups []struct{ Source, ExtID string }
@@ -371,17 +371,17 @@ func buildLibraryCacheMap(database *db.DB, events []db.EventWithTitle, albumEven
 		}
 	}
 	for _, ae := range albumEvents {
-		if ae.Artist.MBID != "" {
-			key := "lidarr:" + ae.Artist.MBID
+		if ae.Release.ArtistMBID != "" {
+			key := "lidarr:" + ae.Release.ArtistMBID
 			if !seen[key] {
-				lookups = append(lookups, struct{ Source, ExtID string }{"lidarr", ae.Artist.MBID})
+				lookups = append(lookups, struct{ Source, ExtID string }{"lidarr", ae.Release.ArtistMBID})
 				seen[key] = true
 			}
 		}
-		if ae.Album.MBID != "" {
-			key := "lidarr-album:" + ae.Album.MBID
+		if ae.Release.MBID != "" {
+			key := "lidarr-album:" + ae.Release.MBID
 			if !seen[key] {
-				lookups = append(lookups, struct{ Source, ExtID string }{"lidarr-album", ae.Album.MBID})
+				lookups = append(lookups, struct{ Source, ExtID string }{"lidarr-album", ae.Release.MBID})
 				seen[key] = true
 			}
 		}
@@ -569,7 +569,7 @@ func NewReviewTUI(database *db.DB, posterMode string, defaultBookFormat model.Bo
 		return nil, fmt.Errorf("loading events: %w", err)
 	}
 
-	albumEvents, err := database.ListPendingAlbumEventsWithAlbums(listCtx)
+	albumEvents, err := database.ListPendingAlbumReleaseEvents(listCtx)
 	if err != nil {
 		return nil, fmt.Errorf("loading album events: %w", err)
 	}
@@ -664,7 +664,7 @@ func (t *TUI) loadCurrentPosterCmd() tea.Cmd {
 			return t.clearPosterCmd()
 		}
 	case it.albumEvent != nil:
-		if it.albumEvent.Album.PosterPath == "" {
+		if it.albumEvent.Release.PosterPath == "" {
 			return t.clearPosterCmd()
 		}
 	default:
@@ -689,7 +689,7 @@ func (t *TUI) loadPosterCmd() tea.Cmd {
 	case it.bookEvent != nil:
 		imageURL = it.bookEvent.Book.ImageURL
 	case it.albumEvent != nil:
-		imageURL = it.albumEvent.Album.PosterPath
+		imageURL = it.albumEvent.Release.PosterPath
 	default:
 		tl := it.event.Title
 		if tl.PosterPath != "" {
@@ -818,8 +818,8 @@ func (t *TUI) saveDecisions() error {
 							ISOWeek: it.albumEvent.Event.ISOWeek,
 						},
 						Title: &model.Title{
-							Title:     it.albumEvent.Artist.Name + " - " + it.albumEvent.Album.Title,
-							Year:      it.albumEvent.Album.Year,
+							Title:     it.albumEvent.Release.ArtistName + " - " + it.albumEvent.Release.Title,
+							Year:      it.albumEvent.Release.Year,
 							MediaType: model.MediaTypeMusic,
 						},
 					})
@@ -1056,9 +1056,9 @@ func (t *TUI) updateReview(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 				t.flashMsg = fmt.Sprintf("Failed to open browser: %v", err)
 			}
 		} else if it.albumEvent != nil {
-			u := it.albumEvent.Album.AOTYURL
+			u := it.albumEvent.Release.AOTYURL
 			if u == "" {
-				u = "https://www.albumoftheyear.org/search/?q=" + url.QueryEscape(it.albumEvent.Album.Title)
+				u = "https://www.albumoftheyear.org/search/?q=" + url.QueryEscape(it.albumEvent.Release.Title)
 			}
 			if err := exec.Command("xdg-open", u).Start(); err != nil {
 				t.flashMsg = fmt.Sprintf("Failed to open browser: %v", err)
@@ -1398,11 +1398,10 @@ func (t *TUI) buildReviewContent() string {
 	return b.String()
 }
 
-func (t *TUI) buildMusicContent(ae *db.EventWithAlbum, rw int, maxLines int) string {
+func (t *TUI) buildMusicContent(ae *db.EventWithAlbumRelease, rw int, maxLines int) string {
 	var b strings.Builder
 
-	al := ae.Album
-	ar := ae.Artist
+	rls := ae.Release
 	ev := ae.Event
 
 	decoration := " "
@@ -1424,9 +1423,9 @@ func (t *TUI) buildMusicContent(ae *db.EventWithAlbum, rw int, maxLines int) str
 		avail = 10
 	}
 
-	title := ar.Name + " - " + al.Title
-	if al.Year > 0 {
-		title = fmt.Sprintf("%s (%d)", title, al.Year)
+	title := rls.ArtistName + " - " + rls.Title
+	if rls.Year > 0 {
+		title = fmt.Sprintf("%s (%d)", title, rls.Year)
 	}
 
 	// Line 1: decoration + title
@@ -1441,40 +1440,40 @@ func (t *TUI) buildMusicContent(ae *db.EventWithAlbum, rw int, maxLines int) str
 
 	// Line 3: [album] type · source · release_date
 	var tagParts []string
-	tagParts = append(tagParts, fmt.Sprintf("[album] %s", string(al.AlbumType)))
+	tagParts = append(tagParts, fmt.Sprintf("[album] %s", string(rls.AlbumType)))
 	if isAllMusic {
 		tagParts = append(tagParts, "AllMusic Editor's Choice")
 	} else if ev.Source != "" {
 		tagParts = append(tagParts, ev.Source)
 	}
-	if isAllMusic && al.ReleaseDate != "" {
+	if isAllMusic && rls.ReleaseDate != "" {
 		// Format "2026-05-01" as "May 2026"
-		if t, err := time.Parse("2006-01-02", al.ReleaseDate); err == nil {
+		if t, err := time.Parse("2006-01-02", rls.ReleaseDate); err == nil {
 			tagParts = append(tagParts, t.Format("January 2006"))
 		} else {
-			tagParts = append(tagParts, al.ReleaseDate)
+			tagParts = append(tagParts, rls.ReleaseDate)
 		}
-	} else if al.ReleaseDate != "" {
-		tagParts = append(tagParts, al.ReleaseDate)
+	} else if rls.ReleaseDate != "" {
+		tagParts = append(tagParts, rls.ReleaseDate)
 	}
 	b.WriteString(tagStyle.Render(strings.Join(tagParts, " · ")))
 
 	// Line 4: MB info or warning
-	if al.MBID != "" {
+	if rls.MBID != "" {
 		b.WriteString("\n")
-		infoParts := []string{string(al.AlbumType)}
-		if isAllMusic && al.ReleaseDate != "" {
-			if t, err := time.Parse("2006-01-02", al.ReleaseDate); err == nil {
+		infoParts := []string{string(rls.AlbumType)}
+		if isAllMusic && rls.ReleaseDate != "" {
+			if t, err := time.Parse("2006-01-02", rls.ReleaseDate); err == nil {
 				infoParts = append(infoParts, t.Format("January 2006"))
 			} else {
-				infoParts = append(infoParts, al.ReleaseDate)
+				infoParts = append(infoParts, rls.ReleaseDate)
 			}
 		} else {
-			infoParts = append(infoParts, al.ReleaseDate)
+			infoParts = append(infoParts, rls.ReleaseDate)
 		}
 		b.WriteString(rtStyle.Render(strings.Join(infoParts, " · ")))
 	}
-	if al.MBID == "" {
+	if rls.MBID == "" {
 		b.WriteString("\n")
 		b.WriteString(rejectedStyle.Render("⚠ No MusicBrainz match — may not add to Lidarr"))
 	}
@@ -1490,41 +1489,41 @@ func (t *TUI) buildMusicContent(ae *db.EventWithAlbum, rw int, maxLines int) str
 
 	// Line 7: Scores (AOTY + AllMusic)
 	var scoreParts []string
-	if al.AOTYCriticScore > 0 {
-		scoreParts = append(scoreParts, fmt.Sprintf("AOTY critic: %.0f (%d reviews)", al.AOTYCriticScore, al.AOTYCriticCount))
+	if rls.AOTYCriticScore > 0 {
+		scoreParts = append(scoreParts, fmt.Sprintf("AOTY critic: %.0f (%d reviews)", rls.AOTYCriticScore, rls.AOTYCriticCount))
 	}
-	if al.AOTYUserScore > 0 {
-		scoreParts = append(scoreParts, fmt.Sprintf("AOTY user: %.0f (%d ratings)", al.AOTYUserScore, al.AOTYUserCount))
+	if rls.AOTYUserScore > 0 {
+		scoreParts = append(scoreParts, fmt.Sprintf("AOTY user: %.0f (%d ratings)", rls.AOTYUserScore, rls.AOTYUserCount))
 	}
-	if al.AllMusicRating > 0 {
-		scoreParts = append(scoreParts, fmt.Sprintf("AllMusic: %.0f/10", al.AllMusicRating))
+	if rls.AllMusicRating > 0 {
+		scoreParts = append(scoreParts, fmt.Sprintf("AllMusic: %.0f/10", rls.AllMusicRating))
 	}
 	if len(scoreParts) > 0 {
 		b.WriteString(ratingsLine.Render(strings.Join(scoreParts, " · ")))
 	}
 
 	// Line 8: empty before must-hear
-	if len(scoreParts) > 0 || al.AOTYMustHear {
+	if len(scoreParts) > 0 || rls.AOTYMustHear {
 		b.WriteString("\n")
 	}
 
 	// Line 9: Must Hear (if true)
-	if al.AOTYMustHear {
+	if rls.AOTYMustHear {
 		b.WriteString(approvedStyle.Render("★ Must Hear (Editor's Pick)"))
 	}
 
 	// Genres (from AOTY or AllMusic scrape)
-	if al.Genres != "" {
+	if rls.Genres != "" {
 		b.WriteString("\n")
-		b.WriteString(rtStyle.Width(rw).Render("genres: " + al.Genres))
+		b.WriteString(rtStyle.Width(rw).Render("genres: " + rls.Genres))
 	}
 
 	// Overview/blurb from AllMusic (or AOTY)
-	if al.Overview != "" {
+	if rls.Overview != "" {
 		curLines := strings.Count(b.String(), "\n") + 1
 		remaining := maxLines - curLines - 2 // \n\n separator
 		if remaining > 0 {
-			wrapped := overviewStyle.Width(rw).Render(al.Overview)
+			wrapped := overviewStyle.Width(rw).Render(rls.Overview)
 			lines := strings.Split(wrapped, "\n")
 			if len(lines) > remaining {
 				lines = lines[:remaining]
@@ -1535,51 +1534,11 @@ func (t *TUI) buildMusicContent(ae *db.EventWithAlbum, rw int, maxLines int) str
 		}
 	}
 
-	// Only show artist data for MB-matched items
-	if ar.MBID != "" && !strings.HasPrefix(ar.MBID, "_nm_") {
-		// Line 9: empty line before artist info
-		b.WriteString("\n\n")
-
-		// Line 10: country flag · begin-area, area · begin_date[-end_date] (age)
-		var locParts []string
-		if ar.Country != "" {
-			locParts = append(locParts, countryFlag(ar.Country))
-		}
-		var fromParts []string
-		if ar.BeginArea != "" {
-			fromParts = append(fromParts, ar.BeginArea)
-		}
-		if ar.Area != "" && ar.Area != ar.BeginArea {
-			fromParts = append(fromParts, ar.Area)
-		}
-		if len(fromParts) > 0 {
-			locParts = append(locParts, strings.Join(fromParts, ", "))
-		}
-		if ar.BeginDate != "" {
-			dateStr := ar.BeginDate
-			if ar.EndDate != "" {
-				dateStr += " – " + ar.EndDate
-			}
-			age := calcAge(ar.BeginDate, ar.EndDate)
-			if age >= 0 {
-				dateStr += fmt.Sprintf(" (%d)", age)
-			}
-			locParts = append(locParts, dateStr)
-		}
-		if len(locParts) > 0 {
-			b.WriteString(strings.Join(locParts, " · "))
-		}
-
-		// Line 11: disambiguation
-		if ar.Disambiguation != "" {
-			b.WriteString("\n")
-			b.WriteString(rtStyle.Render(ar.Disambiguation))
-		}
-
-		// MB artist rating (always shown, — when none)
+	// MB artist rating (always shown, — when none)
+	if rls.ArtistMBID != "" && !strings.HasPrefix(rls.ArtistMBID, "_nm_") {
 		b.WriteString("\n")
-		b.WriteString(ratingsLine.Render(fmt.Sprintf("MB artist rating: %s", fmtRating(ar.MBRating))))
 	}
+	b.WriteString(ratingsLine.Render(fmt.Sprintf("MB artist rating: %s", fmtRating(rls.MBRating))))
 
 	// Library status
 	it = t.currentItem()
@@ -1778,31 +1737,6 @@ func (t *TUI) buildBookContent(be *db.EventWithBook, rw int, maxLines int) strin
 	}
 
 	return b.String()
-}
-
-func calcAge(beginDate, endDate string) int {
-	layout := "2006-01-02"
-	start, err := time.Parse(layout, beginDate)
-	if err != nil {
-		return -1
-	}
-	var end time.Time
-	if endDate != "" {
-		end, err = time.Parse(layout, endDate)
-		if err != nil {
-			return -1
-		}
-	} else {
-		end = time.Now()
-	}
-	if end.Before(start) {
-		return -1
-	}
-	age := end.Year() - start.Year()
-	if end.YearDay() < start.YearDay() {
-		age--
-	}
-	return age
 }
 
 func (t *TUI) buildPosterBlock() string {

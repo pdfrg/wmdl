@@ -1716,9 +1716,9 @@ func (r *Runner) processMusicItem(ctx context.Context, item ScrapedItem, progYea
 
 	// Check if we already have this AOTY item (unique URL) before doing any work
 	if item.AOTYURL != "" {
-		existingAlbum, err := r.db.GetAlbumByAOTYURL(ctx, item.AOTYURL)
-		if err == nil && existingAlbum != nil {
-			existingEvent, err := r.db.GetLatestAlbumReleaseEvent(ctx, existingAlbum.ID)
+		existingRelease, err := r.db.GetAlbumReleaseByAOTYURL(ctx, item.AOTYURL)
+		if err == nil && existingRelease != nil {
+			existingEvent, err := r.db.GetLatestAlbumReleaseEvent(ctx, existingRelease.ID)
 			if err == nil && existingEvent != nil {
 				r.log.Info().Str("album", item.Title).Msg("already have this album, skipping")
 				return nil
@@ -1730,7 +1730,6 @@ func (r *Runner) processMusicItem(ctx context.Context, item ScrapedItem, progYea
 	mbAlbumID := ""
 	mbArtistID := ""
 	mbArtistName := item.ArtistName
-	var artistDetail *MBArtistDetail
 	var mbGenres []string
 	mbRating := 0.0
 
@@ -1761,34 +1760,40 @@ func (r *Runner) processMusicItem(ctx context.Context, item ScrapedItem, progYea
 					break
 				}
 			}
-			if !match {
+			if match {
+				mbAlbumID = blindResult.MBID
+				mbArtistID = blindResult.ArtistMBID
+				r.log.Info().Str("album", item.Title).Msg("found via blind MB search")
+			} else {
 				r.log.Warn().Str("scraped_artist", item.ArtistName).
 					Str("mb_artist", blindResult.ArtistName).
 					Str("album", item.Title).
-					Msg("artist mismatch with blind MB search, skipping unreliable pair")
-				return nil
+					Msg("artist mismatch with blind MB search, storing without MB data")
 			}
 		}
-		r.log.Info().Str("album", item.Title).Msg("not found in MusicBrainz, storing without MB data")
+		if mbAlbumID == "" {
+			r.log.Info().Str("album", item.Title).Msg("not found in MusicBrainz, storing without MB data")
+		}
 	} else {
-		mbAlbumID = rgResult.MBID
-		mbArtistID = rgResult.ArtistMBID
-		if rgResult.ArtistName != "" {
-			mbArtistName = rgResult.ArtistName
-		}
-
-		// Fetch artist detail by MBID for enrichment
-		if mbArtistID != "" {
-			r.log.Info().Str("mbid", mbArtistID).Msg("musicbrainz: fetching artist detail")
-			ad, err := r.mb.GetArtist(apiCtx, mbArtistID)
-			if err != nil {
-				r.log.Warn().Err(err).Str("mbid", mbArtistID).Msg("musicbrainz: artist detail fetch failed")
-			} else {
-				artistDetail = ad
+		// Verify the returned artist name matches the scraped one
+		match := false
+		for _, a := range artists {
+			if artistNamesMatch(a, rgResult.ArtistName) {
+				match = true
+				break
 			}
 		}
+		if !match {
+			r.log.Warn().Str("scraped_artist", item.ArtistName).
+				Str("mb_artist", rgResult.ArtistName).
+				Str("album", item.Title).
+				Msg("artist mismatch in MB search result, storing without MB data")
+		} else {
+			mbAlbumID = rgResult.MBID
+			mbArtistID = rgResult.ArtistMBID
+			r.log.Info().Str("album", item.Title).Msg("found in MusicBrainz")
+		}
 
-		// Fetch release group detail for rating and genres
 		if mbAlbumID != "" {
 			r.log.Info().Str("mbid", mbAlbumID).Msg("musicbrainz: fetching release group detail")
 			detail, err := r.mb.GetReleaseGroupDetail(apiCtx, mbAlbumID)
@@ -1799,39 +1804,18 @@ func (r *Runner) processMusicItem(ctx context.Context, item ScrapedItem, progYea
 		}
 	}
 
-	// Step 2: Upsert artist (always — with or without MB data)
-	artist := &model.Artist{
-		MBID: mbArtistID,
-		Name: mbArtistName,
-	}
-	if artistDetail != nil {
-		artist.Country = artistDetail.Country
-		artist.ArtistType = artistDetail.Type
-		artist.BeginDate = artistDetail.BeginDate
-		artist.EndDate = artistDetail.EndDate
-		artist.BeginArea = artistDetail.BeginArea
-		artist.Area = artistDetail.Area
-		artist.Disambiguation = artistDetail.Disambiguation
-		artist.Tags = strings.Join(artistDetail.Tags, ", ")
-		artist.Genres = strings.Join(artistDetail.Genres, ", ")
-		artist.MBRating = artistDetail.Rating
-	}
-	artistID, err := r.db.UpsertArtist(ctx, artist)
-	if err != nil {
-		return fmt.Errorf("saving artist: %w", err)
-	}
-
-	// Step 3: Upsert album (always)
+	// Step 2: Build and upsert release (artist_name from scraper, MBIDs from enrichment)
 	genresStr := item.Genres
 	if genresStr == "" {
 		genresStr = strings.Join(mbGenres, ", ")
 	}
 
-	album := &model.Album{
-		ArtistID:        artistID,
+	release := &model.AlbumRelease{
+		ArtistName:      mbArtistName,
 		Title:           item.Title,
 		Year:            item.Year,
 		MBID:            mbAlbumID,
+		ArtistMBID:      mbArtistID,
 		AlbumType:       item.AlbumType,
 		ReleaseDate:     item.ReleaseDate,
 		Genres:          genresStr,
@@ -1849,19 +1833,19 @@ func (r *Runner) processMusicItem(ctx context.Context, item ScrapedItem, progYea
 	}
 
 	// Content filter
-	if result := FilterMusic(&r.cfg.MediaTypes.Music.Filter.ContentFilter, artist, album); !result.Passed {
+	if result := FilterMusic(&r.cfg.MediaTypes.Music.Filter.ContentFilter, release); !result.Passed {
 		r.log.Info().Str("artist", item.ArtistName).Str("album", item.Title).Str("reason", result.Reason).
 			Msg("content filter: skipping")
 		return nil
 	}
 
-	albumID, err := r.db.UpsertAlbum(ctx, album)
+	releaseID, err := r.db.UpsertAlbumRelease(ctx, release)
 	if err != nil {
-		return fmt.Errorf("saving album: %w", err)
+		return fmt.Errorf("saving album release: %w", err)
 	}
 
-	// Step 4: Create/update release event
-	existing, err := r.db.GetLatestAlbumReleaseEvent(ctx, albumID)
+	// Step 3: Create/update release event
+	existing, err := r.db.GetLatestAlbumReleaseEvent(ctx, releaseID)
 	if err != nil {
 		return fmt.Errorf("checking existing events: %w", err)
 	}
@@ -1891,7 +1875,7 @@ func (r *Runner) processMusicItem(ctx context.Context, item ScrapedItem, progYea
 	}
 
 	evt := &model.AlbumReleaseEvent{
-		AlbumID:     albumID,
+		ReleaseID:   releaseID,
 		Source:      item.Source,
 		ReleaseDate: item.ReleaseDate,
 		Status:      model.StatusPending,

@@ -100,20 +100,14 @@ func FilterTitle(f *config.ContentFilter, t *model.Title) FilterResult {
 	return FilterResult{Passed: true}
 }
 
-func FilterMusic(f *config.ContentFilter, artist *model.Artist, album *model.Album) FilterResult {
+func FilterMusic(f *config.ContentFilter, release *model.AlbumRelease) FilterResult {
 	if filterIsEmpty(f) {
 		return FilterResult{Passed: true}
 	}
 
-	if len(f.BlockedCountries) > 0 && artist.Country != "" {
-		if containsString(f.BlockedCountries, strings.ToLower(artist.Country)) {
-			return FilterResult{Passed: false, Reason: "country " + artist.Country + " is blocked"}
-		}
-	}
-
-	if len(f.BlockedGenres) > 0 && album.Genres != "" {
+	if len(f.BlockedGenres) > 0 && release.Genres != "" {
 		for _, blocked := range f.BlockedGenres {
-			if hasGenre(album.Genres, blocked) {
+			if hasGenre(release.Genres, blocked) {
 				return FilterResult{Passed: false, Reason: "genre " + blocked + " is blocked for album"}
 			}
 		}

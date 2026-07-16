@@ -112,7 +112,7 @@ Use --verbose to list items that were approved but not yet downloaded.`,
 						if s.Processed && s.ApprovedCount > 0 && s.DownloadedCount < s.ApprovedCount {
 							movieEvents, _ := database.ListEventsByWeekAndStatus(ctx, s.Year, s.Week, model.StatusApproved)
 							bookEvents, _ := database.ListBookEventsByWeekAndStatus(ctx, s.Year, s.Week, model.StatusApproved)
-							albumEvents, _ := database.ListAlbumEventsByWeekAndStatus(ctx, s.Year, s.Week, model.StatusApproved)
+							albumEvents, _ := database.ListAlbumReleaseEventsByWeekAndStatus(ctx, s.Year, s.Week, model.StatusApproved)
 
 							if len(movieEvents) == 0 && len(bookEvents) == 0 && len(albumEvents) == 0 {
 								continue
@@ -137,7 +137,7 @@ Use --verbose to list items that were approved but not yet downloaded.`,
 								fmt.Fprintf(os.Stderr, "  • %s by %s [%s]  (book:%d)\n", e.Book.Title, e.Author.Name, formatLabel, e.Event.ID)
 							}
 							for _, e := range albumEvents {
-								fmt.Fprintf(os.Stderr, "  • %s by %s [album]  (album:%d)\n", e.Album.Title, e.Artist.Name, e.Event.ID)
+								fmt.Fprintf(os.Stderr, "  • %s by %s [album]  (album:%d)\n", e.Release.Title, e.Release.ArtistName, e.Event.ID)
 							}
 						}
 					}

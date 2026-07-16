@@ -217,7 +217,7 @@ func promptBookFormat(title string) []model.BookFormat {
 }
 
 func markAlbumDownloaded(ctx context.Context, database *db.DB, id int64) error {
-	evt, err := database.GetAlbumReleaseEventWithAlbum(ctx, id)
+	evt, err := database.GetAlbumReleaseEvent(ctx, id)
 	if err != nil {
 		return fmt.Errorf("looking up album release event %d: %w", id, err)
 	}
@@ -231,7 +231,7 @@ func markAlbumDownloaded(ctx context.Context, database *db.DB, id int64) error {
 	if err := database.UpdateAlbumReleaseEventStatus(ctx, id, model.StatusDownloaded); err != nil {
 		return fmt.Errorf("marking album %d as downloaded: %w", id, err)
 	}
-	fmt.Fprintf(os.Stderr, "  marked album:%d (%s) as downloaded\n", id, evt.Album.Title)
+	fmt.Fprintf(os.Stderr, "  marked album:%d (%s) as downloaded\n", id, evt.Release.Title)
 	return nil
 }
 

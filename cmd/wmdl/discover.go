@@ -37,7 +37,9 @@ of lookback weeks and files everything under the current target week.
 After this run, normal config values resume.
 Notes:
   • bookshop always scrapes the current real week, unaffected by --lookback.
-  • allmusic participates in --lookback music; its month-boundary logic applies.`,
+  • allmusic participates in --lookback music; its month-boundary logic applies.
+  • allmusic (and some other scrapers) require a real browser session and will
+    not function in --headless mode due to Cloudflare challenges.`,
 
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := config.Load()

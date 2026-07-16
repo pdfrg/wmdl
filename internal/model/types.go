@@ -141,31 +141,14 @@ const (
 	AlbumTypeSingle      AlbumType = "single"
 )
 
-type Artist struct {
-	ID             int64
-	MBID           string
-	Name           string
-	LidarrID       int64
-	Country        string // ISO country code (e.g. "US", "AU")
-	ArtistType     string // "Person" or "Group"
-	BeginDate      string // birth/formation date (ISO 8601)
-	EndDate        string // death/dissolution date
-	BeginArea      string // birthplace or origin area name
-	Area           string // area name (e.g. "United States")
-	Disambiguation string
-	Tags           string // comma-separated MB tags
-	Genres         string // comma-separated MB genre tags
-	MBRating       float64
-	CreatedAt      string
-}
-
-type Album struct {
-	ID        int64
-	ArtistID  int64
-	Title     string
-	Year      int
-	MBID      string // MusicBrainz release group ID
-	AlbumType AlbumType
+type AlbumRelease struct {
+	ID         int64
+	ArtistName string // from scraper, always
+	Title      string // from scraper, always
+	Year       int
+	MBID       string // MusicBrainz release group ID
+	ArtistMBID string // MusicBrainz artist ID
+	AlbumType  AlbumType
 
 	AOTYCriticScore float64
 	AOTYCriticCount int
@@ -187,7 +170,7 @@ type Album struct {
 
 type AlbumReleaseEvent struct {
 	ID             int64
-	AlbumID        int64
+	ReleaseID      int64
 	Source         string // "albumoftheyear"
 	ReleaseDate    string
 	Status         ReleaseStatus

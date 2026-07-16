@@ -330,33 +330,23 @@ func addMusic(ctx context.Context, database *db.DB, query string, year, week int
 		albumTitle = strings.TrimSpace(parts[1])
 	}
 
-	// Create artist
-	artist := &model.Artist{
-		Name: artistName,
+	release := &model.AlbumRelease{
+		ArtistName: artistName,
+		MBID:       aFlags.mbid,
+		Title:      albumTitle,
+		Year:       aFlags.year,
 	}
-	artistID, err := database.UpsertArtist(ctx, artist)
+	releaseID, err := database.UpsertAlbumRelease(ctx, release)
 	if err != nil {
-		return fmt.Errorf("saving artist: %w", err)
-	}
-
-	// Create album
-	album := &model.Album{
-		ArtistID: artistID,
-		MBID:     aFlags.mbid,
-		Title:    albumTitle,
-		Year:     aFlags.year,
-	}
-	albumID, err := database.UpsertAlbum(ctx, album)
-	if err != nil {
-		return fmt.Errorf("saving album: %w", err)
+		return fmt.Errorf("saving album release: %w", err)
 	}
 
 	evt := &model.AlbumReleaseEvent{
-		AlbumID: albumID,
-		Source:  "manual-add",
-		Status:  model.ReleaseStatus(aFlags.status),
-		ISOYear: year,
-		ISOWeek: week,
+		ReleaseID: releaseID,
+		Source:    "manual-add",
+		Status:    model.ReleaseStatus(aFlags.status),
+		ISOYear:   year,
+		ISOWeek:   week,
 	}
 	if _, err := database.CreateAlbumReleaseEvent(ctx, evt); err != nil {
 		return fmt.Errorf("creating album release event: %w", err)

@@ -206,13 +206,13 @@ func runBacklogBatch(ctx context.Context, database *db.DB, cfg *config.Config, t
 	type backlogWeekData struct {
 		state       *model.WeekState
 		events      []db.EventWithTitle
-		albumEvents []db.EventWithAlbum
+		albumEvents []db.EventWithAlbumRelease
 		bookEvents  []db.EventWithBook
 	}
 
 	var weeks []backlogWeekData
 	var allEvents []db.EventWithTitle
-	var allAlbumEvents []db.EventWithAlbum
+	var allAlbumEvents []db.EventWithAlbumRelease
 	var allBookEvents []db.EventWithBook
 	var allAnimeAiring []db.EventWithTitle
 
@@ -224,7 +224,7 @@ func runBacklogBatch(ctx context.Context, database *db.DB, cfg *config.Config, t
 			log.Warn().Err(err).Msgf("backlog: loading events for %d-W%02d, skipping week", s.Year, s.Week)
 			continue
 		}
-		albumEvents, err := database.ListAlbumEventsByWeekAndStatus(ctx, s.Year, s.Week, model.StatusApproved)
+		albumEvents, err := database.ListAlbumReleaseEventsByWeekAndStatus(ctx, s.Year, s.Week, model.StatusApproved)
 		if err != nil {
 			log.Warn().Err(err).Msgf("backlog: loading album events for %d-W%02d, skipping week", s.Year, s.Week)
 			continue
@@ -610,7 +610,7 @@ func runBacklogBatch(ctx context.Context, database *db.DB, cfg *config.Config, t
 				}
 				batchItems = append(batchItems, &process.BatchItem{
 					ID:          fmt.Sprintf("m-%d", sr.Event.Event.ID),
-					Label:       fmt.Sprintf("%s - %s", sr.Event.Artist.Name, sr.Event.Album.Title),
+					Label:       fmt.Sprintf("%s - %s", sr.Event.Release.ArtistName, sr.Event.Release.Title),
 					Releases:    sr.Top,
 					MusicResult: sr,
 				})
