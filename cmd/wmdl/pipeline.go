@@ -450,7 +450,7 @@ func runProcessForWeek(ctx context.Context, database *db.DB, cfg *config.Config,
 	var animeAiring []db.EventWithTitle
 	var searchable []db.EventWithTitle
 	for _, ev := range events {
-		if ev.Title.MediaType == model.MediaTypeAnime && (ev.Event.Source == "jikan-airing" || ev.Event.Source == "anilist-airing") {
+		if ev.Title.MediaType == model.MediaTypeAnime && (ev.Event.Source == "jikan-airing" || ev.Event.Source == "anilist-airing" || ev.Event.Source == "tenrai-airing") {
 			animeAiring = append(animeAiring, ev)
 		} else {
 			searchable = append(searchable, ev)

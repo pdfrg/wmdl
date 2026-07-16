@@ -10,13 +10,25 @@ import (
 	"time"
 )
 
-// jikanAnimeExists checks whether Jikan's database has an anime matching the given title.
-// Returns (true, nil) if found, (false, nil) if not found, (false, err) on API error.
-func jikanAnimeExists(ctx context.Context, title string) (bool, error) {
+// malAnimeExists checks whether Tenrai (primary) or Jikan (fallback) has an
+// anime matching the given title. Returns (true, nil) if found, (false, nil)
+// if not found, (false, err) if all backends fail.
+func malAnimeExists(ctx context.Context, title string) (bool, error) {
 	client := &http.Client{Timeout: 15 * time.Second}
 	defer client.CloseIdleConnections()
 
-	u := fmt.Sprintf("https://api.jikan.moe/v4/anime?q=%s&limit=1", url.QueryEscape(title))
+	// Try Tenrai first
+	found, err := searchAPI(ctx, client, "https://api.tenrai.org/v1/anime?q=%s&limit=1", title)
+	if err == nil {
+		return found, nil
+	}
+
+	// Fallback to Jikan
+	return searchAPI(ctx, client, "https://api.jikan.moe/v4/anime?q=%s&limit=1", title)
+}
+
+func searchAPI(ctx context.Context, client *http.Client, urlTemplate, title string) (bool, error) {
+	u := fmt.Sprintf(urlTemplate, url.QueryEscape(title))
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
@@ -31,7 +43,7 @@ func jikanAnimeExists(ctx context.Context, title string) (bool, error) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return false, fmt.Errorf("jikan search returned %d", resp.StatusCode)
+		return false, fmt.Errorf("search returned %d", resp.StatusCode)
 	}
 
 	body, err := io.ReadAll(resp.Body)

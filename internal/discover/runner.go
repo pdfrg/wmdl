@@ -577,6 +577,13 @@ func (r *Runner) Run(ctx context.Context) error {
 			}
 			providers = append(providers, anilist)
 
+			tenrai := NewTenraiAnimeProvider(r.cfg.MediaTypes.Anime)
+			if r.hasTargetWeek {
+				animeYear, animeWeek := addISOWeekOffset(r.targetYear, r.targetWeek, wk)
+				tenrai.SetWeekRange(animeYear, animeWeek)
+			}
+			providers = append(providers, tenrai)
+
 			jikan := NewJikanAnimeProvider(r.cfg.MediaTypes.Anime)
 			if r.hasTargetWeek {
 				animeYear, animeWeek := addISOWeekOffset(r.targetYear, r.targetWeek, wk)
@@ -800,20 +807,20 @@ func (r *Runner) Run(ctx context.Context) error {
 		bookItems = append(bookItems, *item)
 	}
 
-	// Filter out FlixPatrol items tagged as "Anime" genre when Jikan already
-	// tracks them. Items unknown to Jikan stay in the video pipeline as a
-	// second-chance fallback (e.g. shows below Jikan member thresholds).
+	// Filter out FlixPatrol items tagged as "Anime" genre when the MAL API
+	// already tracks them. Items unknown stay in the pipeline as a
+	// second-chance fallback (e.g. shows below member thresholds).
 	if r.cfg.MediaTypes.Anime.FilterFlixPatrolAnime {
 		var filtered []ScrapedItem
 		for _, item := range uniqueVideos {
 			if item.Source == "flixpatrol" && item.Genres == "Anime" {
-				found, err := jikanAnimeExists(ctx, item.Title)
+				found, err := malAnimeExists(ctx, item.Title)
 				if err != nil {
 					r.log.Warn().Err(err).Str("title", item.Title).
-						Msg("jikan search failed, keeping flixpatrol item")
+						Msg("mal search failed, keeping flixpatrol item")
 				} else if found {
 					r.log.Debug().Str("title", item.Title).
-						Msg("flixpatrol: skipping anime-genre item already tracked by jikan")
+						Msg("flixpatrol: skipping anime-genre item already tracked")
 					continue
 				}
 			}
@@ -1077,20 +1084,20 @@ func (r *Runner) Run(ctx context.Context) error {
 		}
 
 		if wantAnime && r.cfg.MediaTypes.Anime.Enabled {
-			if _, ok := sourceCounts["anilist (completed)"]; !ok {
-				sourceCounts["anilist (completed)"] = 0
-			}
-			if r.cfg.MediaTypes.Anime.PhaseBEnabled {
-				if _, ok := sourceCounts["anilist (airing)"]; !ok {
-					sourceCounts["anilist (airing)"] = 0
+			for _, label := range []string{
+				"anilist (completed)", "tenrai (completed)", "jikan (completed)",
+			} {
+				if _, ok := sourceCounts[label]; !ok {
+					sourceCounts[label] = 0
 				}
 			}
-			if _, ok := sourceCounts["jikan (completed)"]; !ok {
-				sourceCounts["jikan (completed)"] = 0
-			}
 			if r.cfg.MediaTypes.Anime.PhaseBEnabled {
-				if _, ok := sourceCounts["jikan (airing)"]; !ok {
-					sourceCounts["jikan (airing)"] = 0
+				for _, label := range []string{
+					"anilist (airing)", "tenrai (airing)", "jikan (airing)",
+				} {
+					if _, ok := sourceCounts[label]; !ok {
+						sourceCounts[label] = 0
+					}
 				}
 			}
 		}
@@ -1221,6 +1228,10 @@ func sourceDisplayName(source string, mt model.MediaType) string {
 		return "anilist (completed)"
 	case "anilist-airing":
 		return "anilist (airing)"
+	case "tenrai":
+		return "tenrai (completed)"
+	case "tenrai-airing":
+		return "tenrai (airing)"
 	case "jikan":
 		return "jikan (completed)"
 	case "jikan-airing":

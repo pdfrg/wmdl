@@ -1979,7 +1979,7 @@ func (t *TUI) buildRightContent(tl *model.Title, ev *model.ReleaseEvent, rw int,
 	}
 
 	// Phase B (currently-airing) notice
-	if strings.HasPrefix(ev.Source, "jikan-airing") || strings.HasPrefix(ev.Source, "anilist-airing") {
+	if strings.HasPrefix(ev.Source, "jikan-airing") || strings.HasPrefix(ev.Source, "anilist-airing") || strings.HasPrefix(ev.Source, "tenrai-airing") {
 		b.WriteString("\n\n")
 		b.WriteString(warnStyle.Render("⏳ Currently Airing"))
 		if strings.Contains(ev.Notes, "end=") {
