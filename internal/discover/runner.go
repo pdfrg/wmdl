@@ -792,6 +792,18 @@ func (r *Runner) Run(ctx context.Context) error {
 		uniqueMusic = append(uniqueMusic, item)
 	}
 
+	// Deduplicate anime items by title+year
+	seenAnime := make(map[string]bool)
+	var uniqueAnime []ScrapedItem
+	for _, item := range animeItems {
+		key := fmt.Sprintf("%s|%d", item.Title, item.Year)
+		if seenAnime[key] {
+			continue
+		}
+		seenAnime[key] = true
+		uniqueAnime = append(uniqueAnime, item)
+	}
+
 	// Deduplicate book items by normalized author+title — merge sources instead of discarding
 	bookMap := make(map[string]*ScrapedItem)
 	for i := range bookItems {
@@ -1046,39 +1058,17 @@ func (r *Runner) Run(ctx context.Context) error {
 		// Add expected-but-zero entries for configured scrapers
 		if wantMovie && r.cfg.MediaTypes.Movies.Enabled {
 			for _, s := range r.cfg.MediaTypes.Movies.Scrapers {
-				switch s {
-				case "tmdb-discover":
-					if _, ok := sourceCounts["tmdb movies"]; !ok {
-						sourceCounts["tmdb movies"] = 0
-					}
-				case "flixpatrol":
-					if _, ok := sourceCounts["flixpatrol movies"]; !ok {
-						sourceCounts["flixpatrol movies"] = 0
-					}
-				default:
-					label := sourceDisplayName(s, model.MediaTypeMovie)
-					if _, ok := sourceCounts[label]; !ok {
-						sourceCounts[label] = 0
-					}
+				label := sourceDisplayName(s, model.MediaTypeMovie)
+				if _, ok := sourceCounts[label]; !ok {
+					sourceCounts[label] = 0
 				}
 			}
 		}
 		if wantTV && r.cfg.MediaTypes.TV.Enabled {
 			for _, s := range r.cfg.MediaTypes.TV.Scrapers {
-				switch s {
-				case "tmdb-discover":
-					if _, ok := sourceCounts["tmdb tv"]; !ok {
-						sourceCounts["tmdb tv"] = 0
-					}
-				case "flixpatrol":
-					if _, ok := sourceCounts["flixpatrol tv"]; !ok {
-						sourceCounts["flixpatrol tv"] = 0
-					}
-				default:
-					label := sourceDisplayName(s, model.MediaTypeTV)
-					if _, ok := sourceCounts[label]; !ok {
-						sourceCounts[label] = 0
-					}
+				label := sourceDisplayName(s, model.MediaTypeTV)
+				if _, ok := sourceCounts[label]; !ok {
+					sourceCounts[label] = 0
 				}
 			}
 		}
@@ -1088,6 +1078,11 @@ func (r *Runner) Run(ctx context.Context) error {
 				"anilist (completed)", "tenrai (completed)", "jikan (completed)",
 			} {
 				if _, ok := sourceCounts[label]; !ok {
+					if label == "jikan (completed)" {
+						if sourceCounts["anilist (completed)"] > 0 || sourceCounts["tenrai (completed)"] > 0 {
+							continue
+						}
+					}
 					sourceCounts[label] = 0
 				}
 			}
@@ -1096,6 +1091,11 @@ func (r *Runner) Run(ctx context.Context) error {
 					"anilist (airing)", "tenrai (airing)", "jikan (airing)",
 				} {
 					if _, ok := sourceCounts[label]; !ok {
+						if label == "jikan (airing)" {
+							if sourceCounts["anilist (airing)"] > 0 || sourceCounts["tenrai (airing)"] > 0 {
+								continue
+							}
+						}
 						sourceCounts[label] = 0
 					}
 				}
@@ -1155,33 +1155,40 @@ func (r *Runner) Run(ctx context.Context) error {
 			}
 		}
 
-		// Build title list from dedup'd items
-		type namedItem struct {
-			title string
-			year  int
-		}
-		var notifyItems []namedItem
+		// Group items by media type for sectioned display (matches review TUI ordering)
+		var movieItems, tvItems []ScrapedItem
 		for _, item := range uniqueVideos {
-			notifyItems = append(notifyItems, namedItem{item.Title, item.Year})
-		}
-		for _, item := range animeItems {
-			notifyItems = append(notifyItems, namedItem{item.Title, item.Year})
-		}
-		for _, item := range uniqueMusic {
-			notifyItems = append(notifyItems, namedItem{item.ArtistName + " — " + item.Title, item.Year})
-		}
-		for _, item := range bookItems {
-			notifyItems = append(notifyItems, namedItem{item.ArtistName + " — " + item.Title, item.Year})
-		}
-
-		// Show all titles (no cap)
-		for _, item := range notifyItems {
-			if item.year > 0 {
-				msg += fmt.Sprintf("\n- %s (%d)", item.title, item.year)
-			} else {
-				msg += fmt.Sprintf("\n- %s", item.title)
+			switch item.MediaType {
+			case model.MediaTypeTV:
+				tvItems = append(tvItems, item)
+			default:
+				movieItems = append(movieItems, item)
 			}
 		}
+
+		appendSection := func(items []ScrapedItem, heading string, includeArtist bool) {
+			if len(items) == 0 {
+				return
+			}
+			msg += fmt.Sprintf("\n**%s:**", heading)
+			for _, item := range items {
+				label := item.Title
+				if includeArtist {
+					label = item.ArtistName + " — " + label
+				}
+				if item.Year > 0 {
+					msg += fmt.Sprintf("\n- %s (%d)", label, item.Year)
+				} else {
+					msg += fmt.Sprintf("\n- %s", label)
+				}
+			}
+		}
+
+		appendSection(movieItems, "Movies", false)
+		appendSection(tvItems, "TV", false)
+		appendSection(uniqueAnime, "Anime", false)
+		appendSection(uniqueMusic, "Music", true)
+		appendSection(bookItems, "Books", true)
 
 		if err := r.notify.Send("wmdl: New Releases", msg, 5); err != nil {
 			r.log.Warn().Err(err).Msg("notification failed")
