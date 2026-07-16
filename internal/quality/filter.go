@@ -321,7 +321,7 @@ func FilterRelease(r ParsedRelease, searchTitle string, searchYear, searchSeason
 	}
 
 	// Title similarity: all normalized search words must appear in release title
-	searchNorm := normalizeTitle(searchTitle)
+	searchNorm := normalizeRelease(searchTitle)
 	releaseNorm := normalizeRelease(r.RawTitle)
 	searchWords := strings.Fields(searchNorm)
 	if len(searchWords) == 0 {
@@ -421,6 +421,8 @@ func normalizeRelease(rawTitle string) string {
 		".", " ", "-", " ", "_", " ",
 		":", " ",
 		"(", " ", ")", " ", "!", " ", "?", " ",
+		"–", " ", "—", " ",
+		"'", "", "`", "", "’", "", "‘", "",
 	).Replace(s)
 	// Collapse multiple spaces
 	return strings.Join(strings.Fields(s), " ")
