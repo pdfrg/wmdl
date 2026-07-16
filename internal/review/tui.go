@@ -1997,6 +1997,31 @@ func (t *TUI) buildRightContent(tl *model.Title, ev *model.ReleaseEvent, rw int,
 		b.WriteString("\n")
 	}
 
+	// OMDB credits (Director, Writer, Actors) — non-anime only
+	if tl.MediaType != model.MediaTypeAnime {
+		var creditParts []string
+		if tl.Director != "" {
+			creditParts = append(creditParts, fmt.Sprintf("Director: %s", tl.Director))
+		}
+		if tl.Writer != "" && tl.Writer != tl.Director {
+			creditParts = append(creditParts, fmt.Sprintf("Writer: %s", tl.Writer))
+		} else if tl.Writer != "" {
+			creditParts = append(creditParts, fmt.Sprintf("Writer: %s", tl.Writer))
+		}
+		if tl.Actors != "" {
+			// Truncate long actor lists
+			actors := tl.Actors
+			if len(actors) > 80 {
+				actors = actors[:77] + "..."
+			}
+			creditParts = append(creditParts, fmt.Sprintf("Actors: %s", actors))
+		}
+		if len(creditParts) > 0 {
+			b.WriteString("\n")
+			b.WriteString(strings.Join(creditParts, " · "))
+		}
+	}
+
 	// Scores line
 	if tl.MediaType == model.MediaTypeAnime {
 		var ratings []string
@@ -2014,9 +2039,13 @@ func (t *TUI) buildRightContent(tl *model.Title, ev *model.ReleaseEvent, rw int,
 			b.WriteString(ratingsLine.Render(strings.Join(ratings, " · ")))
 		}
 	} else {
+		imdbStr := fmtRating(tl.ImdbRating)
+		if tl.ImdbVotes > 0 {
+			imdbStr = fmt.Sprintf("%s (%s votes)", imdbStr, fmtViews(tl.ImdbVotes))
+		}
 		ratings := fmt.Sprintf("TMDB: %s · IMDb: %s · MC: %s · YT: %s · 🍅 %s · 🍿 %s",
 			fmtRating(tl.TmdbRating),
-			fmtRating(tl.ImdbRating),
+			imdbStr,
 			fmtRating(tl.MetacriticScore),
 			fmtViews(tl.YoutubeViews),
 			fmtPct(tl.RTCriticsScore),
@@ -2024,6 +2053,18 @@ func (t *TUI) buildRightContent(tl *model.Title, ev *model.ReleaseEvent, rw int,
 		)
 		b.WriteString("\n\n")
 		b.WriteString(ratingsLine.Render(ratings))
+	}
+
+	// Awards and box office
+	if tl.MediaType != model.MediaTypeAnime {
+		if tl.Awards != "" {
+			b.WriteString("\n")
+			b.WriteString(rtStyle.Render("Awards: " + tl.Awards))
+		}
+		if tl.BoxOffice != "" {
+			b.WriteString("\n")
+			b.WriteString(rtStyle.Render("Box Office: " + tl.BoxOffice))
+		}
 	}
 
 	// Library status

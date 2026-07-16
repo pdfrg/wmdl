@@ -18,6 +18,7 @@ type Config struct {
 	Browser          BrowserConfig    `mapstructure:"browser"`
 	Prowlarr         ProwlarrConfig   `mapstructure:"prowlarr"`
 	TMDB             TMDBConfig       `mapstructure:"tmdb"`
+	OMDB             OMDBConfig       `mapstructure:"omdb"`
 	Downloader       DownloaderConfig `mapstructure:"downloader"`
 	Library          LibraryConfig    `mapstructure:"library"`
 	Quality          QualityConfig    `mapstructure:"quality"`
@@ -74,6 +75,10 @@ type IndexerPerCategory struct {
 type TMDBConfig struct {
 	APIKey      string `mapstructure:"api_key"`
 	AccessToken string `mapstructure:"access_token"`
+}
+
+type OMDBConfig struct {
+	APIKey string `mapstructure:"api_key"`
 }
 
 type HardcoverConfig struct {
@@ -620,6 +625,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("media_types.books.filter.min_rating", 3.5)
 	v.SetDefault("media_types.books.filter.min_ratings", 100)
 
+	v.SetDefault("omdb.api_key", "")
 	v.SetDefault("hardcover.api_key", "")
 	v.SetDefault("notifier.search_complete_notify", false)
 }

@@ -83,16 +83,16 @@ type anilistMedia struct {
 		Romaji  string `json:"romaji"`
 		English string `json:"english"`
 	} `json:"title"`
-	Format       string                 `json:"format"`
-	Status       string                 `json:"status"`
-	Episodes     int                    `json:"episodes"`
-	AverageScore int                    `json:"averageScore"`
-	MeanScore    int                    `json:"meanScore"`
-	Popularity   int                    `json:"popularity"`
-	Genres       []string               `json:"genres"`
-	Source       string                 `json:"source"`
-	StartDate    anilistFuzzyDate       `json:"startDate"`
-	EndDate      anilistFuzzyDate       `json:"endDate"`
+	Format       string           `json:"format"`
+	Status       string           `json:"status"`
+	Episodes     int              `json:"episodes"`
+	AverageScore int              `json:"averageScore"`
+	MeanScore    int              `json:"meanScore"`
+	Popularity   int              `json:"popularity"`
+	Genres       []string         `json:"genres"`
+	Source       string           `json:"source"`
+	StartDate    anilistFuzzyDate `json:"startDate"`
+	EndDate      anilistFuzzyDate `json:"endDate"`
 	CoverImage   struct {
 		Large string `json:"large"`
 	} `json:"coverImage"`

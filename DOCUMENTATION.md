@@ -538,7 +538,7 @@ and `process` as usual.
 External APIs enrich each discovered item:
 
 - **TMDB** — TMDB ID, IMDb ID, overview, genres, runtime, poster, US rating, collection membership
-- **IMDbAPI** — IMDb rating + Metacritic score
+- **OMDB** — IMDb rating + Metacritic score + votes, awards, box office, credits
 - **Rotten Tomatoes** — chromedp web scraping for critic/audience scores (requires browser)
 - **MusicBrainz** — release group ID, artist details, ratings, genres
 - **Hardcover** — book metadata (ISBN, pages, ratings, descriptions)

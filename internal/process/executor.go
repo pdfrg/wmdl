@@ -83,10 +83,11 @@ type Executor struct {
 		SeasonNumber int
 		SeriesTitle  string
 		MediaType    model.MediaType
+		TvdbID       int
 	}
 	skipRejectedTvdbIDs         map[int]struct{}
-	phase3BatchProcessedMovies  map[int]bool            // TMDB IDs of movies processed via BatchPicker
-	phase3BatchProcessedSeasons map[string]map[int]bool // seriesTitle -> set of season numbers processed via BatchPicker
+	phase3BatchProcessedMovies  map[int]bool         // TMDB IDs of movies processed via BatchPicker
+	phase3BatchProcessedSeasons map[int]map[int]bool // tvdbID -> set of season numbers processed via BatchPicker
 }
 
 func NewExecutor(logger zerolog.Logger, cfg *config.Config, database *db.DB) *Executor {
@@ -134,7 +135,7 @@ func NewExecutor(logger zerolog.Logger, cfg *config.Config, database *db.DB) *Ex
 		hc:                          hc,
 		skipRejectedTvdbIDs:         make(map[int]struct{}),
 		phase3BatchProcessedMovies:  make(map[int]bool),
-		phase3BatchProcessedSeasons: make(map[string]map[int]bool),
+		phase3BatchProcessedSeasons: make(map[int]map[int]bool),
 	}
 }
 
@@ -998,11 +999,11 @@ func (e *Executor) processPhase3BatchItem(ctx context.Context, item *BatchItem) 
 	// during library decisions or re-processed in ProcessPhase3Pickers.
 	if sr.Event.Title.MediaType == model.MediaTypeMovie && sr.Event.Title.TmdbID > 0 {
 		e.phase3BatchProcessedMovies[sr.Event.Title.TmdbID] = true
-	} else if (sr.Event.Title.MediaType == model.MediaTypeTV || sr.Event.Title.MediaType == model.MediaTypeAnime) && item.SearchResult.Season > 0 {
-		if e.phase3BatchProcessedSeasons[sr.Event.Title.Title] == nil {
-			e.phase3BatchProcessedSeasons[sr.Event.Title.Title] = make(map[int]bool)
+	} else if (sr.Event.Title.MediaType == model.MediaTypeTV || sr.Event.Title.MediaType == model.MediaTypeAnime) && item.SearchResult.Season > 0 && sr.Event.Title.TvdbID > 0 {
+		if e.phase3BatchProcessedSeasons[sr.Event.Title.TvdbID] == nil {
+			e.phase3BatchProcessedSeasons[sr.Event.Title.TvdbID] = make(map[int]bool)
 		}
-		e.phase3BatchProcessedSeasons[sr.Event.Title.Title][item.SearchResult.Season] = true
+		e.phase3BatchProcessedSeasons[sr.Event.Title.TvdbID][item.SearchResult.Season] = true
 	}
 }
 
@@ -1673,7 +1674,7 @@ func (e *Executor) ProcessPhase3Pickers(ctx context.Context) {
 			fmt.Fprintln(os.Stderr, "\n── Additional earlier seasons (from library adds) ──")
 			for _, p3s := range e.phase3Seasons {
 				// Skip if already handled via pre-searched phase 3 or BatchPicker
-				if e.hasPhase3Season(p3s.SeriesTitle, p3s.SeasonNumber) || e.phase3BatchProcessedSeasons[p3s.SeriesTitle][p3s.SeasonNumber] {
+				if e.hasPhase3Season(p3s.SeriesTitle, p3s.SeasonNumber) || e.phase3BatchProcessedSeasons[p3s.TvdbID][p3s.SeasonNumber] {
 					continue
 				}
 
@@ -1922,7 +1923,7 @@ processPicked:
 						missing := e.checkExistingSonarrSeasons(ctx, existing, item.Season)
 						for _, missingS := range missing {
 							// Skip earlier seasons already handled via BatchPicker Phase 3
-							if e.phase3BatchProcessedSeasons[existing.Title][missingS.SeasonNumber] {
+							if e.phase3BatchProcessedSeasons[tvdbID][missingS.SeasonNumber] {
 								e.log.Info().Str("series", existing.Title).Int("season", missingS.SeasonNumber).Msg("already processed via batch picker, skipping")
 								continue
 							}
@@ -1939,11 +1940,13 @@ processPicked:
 									SeasonNumber int
 									SeriesTitle  string
 									MediaType    model.MediaType
+									TvdbID       int
 								}{
 									SeriesID:     existing.ID,
 									SeasonNumber: missingS.SeasonNumber,
 									SeriesTitle:  existing.Title,
 									MediaType:    item.Event.Title.MediaType,
+									TvdbID:       tvdbID,
 								})
 							}
 						}
@@ -2675,7 +2678,7 @@ func (e *Executor) addToSonarr(ctx context.Context, evt db.EventWithTitle, tvdbI
 		mode := e.cfg.MediaTypeMode(evt.Title.MediaType)
 		for s := 1; s < season; s++ {
 			// Skip earlier seasons already handled via BatchPicker Phase 3
-			if e.phase3BatchProcessedSeasons[title][s] {
+			if e.phase3BatchProcessedSeasons[tvdbID][s] {
 				e.log.Info().Str("title", title).Int("season", s).Msg("already processed via batch picker, skipping")
 				continue
 			}
@@ -2692,11 +2695,13 @@ func (e *Executor) addToSonarr(ctx context.Context, evt db.EventWithTitle, tvdbI
 					SeasonNumber int
 					SeriesTitle  string
 					MediaType    model.MediaType
+					TvdbID       int
 				}{
 					SeriesID:     added.ID,
 					SeasonNumber: s,
 					SeriesTitle:  title,
 					MediaType:    evt.Title.MediaType,
+					TvdbID:       tvdbID,
 				})
 			}
 		}

@@ -44,6 +44,10 @@ prowlarr:
     ebooks: 0       # ebooks
     audiobooks: 0   # audiobooks
 
+# ─── OMDB ──────────────────────────────────────────────────
+# omdb:
+#   api_key: ""  # Get a free API key at https://www.omdbapi.com/apikey.aspx
+
 # ─── TMDB ──────────────────────────────────────────────────
 tmdb:
   # Get a free API key at https://www.themoviedb.org/settings/api

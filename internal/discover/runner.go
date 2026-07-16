@@ -64,7 +64,7 @@ type Runner struct {
 	db              *db.DB
 	tmdb            *TMDBClient
 	rt              *RTFinder
-	imdb            *IMDbAPIClient
+	omdb            *OMDBClient
 	mb              *MBClient
 	hc              *HardcoverClient
 	ol              *OLClient
@@ -143,7 +143,7 @@ func NewRunner(logger zerolog.Logger, cfg *config.Config, database *db.DB, headl
 		db:       database,
 		tmdb:     NewTMDBClient(cfg.TMDB.APIKey, cfg.TMDB.AccessToken),
 		rt:       NewRTFinder(),
-		imdb:     NewIMDbAPIClient(),
+		omdb:     NewOMDBClient(cfg.OMDB.APIKey),
 		mb:       NewMBClient(),
 		hc:       hcClient,
 		ol:       NewOLClient(),
@@ -1322,17 +1322,29 @@ func (r *Runner) processItem(ctx context.Context, item ScrapedItem, progYear, pr
 		item.Year = enrich.Year
 	}
 
-	// Phase 2: IMDbAPI ratings (IMDb score + Metacritic) using imdb_id
+	// Phase 2: OMDB ratings and metadata (IMDb score, Metacritic, votes, awards, credits) using imdb_id
 	var imdbRating float64
 	var metacriticScore float64
+	var imdbVotes int64
+	var awards, boxOffice, director, writer, actors string
 	if imdbID != "" {
-		ratings, err := r.imdb.FetchRatings(apiCtx, imdbID)
-		if err == nil && ratings != nil {
-			imdbRating = ratings.ImdbRating
-			metacriticScore = ratings.MetacriticScore
-			r.log.Info().Float64("imdb_rating", imdbRating).Float64("metacritic", metacriticScore).Msg("IMDbAPI ratings")
+		data, err := r.omdb.FetchRatings(apiCtx, imdbID)
+		if err == nil && data != nil {
+			imdbRating = data.ImdbRating
+			metacriticScore = data.MetacriticScore
+			imdbVotes = data.ImdbVotes
+			awards = data.Awards
+			boxOffice = data.BoxOffice
+			director = data.Director
+			writer = data.Writer
+			actors = data.Actors
+			r.log.Info().
+				Float64("imdb_rating", imdbRating).
+				Float64("metacritic", metacriticScore).
+				Int64("imdb_votes", imdbVotes).
+				Msg("OMDB data")
 		} else if err != nil {
-			r.log.Warn().Err(err).Msg("IMDbAPI failed")
+			r.log.Warn().Err(err).Msg("OMDB failed")
 		}
 	}
 	// Fall back to scraped IMDb rating if API returned nothing
@@ -1427,6 +1439,12 @@ func (r *Runner) processItem(ctx context.Context, item ScrapedItem, progYear, pr
 		MediaType:        mediaType,
 		ImdbID:           imdbID,
 		ImdbRating:       imdbRating,
+		ImdbVotes:        imdbVotes,
+		Awards:           awards,
+		BoxOffice:        boxOffice,
+		Director:         director,
+		Writer:           writer,
+		Actors:           actors,
 		MetacriticScore:  metacriticScore,
 		RTURL:            rtURL,
 		RTCriticsScore:   rtCritics,

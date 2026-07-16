@@ -70,6 +70,12 @@ func (d *DB) Migrate(ctx context.Context) error {
 		                CHECK(media_type IN ('movie','tv','anime')),
 		imdb_id         TEXT DEFAULT '',
 		imdb_rating      REAL DEFAULT 0,
+		imdb_votes       INTEGER DEFAULT 0,
+		awards           TEXT DEFAULT '',
+		box_office       TEXT DEFAULT '',
+		director         TEXT DEFAULT '',
+		writer           TEXT DEFAULT '',
+		actors           TEXT DEFAULT '',
 		rt_url           TEXT DEFAULT '',
 		rt_critics_score REAL DEFAULT 0,
 		rt_audience_score REAL DEFAULT 0,
@@ -333,6 +339,12 @@ func (d *DB) Migrate(ctx context.Context) error {
 			                CHECK(media_type IN ('movie','tv','anime')),
 			imdb_id         TEXT DEFAULT '',
 			imdb_rating      REAL DEFAULT 0,
+			imdb_votes       INTEGER DEFAULT 0,
+			awards           TEXT DEFAULT '',
+			box_office       TEXT DEFAULT '',
+			director         TEXT DEFAULT '',
+			writer           TEXT DEFAULT '',
+			actors           TEXT DEFAULT '',
 			rt_url           TEXT DEFAULT '',
 			rt_critics_score REAL DEFAULT 0,
 			rt_audience_score REAL DEFAULT 0,
@@ -364,14 +376,14 @@ func (d *DB) Migrate(ctx context.Context) error {
 	if _, err := d.db.ExecContext(ctx, `
 		INSERT OR IGNORE INTO titles_new (
 			id, tmdb_id, tvdb_id, mal_id, title, year, media_type,
-			imdb_id, imdb_rating, rt_url, rt_critics_score, rt_audience_score,
+			imdb_id, imdb_rating, imdb_votes, awards, box_office, director, writer, actors, rt_url, rt_critics_score, rt_audience_score,
 			tmdb_rating, metacritic_score, us_rating, original_language, origin_country,
 			yt_trailer_views, overview, genres, runtime, poster_path, created_at,
 			anime_type, anime_episodes, anime_status, anime_members, anime_rank,
 			anime_source, anime_studio, themes, demographics, streaming
 		) SELECT
 			id, tmdb_id, tvdb_id, mal_id, title, year, media_type,
-			imdb_id, imdb_rating, rt_url, rt_critics_score, rt_audience_score,
+			imdb_id, imdb_rating, imdb_votes, awards, box_office, director, writer, actors, rt_url, rt_critics_score, rt_audience_score,
 			tmdb_rating, metacritic_score, us_rating, original_language, origin_country,
 			yt_trailer_views, overview, genres, runtime, poster_path, created_at,
 			anime_type, anime_episodes, anime_status, anime_members, anime_rank,
@@ -416,6 +428,12 @@ func (d *DB) Migrate(ctx context.Context) error {
 	d.db.ExecContext(ctx, `ALTER TABLE titles ADD COLUMN streaming TEXT NOT NULL DEFAULT ''`)
 	d.db.ExecContext(ctx, `ALTER TABLE titles ADD COLUMN collection_id INTEGER DEFAULT 0`)
 	d.db.ExecContext(ctx, `ALTER TABLE titles ADD COLUMN collection_name TEXT DEFAULT ''`)
+	d.db.ExecContext(ctx, `ALTER TABLE titles ADD COLUMN imdb_votes INTEGER DEFAULT 0`)
+	d.db.ExecContext(ctx, `ALTER TABLE titles ADD COLUMN awards TEXT DEFAULT ''`)
+	d.db.ExecContext(ctx, `ALTER TABLE titles ADD COLUMN box_office TEXT DEFAULT ''`)
+	d.db.ExecContext(ctx, `ALTER TABLE titles ADD COLUMN director TEXT DEFAULT ''`)
+	d.db.ExecContext(ctx, `ALTER TABLE titles ADD COLUMN writer TEXT DEFAULT ''`)
+	d.db.ExecContext(ctx, `ALTER TABLE titles ADD COLUMN actors TEXT DEFAULT ''`)
 	d.db.ExecContext(ctx, `ALTER TABLE books ADD COLUMN series_id TEXT DEFAULT ''`)
 	d.db.ExecContext(ctx, `ALTER TABLE books ADD COLUMN series_name TEXT DEFAULT ''`)
 
@@ -459,8 +477,15 @@ func (d *DB) upsertTitle(ctx context.Context, q querier, t *model.Title) (int64,
 			_, err := q.ExecContext(ctx, `
 				UPDATE titles SET
 					tvdb_id = ?, title = ?, year = ?, media_type = ?,
-					imdb_id = ?, imdb_rating = ?, rt_url = ?, rt_critics_score = ?,
-					rt_audience_score = ?, tmdb_rating = ?, metacritic_score = ?,
+					imdb_id = ?,
+					imdb_rating = COALESCE(NULLIF(?, 0), ?),
+					imdb_votes = ?,
+					awards = ?, box_office = ?, director = ?, writer = ?, actors = ?,
+					rt_url = ?,
+					rt_critics_score = COALESCE(NULLIF(?, 0), ?),
+					rt_audience_score = COALESCE(NULLIF(?, 0), ?),
+					tmdb_rating = ?,
+					metacritic_score = COALESCE(NULLIF(?, 0), ?),
 					us_rating = ?, original_language = ?, origin_country = ?,
 					yt_trailer_views = ?, overview = ?, genres = ?, runtime = ?,
 					poster_path = ?, tmdb_title = ?,
@@ -471,8 +496,15 @@ func (d *DB) upsertTitle(ctx context.Context, q querier, t *model.Title) (int64,
 				WHERE mal_id = ?
 			`,
 				t.TvdbID, t.Title, t.Year, string(t.MediaType),
-				t.ImdbID, t.ImdbRating, t.RTURL, t.RTCriticsScore,
-				t.RTAudienceScore, t.TmdbRating, t.MetacriticScore,
+				t.ImdbID,
+				t.ImdbRating, existing.ImdbRating,
+				t.ImdbVotes,
+				t.Awards, t.BoxOffice, t.Director, t.Writer, t.Actors,
+				t.RTURL,
+				t.RTCriticsScore, existing.RTCriticsScore,
+				t.RTAudienceScore, existing.RTAudienceScore,
+				t.TmdbRating,
+				t.MetacriticScore, existing.MetacriticScore,
 				t.USRating, t.OriginalLanguage, t.OriginCountry,
 				t.YoutubeViews, t.Overview, t.Genres, t.Runtime,
 				t.PosterPath, t.TmdbTitle,
@@ -490,14 +522,15 @@ func (d *DB) upsertTitle(ctx context.Context, q querier, t *model.Title) (int64,
 
 	res, err := q.ExecContext(ctx, `
 		INSERT INTO titles (tmdb_id, tvdb_id, mal_id, title, tmdb_title, year, media_type, imdb_id, imdb_rating,
+		                    imdb_votes, awards, box_office, director, writer, actors,
 		                    rt_url, rt_critics_score, rt_audience_score, tmdb_rating,
 		                    metacritic_score, us_rating, original_language, origin_country,
 		                    yt_trailer_views, overview, genres, runtime, poster_path, created_at,
 		                    anime_type, anime_episodes, anime_status, anime_members, anime_rank,
 		                    anime_source, anime_studio, themes, demographics, streaming,
 		                    collection_id, collection_name)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-		        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+		        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(tmdb_id, mal_id) DO UPDATE SET
 			title             = excluded.title,
 			tmdb_title        = excluded.tmdb_title,
@@ -506,12 +539,18 @@ func (d *DB) upsertTitle(ctx context.Context, q querier, t *model.Title) (int64,
 			tvdb_id           = excluded.tvdb_id,
 			mal_id            = excluded.mal_id,
 			imdb_id           = excluded.imdb_id,
-			imdb_rating       = excluded.imdb_rating,
+			imdb_rating       = CASE WHEN excluded.imdb_rating > 0 THEN excluded.imdb_rating ELSE titles.imdb_rating END,
+			imdb_votes        = excluded.imdb_votes,
+			awards            = excluded.awards,
+			box_office        = excluded.box_office,
+			director          = excluded.director,
+			writer            = excluded.writer,
+			actors            = excluded.actors,
 			rt_url            = excluded.rt_url,
-			rt_critics_score  = excluded.rt_critics_score,
-			rt_audience_score = excluded.rt_audience_score,
+			rt_critics_score  = CASE WHEN excluded.rt_critics_score > 0 THEN excluded.rt_critics_score ELSE titles.rt_critics_score END,
+			rt_audience_score = CASE WHEN excluded.rt_audience_score > 0 THEN excluded.rt_audience_score ELSE titles.rt_audience_score END,
 			tmdb_rating       = excluded.tmdb_rating,
-			metacritic_score  = excluded.metacritic_score,
+			metacritic_score  = CASE WHEN excluded.metacritic_score > 0 THEN excluded.metacritic_score ELSE titles.metacritic_score END,
 			us_rating         = excluded.us_rating,
 			original_language = excluded.original_language,
 			origin_country    = excluded.origin_country,
@@ -534,6 +573,7 @@ func (d *DB) upsertTitle(ctx context.Context, q querier, t *model.Title) (int64,
 			collection_name   = excluded.collection_name
 	`,
 		t.TmdbID, t.TvdbID, t.MalID, t.Title, t.TmdbTitle, t.Year, string(t.MediaType), t.ImdbID, t.ImdbRating,
+		t.ImdbVotes, t.Awards, t.BoxOffice, t.Director, t.Writer, t.Actors,
 		t.RTURL, t.RTCriticsScore, t.RTAudienceScore, t.TmdbRating,
 		t.MetacriticScore, t.USRating, t.OriginalLanguage, t.OriginCountry,
 		t.YoutubeViews, t.Overview, t.Genres, t.Runtime, t.PosterPath, t.CreatedAt,
@@ -568,7 +608,7 @@ func (d *DB) getTitleByMalID(ctx context.Context, q querier, malID int) (*model.
 	var createdAt string
 	err := q.QueryRowContext(ctx, `
 		SELECT id, tmdb_id, tvdb_id, mal_id, title, tmdb_title, year, media_type, imdb_id,
-		       imdb_rating, rt_url, rt_critics_score, rt_audience_score,
+		       imdb_rating, imdb_votes, awards, box_office, director, writer, actors, rt_url, rt_critics_score, rt_audience_score,
 		       tmdb_rating, metacritic_score, yt_trailer_views, us_rating, original_language, origin_country,
 		       overview, genres, runtime, poster_path, created_at,
 		       anime_type, anime_episodes, anime_status, anime_members, anime_rank,
@@ -577,7 +617,7 @@ func (d *DB) getTitleByMalID(ctx context.Context, q querier, malID int) (*model.
 		FROM titles WHERE mal_id = ?
 	`, malID).Scan(
 		&t.ID, &t.TmdbID, &t.TvdbID, &t.MalID, &t.Title, &t.TmdbTitle, &t.Year, &mediaType,
-		&t.ImdbID, &t.ImdbRating, &t.RTURL, &t.RTCriticsScore, &t.RTAudienceScore,
+		&t.ImdbID, &t.ImdbRating, &t.ImdbVotes, &t.Awards, &t.BoxOffice, &t.Director, &t.Writer, &t.Actors, &t.RTURL, &t.RTCriticsScore, &t.RTAudienceScore,
 		&t.TmdbRating, &t.MetacriticScore, &t.YoutubeViews, &t.USRating, &t.OriginalLanguage, &t.OriginCountry,
 		&t.Overview, &t.Genres, &t.Runtime, &t.PosterPath, &createdAt,
 		&t.AnimeType, &t.AnimeEpisodes, &t.AnimeStatus, &t.AnimeMembers, &t.AnimeRank,
@@ -601,7 +641,7 @@ func (d *DB) getTitleByField(ctx context.Context, field string, value int) (*mod
 	var createdAt string
 	err := d.db.QueryRowContext(ctx, fmt.Sprintf(`
 		SELECT id, tmdb_id, tvdb_id, mal_id, title, tmdb_title, year, media_type, imdb_id,
-		       imdb_rating, rt_url, rt_critics_score, rt_audience_score,
+		       imdb_rating, imdb_votes, awards, box_office, director, writer, actors, rt_url, rt_critics_score, rt_audience_score,
 		       tmdb_rating, metacritic_score, yt_trailer_views, us_rating, original_language, origin_country,
 		       overview, genres, runtime, poster_path, created_at,
 		       anime_type, anime_episodes, anime_status, anime_members, anime_rank,
@@ -610,7 +650,7 @@ func (d *DB) getTitleByField(ctx context.Context, field string, value int) (*mod
 		FROM titles WHERE %s = ?
 	`, field), value).Scan(
 		&t.ID, &t.TmdbID, &t.TvdbID, &t.MalID, &t.Title, &t.TmdbTitle, &t.Year, &mediaType,
-		&t.ImdbID, &t.ImdbRating, &t.RTURL, &t.RTCriticsScore, &t.RTAudienceScore,
+		&t.ImdbID, &t.ImdbRating, &t.ImdbVotes, &t.Awards, &t.BoxOffice, &t.Director, &t.Writer, &t.Actors, &t.RTURL, &t.RTCriticsScore, &t.RTAudienceScore,
 		&t.TmdbRating, &t.MetacriticScore, &t.YoutubeViews, &t.USRating, &t.OriginalLanguage, &t.OriginCountry,
 		&t.Overview, &t.Genres, &t.Runtime, &t.PosterPath, &createdAt,
 		&t.AnimeType, &t.AnimeEpisodes, &t.AnimeStatus, &t.AnimeMembers, &t.AnimeRank,
@@ -631,7 +671,7 @@ func (d *DB) getTitleByField(ctx context.Context, field string, value int) (*mod
 func (d *DB) ListTitles(ctx context.Context) ([]*model.Title, error) {
 	rows, err := d.db.QueryContext(ctx, `
 		SELECT id, tmdb_id, tvdb_id, mal_id, title, tmdb_title, year, media_type, imdb_id,
-		       imdb_rating, rt_url, rt_critics_score, rt_audience_score,
+		       imdb_rating, imdb_votes, awards, box_office, director, writer, actors, rt_url, rt_critics_score, rt_audience_score,
 		       tmdb_rating, metacritic_score, us_rating, original_language, origin_country,
 		       yt_trailer_views, overview, genres, runtime, poster_path, created_at,
 		       anime_type, anime_episodes, anime_status, anime_members, anime_rank,
@@ -651,7 +691,7 @@ func (d *DB) ListTitles(ctx context.Context) ([]*model.Title, error) {
 		var createdAt string
 		if err := rows.Scan(
 			&t.ID, &t.TmdbID, &t.TvdbID, &t.MalID, &t.Title, &t.TmdbTitle, &t.Year, &mediaType,
-			&t.ImdbID, &t.ImdbRating, &t.RTURL, &t.RTCriticsScore, &t.RTAudienceScore,
+			&t.ImdbID, &t.ImdbRating, &t.ImdbVotes, &t.Awards, &t.BoxOffice, &t.Director, &t.Writer, &t.Actors, &t.RTURL, &t.RTCriticsScore, &t.RTAudienceScore,
 			&t.TmdbRating, &t.MetacriticScore, &t.USRating, &t.OriginalLanguage, &t.OriginCountry,
 			&t.YoutubeViews, &t.Overview, &t.Genres, &t.Runtime, &t.PosterPath, &createdAt,
 			&t.AnimeType, &t.AnimeEpisodes, &t.AnimeStatus, &t.AnimeMembers, &t.AnimeRank,
@@ -758,7 +798,7 @@ func (d *DB) ListPendingWithTitles(ctx context.Context) ([]EventWithTitle, error
 		SELECT e.id, e.title_id, e.source, e.release_type, e.release_date,
 		       e.status, e.previous_status, e.notes, e.created_at, e.iso_year, e.iso_week,
 		t.id, t.tmdb_id, t.tvdb_id, t.mal_id, t.title, t.tmdb_title, t.year, t.media_type, t.imdb_id,
-		       t.imdb_rating, t.rt_url, t.rt_critics_score, t.rt_audience_score,
+		       t.imdb_rating, t.imdb_votes, t.awards, t.box_office, t.director, t.writer, t.actors, t.rt_url, t.rt_critics_score, t.rt_audience_score,
 		       t.tmdb_rating, t.metacritic_score, t.us_rating,
 		       t.original_language, t.origin_country,
 		       t.yt_trailer_views, t.overview, t.genres, t.runtime, t.poster_path, t.created_at,
@@ -782,7 +822,7 @@ func (d *DB) ListApprovedWithTitles(ctx context.Context) ([]EventWithTitle, erro
 		SELECT e.id, e.title_id, e.source, e.release_type, e.release_date,
 		       e.status, e.previous_status, e.notes, e.created_at, e.iso_year, e.iso_week,
 		t.id, t.tmdb_id, t.tvdb_id, t.mal_id, t.title, t.tmdb_title, t.year, t.media_type, t.imdb_id,
-		       t.imdb_rating, t.rt_url, t.rt_critics_score, t.rt_audience_score,
+		       t.imdb_rating, t.imdb_votes, t.awards, t.box_office, t.director, t.writer, t.actors, t.rt_url, t.rt_critics_score, t.rt_audience_score,
 		       t.tmdb_rating, t.metacritic_score, t.us_rating,
 		       t.original_language, t.origin_country,
 		       t.yt_trailer_views, t.overview, t.genres, t.runtime, t.poster_path, t.created_at,
@@ -989,7 +1029,7 @@ func (d *DB) ListEventsByWeekWithTitles(ctx context.Context, year, week int) ([]
 		SELECT e.id, e.title_id, e.source, e.release_type, e.release_date,
 		       e.status, e.previous_status, e.notes, e.created_at, e.iso_year, e.iso_week,
 		t.id, t.tmdb_id, t.tvdb_id, t.mal_id, t.title, t.tmdb_title, t.year, t.media_type, t.imdb_id,
-		       t.imdb_rating, t.rt_url, t.rt_critics_score, t.rt_audience_score,
+		       t.imdb_rating, t.imdb_votes, t.awards, t.box_office, t.director, t.writer, t.actors, t.rt_url, t.rt_critics_score, t.rt_audience_score,
 		       t.tmdb_rating, t.metacritic_score, t.us_rating,
 		       t.original_language, t.origin_country,
 		       t.yt_trailer_views, t.overview, t.genres, t.runtime, t.poster_path, t.created_at,
@@ -1025,7 +1065,7 @@ func (d *DB) ListEventsByWeekAndStatus(ctx context.Context, year, week int, stat
 		SELECT e.id, e.title_id, e.source, e.release_type, e.release_date,
 		       e.status, e.previous_status, e.notes, e.created_at, e.iso_year, e.iso_week,
 		t.id, t.tmdb_id, t.tvdb_id, t.mal_id, t.title, t.tmdb_title, t.year, t.media_type, t.imdb_id,
-		       t.imdb_rating, t.rt_url, t.rt_critics_score, t.rt_audience_score,
+		       t.imdb_rating, t.imdb_votes, t.awards, t.box_office, t.director, t.writer, t.actors, t.rt_url, t.rt_critics_score, t.rt_audience_score,
 		       t.tmdb_rating, t.metacritic_score, t.us_rating,
 		       t.original_language, t.origin_country,
 		       t.yt_trailer_views, t.overview, t.genres, t.runtime, t.poster_path, t.created_at,
@@ -1052,7 +1092,7 @@ func (d *DB) GetReleaseEventWithTitle(ctx context.Context, id int64) (*EventWith
 		SELECT e.id, e.title_id, e.source, e.release_type, e.release_date,
 		       e.status, e.previous_status, e.notes, e.created_at, e.iso_year, e.iso_week,
 		t.id, t.tmdb_id, t.tvdb_id, t.mal_id, t.title, t.tmdb_title, t.year, t.media_type, t.imdb_id,
-		       t.imdb_rating, t.rt_url, t.rt_critics_score, t.rt_audience_score,
+		       t.imdb_rating, t.imdb_votes, t.awards, t.box_office, t.director, t.writer, t.actors, t.rt_url, t.rt_critics_score, t.rt_audience_score,
 		       t.tmdb_rating, t.metacritic_score, t.us_rating,
 		       t.original_language, t.origin_country,
 		       t.yt_trailer_views, t.overview, t.genres, t.runtime, t.poster_path, t.created_at,
@@ -1071,7 +1111,7 @@ func (d *DB) GetReleaseEventWithTitle(ctx context.Context, id int64) (*EventWith
 		&ev.ID, &ev.TitleID, &ev.Source, &evRelType, &ev.ReleaseDate,
 		&evStatus, &evPrevStatus, &ev.Notes, &evCreated, &ev.ISOYear, &ev.ISOWeek,
 		&tl.ID, &tl.TmdbID, &tl.TvdbID, &tl.MalID, &tl.Title, &tl.TmdbTitle, &tl.Year, &tlMediaType,
-		&tl.ImdbID, &tl.ImdbRating, &tl.RTURL, &tl.RTCriticsScore, &tl.RTAudienceScore,
+		&tl.ImdbID, &tl.ImdbRating, &tl.ImdbVotes, &tl.Awards, &tl.BoxOffice, &tl.Director, &tl.Writer, &tl.Actors, &tl.RTURL, &tl.RTCriticsScore, &tl.RTAudienceScore,
 		&tl.TmdbRating, &tl.MetacriticScore, &tl.USRating,
 		&tl.OriginalLanguage, &tl.OriginCountry,
 		&tl.YoutubeViews, &tl.Overview, &tl.Genres, &tl.Runtime, &tl.PosterPath, &tlCreated,
@@ -2309,7 +2349,7 @@ func scanEventWithTitleRows(rows *sql.Rows) ([]EventWithTitle, error) {
 			&ev.ID, &ev.TitleID, &ev.Source, &evRelType, &ev.ReleaseDate,
 			&evStatus, &evPrevStatus, &ev.Notes, &evCreated, &ev.ISOYear, &ev.ISOWeek,
 			&tl.ID, &tl.TmdbID, &tl.TvdbID, &tl.MalID, &tl.Title, &tl.TmdbTitle, &tl.Year, &tlMediaType,
-			&tl.ImdbID, &tl.ImdbRating, &tl.RTURL, &tl.RTCriticsScore, &tl.RTAudienceScore,
+			&tl.ImdbID, &tl.ImdbRating, &tl.ImdbVotes, &tl.Awards, &tl.BoxOffice, &tl.Director, &tl.Writer, &tl.Actors, &tl.RTURL, &tl.RTCriticsScore, &tl.RTAudienceScore,
 			&tl.TmdbRating, &tl.MetacriticScore, &tl.USRating,
 			&tl.OriginalLanguage, &tl.OriginCountry,
 			&tl.YoutubeViews, &tl.Overview, &tl.Genres, &tl.Runtime, &tl.PosterPath, &tlCreated,

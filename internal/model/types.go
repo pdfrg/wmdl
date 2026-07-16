@@ -46,6 +46,12 @@ type Title struct {
 	MediaType        MediaType
 	ImdbID           string
 	ImdbRating       float64
+	ImdbVotes        int64
+	Awards           string
+	BoxOffice        string
+	Director         string
+	Writer           string
+	Actors           string
 	RTURL            string
 	RTCriticsScore   float64
 	RTAudienceScore  float64

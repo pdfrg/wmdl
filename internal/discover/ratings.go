@@ -40,20 +40,16 @@ func ScrapeRTRatings(ctx context.Context, allocCtx context.Context, rtURL string
 	// Wait for the scorecard to render, with a short grace period
 	_ = chromedp.Run(scrapeCtx, chromedp.WaitVisible("media-scorecard", chromedp.ByQuery))
 
-	// Scores are in light DOM rt-text elements slotted into the web component.
-	// Use collapsed scores first (preferred), then full scores as fallback.
-	ratings.CriticsScore = extractPct(scrapeCtx,
-		`document.querySelector('rt-text[slot="collapsed-critics-score"]')?.textContent?.trim() || ''`)
+	// Scope all queries to the first media-scorecard to avoid picking up
+	// scores from "recommended" or "you might also like" carousels.
+	ratings.CriticsScore = extractPctFromSlot(scrapeCtx, "collapsed-critics-score")
 	if ratings.CriticsScore == 0 {
-		ratings.CriticsScore = extractPct(scrapeCtx,
-			`document.querySelector('rt-text[slot="critics-score"]')?.textContent?.trim() || ''`)
+		ratings.CriticsScore = extractPctFromSlot(scrapeCtx, "critics-score")
 	}
 
-	ratings.AudienceScore = extractPct(scrapeCtx,
-		`document.querySelector('rt-text[slot="collapsed-audience-score"]')?.textContent?.trim() || ''`)
+	ratings.AudienceScore = extractPctFromSlot(scrapeCtx, "collapsed-audience-score")
 	if ratings.AudienceScore == 0 {
-		ratings.AudienceScore = extractPct(scrapeCtx,
-			`document.querySelector('rt-text[slot="audience-score"]')?.textContent?.trim() || ''`)
+		ratings.AudienceScore = extractPctFromSlot(scrapeCtx, "audience-score")
 	}
 
 	return ratings
@@ -71,6 +67,19 @@ func extractPct(ctx context.Context, js string) float64 {
 		}
 	}
 	return 0
+}
+
+// extractPctFromSlot queries the first media-scorecard on the page for the
+// given slot name and returns its percentage value. Scoping to the first
+// scorecard avoids picking up scores from recommended/related carousels.
+func extractPctFromSlot(ctx context.Context, slotName string) float64 {
+	js := fmt.Sprintf(`(() => {
+  const sc = document.querySelector('media-scorecard');
+  if (!sc) return '';
+  const el = sc.querySelector('rt-text[slot="%s"]');
+  return el?.textContent?.trim() || '';
+})()`, slotName)
+	return extractPct(ctx, js)
 }
 
 var percentPattern = regexp.MustCompile(`(\d+)%`)
