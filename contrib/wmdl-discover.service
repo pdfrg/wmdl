@@ -6,6 +6,11 @@
 #
 # Paths: adjust ExecStart to match your `which wmdl` or build output.
 # Requires: a working $HOME/.config/wmdl/config.yaml.
+#
+# NOTE: --headless is intentionally omitted. AllMusic (Cloudflare) blocks
+# headless browsers, so Brave runs as a normal GUI window at 5 AM.
+# Brave uses --window-position=10000,10000 to stay off-screen if needed,
+# or you can add it manually to ExecStart.
 
 [Unit]
 Description=wmdl — weekly media discovery
@@ -15,7 +20,7 @@ Wants=network-online.target
 
 [Service]
 Type=oneshot
-ExecStart=%h/go/bin/wmdl discover --headless
+ExecStart=%h/go/bin/wmdl discover
 
 # Hardening (minimal — user namespacing from ProtectSystem/ReadWritePaths
 # breaks SSH config file permission checks for hooks that use SSH)

@@ -1091,6 +1091,14 @@ func (r *Runner) Run(ctx context.Context) error {
 					if !r.hasTargetWeek {
 						checkYear, checkWeek = time.Now().ISOWeek()
 					}
+					// Apply the same lookback offset the scraper uses so the
+					// notification boundary check matches what AllMusic actually does.
+					cfgVal := r.cfg.MediaTypes.Music.LookbackWeeks
+					if cfgVal <= 0 {
+						cfgVal = 1
+					}
+					lo, _ := r.lookbackRange("music", cfgVal)
+					checkYear, checkWeek = addISOWeekOffset(checkYear, checkWeek, lo)
 					weekStart, weekEnd := wmdlWeekRange(checkYear, checkWeek)
 					scrapeMonth, _ := computeAllMusicTarget(weekStart, weekEnd)
 					if scrapeMonth == 0 {
@@ -1344,9 +1352,9 @@ func (r *Runner) processItem(ctx context.Context, item ScrapedItem, progYear, pr
 		rtCritics = ratings.CriticsScore
 		rtAudience = ratings.AudienceScore
 		if rtCritics > 0 || rtAudience > 0 {
-			r.log.Info().Float64("critics", rtCritics).Float64("audience", rtAudience).Msg("RT scores")
+			r.log.Info().Str("url", rtURL).Float64("critics", rtCritics).Float64("audience", rtAudience).Msg("RT scores")
 		} else {
-			r.log.Warn().Msg("RT scrape: no scores found")
+			r.log.Warn().Str("url", rtURL).Msg("RT scrape: no scores found")
 		}
 	} else {
 		r.log.Info().Msg("RT URL not found")
@@ -1354,7 +1362,7 @@ func (r *Runner) processItem(ctx context.Context, item ScrapedItem, progYear, pr
 	// Fall back to FlixPatrol RT scores if chromedp returned nothing
 	if rtCritics == 0 && item.RTCriticsScore > 0 {
 		rtCritics = item.RTCriticsScore
-		r.log.Info().Float64("critics_score", rtCritics).Msg("using FlixPatrol RT critics score")
+		r.log.Warn().Float64("critics_score", rtCritics).Msg("using provider RT critics score (may be stale)")
 	}
 
 	overview := ""

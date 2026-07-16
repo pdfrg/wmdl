@@ -233,7 +233,7 @@ func waitForRealPage(ct context.Context) error {
 		case <-time.After(2 * time.Second):
 		}
 	}
-	return fmt.Errorf("timed out waiting for real page, last title: %q", title)
+	return fmt.Errorf("timed out waiting for real page, last title: %q: %w", title, context.DeadlineExceeded)
 }
 
 var allMusicBracketSuffix = strings.NewReplacer(

@@ -60,6 +60,14 @@ func EnsureRunning(binary string, debugPort int, profile string, headless bool) 
 	if headless {
 		args = append(args, "--headless=new")
 	}
+	// Anti-detection for Cloudflare: disable automation-controlled flag
+	// (which makes navigator.webdriver report "true" in headless mode)
+	// and enable software WebGL via SwiftShader (needed when no GPU is
+	// available, e.g. VMs — Cloudflare checks WebGL renderer).
+	args = append(args,
+		"--disable-blink-features=AutomationControlled",
+		"--enable-unsafe-swiftshader",
+	)
 	args = append(args, "--new-window", "about:blank")
 
 	cmd := exec.Command(binary, args...)
