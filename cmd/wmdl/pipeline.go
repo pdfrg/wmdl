@@ -916,11 +916,6 @@ func runProcessForWeek(ctx context.Context, database *db.DB, cfg *config.Config,
 		}
 	}
 
-	// ─── PHASE 3 PICKERS (collection movies + earlier seasons) ──
-	if !skipLibrary {
-		exec.ProcessPhase3Pickers(ctx)
-	}
-
 	// ─── Anime Phase B processing (airing items) ─────────────────
 	for _, ae := range animeAiring {
 		select {
@@ -942,6 +937,11 @@ func runProcessForWeek(ctx context.Context, database *db.DB, cfg *config.Config,
 			log.Warn().Err(err).Msg("updating anime event status")
 		}
 		exec.SearchAiringAnimeEarlierSeasons(ctx, ae, series)
+	}
+
+	// ─── PHASE 3 PICKERS (collection movies + earlier seasons) ──
+	if !skipLibrary {
+		exec.ProcessPhase3Pickers(ctx)
 	}
 
 	// ─── Book interactive processing (search+download only) ─────

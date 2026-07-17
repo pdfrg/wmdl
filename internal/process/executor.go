@@ -917,6 +917,17 @@ func (e *Executor) ProcessBatchResults(ctx context.Context, items []*BatchItem) 
 	for _, item := range items {
 		if item.Skipped {
 			e.Skipped = append(e.Skipped, item.Label)
+			if item.Phase3 && item.SearchResult != nil {
+				sr := item.SearchResult
+				if sr.Event.Title.MediaType == model.MediaTypeMovie && sr.Event.Title.TmdbID > 0 {
+					e.phase3BatchProcessedMovies[sr.Event.Title.TmdbID] = true
+				} else if (sr.Event.Title.MediaType == model.MediaTypeTV || sr.Event.Title.MediaType == model.MediaTypeAnime) && sr.Season > 0 && sr.Event.Title.TvdbID > 0 {
+					if e.phase3BatchProcessedSeasons[sr.Event.Title.TvdbID] == nil {
+						e.phase3BatchProcessedSeasons[sr.Event.Title.TvdbID] = make(map[int]bool)
+					}
+					e.phase3BatchProcessedSeasons[sr.Event.Title.TvdbID][sr.Season] = true
+				}
+			}
 			continue
 		}
 		if len(item.Selected) == 0 {
@@ -1492,6 +1503,17 @@ func (e *Executor) ProcessPhase3Pickers(ctx context.Context) {
 			}
 		}
 
+		// Skip items already processed via BatchPicker (selected or skipped)
+		if c.MediaType == model.MediaTypeMovie && c.TmdbID > 0 {
+			if e.phase3BatchProcessedMovies[c.TmdbID] {
+				continue
+			}
+		} else if c.Season > 0 && c.TvdbID > 0 {
+			if e.phase3BatchProcessedSeasons[c.TvdbID] != nil && e.phase3BatchProcessedSeasons[c.TvdbID][c.Season] {
+				continue
+			}
+		}
+
 		if mode == "arr" || mode == "auto" || mode == "yolo" {
 			// Arr mode: add to *arr with SearchNow, skip picker & download
 			if c.MediaType == model.MediaTypeMovie && c.TmdbID > 0 {
@@ -1722,6 +1744,19 @@ func (e *Executor) ProcessPhase3Pickers(ctx context.Context) {
 	e.Phase3SearchPhase = nil
 }
 
+func phase3MoviesToCandidates(movies []Phase3Movie) []Phase3Candidate {
+	candidates := make([]Phase3Candidate, len(movies))
+	for i, m := range movies {
+		candidates[i] = Phase3Candidate{
+			Title:     m.Title,
+			Year:      m.Year,
+			MediaType: model.MediaTypeMovie,
+			TmdbID:    m.TMDBID,
+		}
+	}
+	return candidates
+}
+
 func (e *Executor) hasPhase3Movie(tmdbID int) bool {
 	for i := range e.Phase3SearchPhase {
 		if e.Phase3SearchPhase[i].Candidate.TmdbID == tmdbID {
@@ -1845,6 +1880,10 @@ processPicked:
 						profileID := e.resolveProfileID(ctx, e.cfg.Library.Radarr.QualityProfile)
 						phase3FromCollection := e.checkCollectionGaps(ctx, existing.TMDBID, existing.Collection.TMDBID, profileID, searchNow)
 						e.phase3Movies = append(e.phase3Movies, phase3FromCollection...)
+						if !searchNow && len(phase3FromCollection) > 0 {
+							e.log.Info().Int("count", len(phase3FromCollection)).Msg("pre-searching newly added collection movies")
+							e.SearchAllCandidates(ctx, phase3MoviesToCandidates(phase3FromCollection))
+						}
 					}
 					goto nextPicked
 				}
@@ -2417,6 +2456,10 @@ func (e *Executor) addToRadarr(ctx context.Context, evt db.EventWithTitle, confi
 			e.log.Info().Str("title", title).Str("collection", added.Collection.Name).Int("tmdb", added.Collection.TMDBID).Msg("checking collection gaps")
 			phase3FromCollection := e.checkCollectionGaps(ctx, tmdbID, added.Collection.TMDBID, profileID, searchNow)
 			e.phase3Movies = append(e.phase3Movies, phase3FromCollection...)
+			if !searchNow && len(phase3FromCollection) > 0 {
+				e.log.Info().Int("count", len(phase3FromCollection)).Msg("pre-searching newly added collection movies")
+				e.SearchAllCandidates(ctx, phase3MoviesToCandidates(phase3FromCollection))
+			}
 		} else {
 			e.log.Info().Str("title", title).Msg("movie not part of a TMDB collection, skipping")
 		}
@@ -2524,7 +2567,22 @@ func (e *Executor) SearchAiringAnimeEarlierSeasons(ctx context.Context, evt db.E
 
 	missing := e.checkExistingSonarrSeasons(ctx, series, season)
 	mode := e.cfg.MediaTypeMode(evt.Title.MediaType)
+	tvdbID := series.TVDBID
+	if tvdbID == 0 {
+		tvdbID = evt.Title.TvdbID
+	}
 	for _, ms := range missing {
+		// Mark processed so ProcessPhase3Pickers won't re-prompt this season
+		seasonNum := ms.SeasonNumber
+		markProcessed := func() {
+			if tvdbID > 0 {
+				if e.phase3BatchProcessedSeasons[tvdbID] == nil {
+					e.phase3BatchProcessedSeasons[tvdbID] = make(map[int]bool)
+				}
+				e.phase3BatchProcessedSeasons[tvdbID][seasonNum] = true
+			}
+		}
+
 		searchSeason := false
 		if mode == "auto" || mode == "yolo" {
 			searchSeason = true
@@ -2533,6 +2591,7 @@ func (e *Executor) SearchAiringAnimeEarlierSeasons(ctx context.Context, evt db.E
 			searchSeason = promptYesNo(ctx, fmt.Sprintf("    %s: Search for Season %d?", displayTitle, ms.SeasonNumber))
 		}
 		if !searchSeason {
+			markProcessed()
 			continue
 		}
 
@@ -2558,6 +2617,7 @@ func (e *Executor) SearchAiringAnimeEarlierSeasons(ctx context.Context, evt db.E
 				SeriesTitle:  displayTitle,
 				MediaType:    evt.Title.MediaType,
 			})
+			markProcessed()
 			continue
 		}
 
@@ -2567,6 +2627,7 @@ func (e *Executor) SearchAiringAnimeEarlierSeasons(ctx context.Context, evt db.E
 			Top:    entry.Top,
 		}
 		chosen, err := e.presentPicker(ctx, sr)
+		markProcessed()
 		if err != nil || len(chosen) == 0 {
 			continue
 		}
