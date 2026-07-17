@@ -54,6 +54,8 @@ func TestExtractShowName(t *testing.T) {
 		{"[SubsPlease] Show Name S01E01 1080p x264", "Show Name"},
 		// Anime: standalone episode number
 		{"[SubsPlease] Golden Kamuy Final Season - 08 [1080p CR WEB-DL AVC AAC]", "Golden Kamuy Final Season"},
+		// Parenthesized year before S02 (e.g. "Beyond Paradise (2023) S02")
+		{"Beyond Paradise (2023) S02 1080p WEBRip 10bit EAC3 2 0 x265-iVy", "Beyond Paradise"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.raw, func(t *testing.T) {

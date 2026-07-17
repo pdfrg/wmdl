@@ -276,7 +276,7 @@ var (
 // ExtractShowName strips torrent metadata from a release title,
 // returning the show/movie name portion.
 func ExtractShowName(rawTitle string) string {
-	s := stripGroupPrefix(strings.ReplaceAll(rawTitle, ".", " "))
+	s := stripGroupPrefix(strings.NewReplacer(".", " ", "(", " ", ")", " ").Replace(rawTitle))
 
 	firstIdx := len(s)
 	for _, pat := range []*regexp.Regexp{
