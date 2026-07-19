@@ -1137,17 +1137,12 @@ func (e *Executor) handleSkipLibrary(ctx context.Context, evt db.EventWithTitle,
 					}
 				}
 				if promptYesNo(ctx, fmt.Sprintf("  Add %s to Sonarr anyway?", evt.Title.Title)) {
-					searchNow := false
-					monitorTarget := false
-					if promptYesNo(ctx, "    Monitor item? (Sonarr will search and manage downloads)") {
-						searchNow = true
-						monitorTarget = true
-					}
 					beforeSeasons := len(e.phase3Seasons)
-					if err := e.addToSonarr(ctx, evt, tvdbID, season, true, searchNow, monitorTarget); err != nil {
+					if err := e.addToSonarr(ctx, evt, tvdbID, season, true, false, true); err != nil {
 						e.log.Warn().Err(err).Str("title", evt.Title.Title).Msg("adding to Sonarr after skip")
 					} else {
 						e.phase3Seasons = e.phase3Seasons[:beforeSeasons]
+						e.markDownloaded(ctx, evt)
 					}
 				} else {
 					e.skipRejectedTvdbIDs[tvdbID] = struct{}{}
@@ -1170,12 +1165,10 @@ func (e *Executor) handleSkipLibrary(ctx context.Context, evt db.EventWithTitle,
 					}
 				}
 				if promptYesNo(ctx, fmt.Sprintf("  Add %s to Radarr anyway?", evt.Title.Title)) {
-					searchNow := false
-					if promptYesNo(ctx, "    Monitor item? (Radarr will search and manage downloads)") {
-						searchNow = true
-					}
-					if err := e.addToRadarr(ctx, evt, true, searchNow); err != nil {
+					if err := e.addToRadarr(ctx, evt, true, false, true); err != nil {
 						e.log.Warn().Err(err).Str("title", evt.Title.Title).Msg("adding to Radarr after skip")
+					} else {
+						e.markDownloaded(ctx, evt)
 					}
 				}
 			}
@@ -1233,14 +1226,15 @@ func (e *Executor) handleSkipLibraryMusic(ctx context.Context, ae db.EventWithAl
 		MetadataProfileID: metaProfileID,
 		RootFolderPath:    rootFolder,
 		Monitor:           monitor,
-		SearchNow:         true,
+		SearchNow:         false,
 	})
 	if err != nil {
 		e.log.Warn().Err(err).Str("artist", ae.Release.ArtistName).Msg("failed adding to Lidarr after skip")
 		return
 	}
 	_ = e.db.SetSetting(ctx, fmt.Sprintf("lidarr_artist_%s", artistMbid), fmt.Sprintf("%d", added.ID))
-	e.log.Info().Int("lidarr_id", added.ID).Str("artist", ae.Release.ArtistName).Msg("added artist to Lidarr after skip")
+	_ = e.db.UpdateAlbumReleaseEventStatus(ctx, ae.Event.ID, model.StatusDownloaded)
+	e.log.Info().Int("lidarr_id", added.ID).Str("artist", ae.Release.ArtistName).Msg("added artist to Lidarr after skip (monitored, RSS will pick up)")
 }
 
 // ComputePhase3Candidates pre-computes Phase 3 search candidates for approved
@@ -2051,7 +2045,7 @@ processPicked:
 			if a.isTV {
 				addErr = e.addToSonarr(ctx, a.evt, a.tvdbID, a.season, true, a.searchNow, false)
 			} else {
-				addErr = e.addToRadarr(ctx, a.evt, true, a.searchNow)
+				addErr = e.addToRadarr(ctx, a.evt, true, a.searchNow, e.cfg.Library.Radarr.Monitor)
 			}
 			if addErr != nil {
 				fmt.Fprintf(os.Stderr, "  Error adding %q to library: %v\n", title, addErr)
@@ -2352,7 +2346,7 @@ func fallbackResolution(res string) string {
 
 func (e *Executor) addToLibrary(ctx context.Context, evt db.EventWithTitle, season int) error {
 	if evt.Title.MediaType == model.MediaTypeMovie {
-		return e.addToRadarr(ctx, evt, false, false)
+		return e.addToRadarr(ctx, evt, false, false, e.cfg.Library.Radarr.Monitor)
 	}
 	tvdbID := evt.Title.TvdbID
 	if tvdbID == 0 && evt.Title.MediaType == model.MediaTypeAnime {
@@ -2395,7 +2389,7 @@ func (e *Executor) resolveSonarrProfileID(ctx context.Context, profileName strin
 	return 1
 }
 
-func (e *Executor) addToRadarr(ctx context.Context, evt db.EventWithTitle, confirmed bool, searchNow bool) error {
+func (e *Executor) addToRadarr(ctx context.Context, evt db.EventWithTitle, confirmed bool, searchNow bool, monitored bool) error {
 	tmdbID := evt.Title.TmdbID
 	if tmdbID == 0 {
 		return fmt.Errorf("cannot add to Radarr: movie %q has no TMDB ID", evt.Title.Title)
@@ -2440,7 +2434,7 @@ func (e *Executor) addToRadarr(ctx context.Context, evt db.EventWithTitle, confi
 	profileID := e.resolveProfileID(ctx, e.cfg.Library.Radarr.QualityProfile)
 
 	added, err := e.radarr.Add(ctx, tmdbID, title, year, library.AddMovieOptions{
-		Monitored:           e.cfg.Library.Radarr.Monitor,
+		Monitored:           monitored,
 		MinimumAvailability: "released",
 		QualityProfileID:    profileID,
 		RootFolderPath:      e.cfg.Library.Radarr.RootFolder,
@@ -3987,6 +3981,7 @@ func (e *Executor) ProcessBookLibraryDecisions(ctx context.Context, events []db.
 
 		e.applyBookFormatDecisions(ctx, title, bookID, evt.Event.FormatPref, downloaded[evt.Event.ID])
 
+		e.markBookDownloaded(ctx, evt)
 		e.log.Info().Str("book", title).Str("ll_id", bookID).Msg("LazyLibrarian: added")
 	}
 }
