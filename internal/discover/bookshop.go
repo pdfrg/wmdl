@@ -45,7 +45,7 @@ func (p *BookshopProvider) SetWeekRange(year, week int) {
 
 var (
 	bsNewReleasesDate = regexp.MustCompile(`New Releases:\s*(\w+\s+\d+,\s*\d{4})`)
-	bsBookBlock       = regexp.MustCompile(`<h1[^>]*class="[^"]*title[^"]*"[^>]*>(.*?)</h1>`)
+	bsBookBlock       = regexp.MustCompile(`<h3[^>]*class="[^"]*title[^"]*"[^>]*>(.*?)</h3>`)
 	whitespaceRe      = regexp.MustCompile(`\s+`)
 )
 
@@ -113,7 +113,7 @@ func (p *BookshopProvider) Scrape() ([]ScrapedItem, error) {
 
 	// Re-extract with context for author/image/EAN
 	// Use a different approach: find book blocks by looking at the <a> tag containing the title
-	bookLinkPattern := regexp.MustCompile(`<a[^>]*href="(/p/books/[^"]*)"[^>]*>.*?<h1[^>]*class="[^"]*title[^"]*"[^>]*>([^<]+)</h1>.*?<p[^>]*class="flex items-end text-sm"[^>]*>([^<]+)`)
+	bookLinkPattern := regexp.MustCompile(`(?s)<a[^>]*href="(/p/books/[^"]*)"[^>]*>.*?<h3[^>]*class="[^"]*title[^"]*"[^>]*>([^<]+)</h3>.*?<p[^>]*class="my-1 text-\[14px\] line-clamp-2"[^>]*>([^<]+)`)
 	linkMatches := bookLinkPattern.FindAllStringSubmatch(html, -1)
 
 	bookMap := make(map[string]struct {
@@ -149,7 +149,7 @@ func (p *BookshopProvider) Scrape() ([]ScrapedItem, error) {
 	var imgEntries []imgEntry
 	imgTagRe := regexp.MustCompile(`(?s)<img\s[^>]+>`)
 	srcSetRe := regexp.MustCompile(`src[Ss]et="([^"]+)"`)
-	altRe := regexp.MustCompile(`alt="bookcover\s+for\s+([^"]+)"`)
+	altRe := regexp.MustCompile(`alt="([^"]+)\s+book\s+cover"`)
 	srcRe := regexp.MustCompile(`src="([^"]+)"`)
 
 	for _, tag := range imgTagRe.FindAllString(html, -1) {
@@ -187,8 +187,9 @@ func (p *BookshopProvider) Scrape() ([]ScrapedItem, error) {
 		}
 	}
 
-	// Extract descriptions from the rendered annotation blocks.
-	// Structure: <div class="bulleted-lists list-rich-text text-sm lg:text-base"><p>DESCRIPTION</p></div>
+	// Extract descriptions. The annotations are now embedded in Astro component
+	// props as JSON. Try the old selector first; if the page structure has changed,
+	// descriptions gracefully fall back to empty (Hardcover enrichment fills them in).
 	annRe := regexp.MustCompile(`<div class="bulleted-lists list-rich-text text-sm lg:text-base"><p>(.*?)</p></div>`)
 	annMatches := annRe.FindAllStringSubmatch(html, -1)
 	stripTagsRe := regexp.MustCompile(`<[^>]*>`)
