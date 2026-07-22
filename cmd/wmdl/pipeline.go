@@ -191,8 +191,8 @@ func runReviewForWeek(ctx context.Context, database *db.DB, cfg *config.Config, 
 				if err := tui.Run(); err != nil {
 					return 0, err
 				}
-				approved = tui.ApprovedCount()
-				_, _, pending := tui.Counts()
+				apr, _, pending := tui.Counts()
+				approved = apr
 				if pending > 0 {
 					fmt.Fprintf(os.Stderr, "\n%d items still need decisions.\n", pending)
 				} else if approved > 0 {
@@ -235,8 +235,8 @@ func runReviewForWeek(ctx context.Context, database *db.DB, cfg *config.Config, 
 			if err := tui.Run(); err != nil {
 				return 0, err
 			}
-			approved = tui.ApprovedCount()
-			_, _, pending := tui.Counts()
+			apr, _, pending := tui.Counts()
+			approved = apr
 			if pending > 0 {
 				fmt.Fprintf(os.Stderr, "\n%d items still need decisions.\n", pending)
 			} else if approved > 0 {
@@ -285,8 +285,8 @@ func runReviewForWeek(ctx context.Context, database *db.DB, cfg *config.Config, 
 		return 0, err
 	}
 
-	approved = tui.ApprovedCount() + autoApproved
-	_, _, pending := tui.Counts()
+	apr, _, pending := tui.Counts()
+	approved = apr + autoApproved
 	if pending > 0 {
 		fmt.Fprintf(os.Stderr, "\n%d items still need decisions.\n", pending)
 	} else if approved > 0 {
