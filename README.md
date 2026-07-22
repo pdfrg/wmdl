@@ -14,8 +14,8 @@ the weekly ritual:
 | Movies | DVD Release Dates, TMDB Discover, FlixPatrol | Radarr |
 | TV | DVD Release Dates, TMDB Discover, FlixPatrol | Sonarr |
 | Music | Album of the Year, AllMusic | Lidarr |
-| Anime | Jikan (MyAnimeList), FlixPatrol | Sonarr |
-| Books | Goodreads, Bookshop, LitHub BookMarks | LazyLibrarian |
+| Anime | AniList, Tenrai, Jikan (MAL), FlixPatrol | Sonarr |
+| Books | Goodreads, Goodreads Blog, Bookshop, LitHub BookMarks | LazyLibrarian |
 
 Compatible with qBittorrent, Transmission, or Deluge. Notifies via Gotify, Slack, Discord,
 ntfy, or generic webhook.
@@ -29,7 +29,7 @@ ntfy, or generic webhook.
 - **Multi-media** — Movies, TV, music, anime, and books with dedicated scrapers, quality
   scoring, and library management in a single tool.
 - **Processing modes** — From fully automatic (`yolo`, cron-friendly) to fully manual (`full`).
-  Or use `arr` mode to let your *arr handle searching while wmdl curates the queue.
+  Or use `arr`, `auto`, or `prowlarr-grab` modes to fine-tune how wmdl and your *arr divide the work.
 - **Smart filtering** — Content filters (blocked languages/countries/genres), release scoring
   (resolution, codec, source, preferred groups), minimum seeders.
 - **Phase 3 gap detection** — When you add a movie in a TMDB collection, wmdl checks if you're

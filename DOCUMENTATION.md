@@ -89,6 +89,27 @@ prowlarr:
 If `indexer_id` is configured (not 0), wmdl searches preferred indexer first.  If < `show_top_n` (default 10)
 results are obtained from preferred indexer, fallback searches using all indexers will be performed.
 
+### TMDB
+
+```yaml
+tmdb:
+  api_key: ""      # v3 API key (required for enrichment)
+  access_token: "" # v4 bearer token (alternative to api_key)
+```
+
+Required for movie/TV enrichment and FlixPatrol scraper. Get a free key at
+https://www.themoviedb.org/settings/api.
+
+### OMDB
+
+```yaml
+omdb:
+  api_key: ""  # Get a free key at https://www.omdbapi.com/apikey.aspx
+```
+
+Optional enrichment source for IMDb ratings, Metacritic scores, awards, and
+box office data.
+
 ### Download Client
 
 ```yaml
@@ -104,6 +125,22 @@ downloader:
 ```
 
 See `config.yaml.example` for per-client credentials.
+
+### Shell Hooks
+
+Shell commands that run before and after `wmdl discover`. Useful for bandwidth
+management — e.g., pausing your torrent client during scraping to avoid
+contention.
+
+```yaml
+hooks:
+  pre_discover: "docker pause qbittorrent"
+  post_discover: "docker unpause qbittorrent"
+```
+
+If `pre_discover` exits non-zero, discover is aborted. `post_discover` runs
+even on failure (warning only). See `config.yaml.example` for more examples
+(qBittorrent/Transmission speed limits, SSH-based commands, custom scripts).
 
 ### Library Managers
 
@@ -201,12 +238,24 @@ skipped.
 
 Release scoring is fully configurable per media type:
 
-**Movies / TV / Anime:**
+**Movies / TV:**
+
 ```yaml
 quality:
   movies:
     resolution: "2160p"           # target: 2160p, 1080p, 720p
     prefer_hdr: true
+    source_priority: ["bluray", "web-dl", "webrip"]
+    codec_priority: ["h265", "h264", "av1"]
+```
+
+**Anime:**
+
+```yaml
+quality:
+  anime:
+    resolution: "1080p"
+    prefer_hdr: false
     source_priority: ["bluray", "web-dl", "webrip"]
     codec_priority: ["h265", "h264", "av1"]
 ```
@@ -251,12 +300,18 @@ for that media type):
 `include_must_hear` (for live/remix/box set releases) — **AOTY only.**
 AllMusic has no comparable scoring filters.
 
-**Anime:** `min_score`, `min_members` — **Jikan Phase A** (completed anime) only.
-`phase_b_*` thresholds are for **Jikan Phase B** (currently-airing) only.
+**Anime:** `min_score`, `min_members` — **AniList/Tenrai/Jikan Phase A** (completed anime) only.
+`phase_b_*` thresholds are for **Phase B** (currently-airing) only.
 `filter_flixpatrol_anime` deduplicates against **FlixPatrol** results.
 
 **Books:** `min_rating`, `min_ratings` — **Goodreads only.** Goodreads Blog, Bookshop,
 and BookMarks have no comparable rating filters.
+
+**Physical media lookback:** `media_types.physical_lookback_weeks` (default 0) controls
+how many WMDL atomic weeks back to scan DVD/BluRay release dates. This is independent
+of `streaming_lookback_weeks` (per media type) which controls streaming release lookback
+for movies/TV, and `lookback_weeks` (per media type) which controls lookback for anime,
+music, and books.
 
 ### Global Options
 
@@ -293,9 +348,10 @@ Available Commands:
   status           Show status of recent weeks
 
 Flags:
-  --config string   config file path
-  -h, --help        help for wmdl
-  -v, --version     version for wmdl
+      --config string   config file path
+  -h, --help            help for wmdl
+  -v, --verbose         enable debug logging
+      --version         version for wmdl
 ```
 
 ### `wmdl all`
@@ -521,11 +577,13 @@ and `process` as usual.
   Music    │ FlixPatrol   │  ─────►    │  reject TUI  │ ───►   │ quality       │
   Anime    │ AOTY         │            │  with poster │        │ scoring       │
   Books    │ AllMusic     │            │  preview     │        │ picker TUI    │
-           │ Jikan (MAL)  │            │              │        │               │
-           │ Goodreads    │            │              │        │ download +    │
-           │ Bookshop     │            │              │        │ *arr/Lidarr/  │
-           │ BookMarks    │            │              │        │ LL add        │
-           └──────┬───────┘            └──────┬───────┘        └───────┬───────┘
+            │ AniList      │            │              │        │               │
+            │ Tenrai       │            │              │        │               │
+            │ Jikan (MAL)  │            │              │        │ download +    │
+            │ Goodreads    │            │              │        │ *arr/Lidarr/  │
+            │ Bookshop     │            │              │        │ LL add        │
+            │ BookMarks    │            │              │        │               │
+            └──────┬───────┘            └──────┬───────┘        └───────┬───────┘
                   │                           │                        │
                   └───────────────────────────┼────────────────────────┘
                                               ▼
@@ -624,11 +682,23 @@ library:
 
 ### Scrapers
 
-- **Jikan** (`jikan`) — MyAnimeList via Jikan API. Two phases:
-  - **Phase A:** Recently completed anime meeting score/member thresholds
-  - **Phase B:** Currently-airing anime above higher thresholds — added directly
-    to Sonarr without Prowlarr search (since episodes are still releasing)
-- **FlixPatrol** — also catches some anime; can be deduped against Jikan results
+Three HTTP API providers run in priority order, then FlixPatrol as a supplemental
+source:
+
+1. **AniList** (`anilist`) — Primary provider. GraphQL API for completed anime
+   (Phase A) and currently-airing (Phase B). Uses `averageScore` converted to
+   a 0-10 scale. Phase A searches by season (Winter/Spring/Summer/Fall),
+   Phase B tracks airing shows.
+2. **Tenrai** (`tenrai`) — Secondary provider. MAL-backed API, used when
+   AniList returns fewer results than expected. Same Phase A/B structure.
+3. **Jikan** (`jikan`) — Tertiary fallback. MyAnimeList via Jikan API. Used
+   only for `malAnimeExists` verification checks when AniList has no data.
+   Same two-phase structure:
+   - **Phase A:** Recently completed anime meeting score/member thresholds
+   - **Phase B:** Currently-airing anime above higher thresholds — added directly
+     to Sonarr without Prowlarr search (since episodes are still releasing)
+- **FlixPatrol** — also catches some anime; can be deduped against all MAL-backed
+  results via `filter_flixpatrol_anime`
 
 ### Filters
 

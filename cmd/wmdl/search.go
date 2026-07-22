@@ -415,11 +415,20 @@ func (s *searcher) searchMusic(ctx context.Context, query string) error {
 
 func (s *searcher) searchBook(ctx context.Context, query string) error {
 	fmt.Fprintf(os.Stderr, "  Searching Prowlarr for books: %s\n", query)
+
+	categories := []int{search.CatBookEbook, search.CatAudioAudiobook}
+	switch sFlags.bookFmt {
+	case "ebook":
+		categories = []int{search.CatBookEbook}
+	case "audiobook":
+		categories = []int{search.CatAudioAudiobook}
+	}
+
 	releases, err := s.prowl.Search(ctx, search.SearchParams{
 		Query:      query,
 		Type:       "search",
 		Limit:      50,
-		Categories: []int{search.CatBookEbook, search.CatAudioAudiobook},
+		Categories: categories,
 	})
 	if err != nil {
 		return fmt.Errorf("prowlarr search: %w", err)
