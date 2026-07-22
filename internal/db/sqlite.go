@@ -1801,6 +1801,132 @@ func (d *DB) CountBookReleaseEventsByWeek(ctx context.Context, year, week int) (
 	return count, nil
 }
 
+// PendingEventCountsBySource returns the number of pending events per source
+// for the given week, aggregated across all three event tables. Events with
+// comma-separated sources (book merges) are counted toward each source.
+// The key is the display label (e.g. "tmdb movie", "flixpatrol tv", "bookshop").
+func (d *DB) PendingEventCountsBySource(ctx context.Context, year, week int) (map[string]int, error) {
+	counts := make(map[string]int)
+
+	// release_events: join with titles to get media_type for multi-type sources
+	rows, err := d.db.QueryContext(ctx, `
+		SELECT e.source, t.media_type, COUNT(*) FROM release_events e
+		JOIN titles t ON t.id = e.title_id
+		WHERE e.iso_year = ? AND e.iso_week = ? AND e.status = 'pending'
+		GROUP BY e.source, t.media_type
+	`, year, week)
+	if err != nil {
+		return nil, fmt.Errorf("counting pending release events: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var source string
+		var mediaType string
+		var n int
+		if err := rows.Scan(&source, &mediaType, &n); err != nil {
+			return nil, fmt.Errorf("scan pending release event: %w", err)
+		}
+		for _, s := range strings.Split(source, ",") {
+			s = strings.TrimSpace(s)
+			if s == "" {
+				continue
+			}
+			label := pendingSourceLabel(s, model.MediaType(mediaType))
+			counts[label] += n
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	// album_release_events: single media type (music)
+	rows2, err := d.db.QueryContext(ctx, `
+		SELECT source, COUNT(*) FROM album_release_events
+		WHERE iso_year = ? AND iso_week = ? AND status = 'pending'
+		GROUP BY source
+	`, year, week)
+	if err != nil {
+		return nil, fmt.Errorf("counting pending album events: %w", err)
+	}
+	defer rows2.Close()
+	for rows2.Next() {
+		var source string
+		var n int
+		if err := rows2.Scan(&source, &n); err != nil {
+			return nil, fmt.Errorf("scan pending album event: %w", err)
+		}
+		for _, s := range strings.Split(source, ",") {
+			s = strings.TrimSpace(s)
+			if s == "" {
+				continue
+			}
+			label := pendingSourceLabel(s, model.MediaTypeMusic)
+			counts[label] += n
+		}
+	}
+	if err := rows2.Err(); err != nil {
+		return nil, err
+	}
+
+	// book_release_events: single media type (book)
+	rows3, err := d.db.QueryContext(ctx, `
+		SELECT source, COUNT(*) FROM book_release_events
+		WHERE iso_year = ? AND iso_week = ? AND status = 'pending'
+		GROUP BY source
+	`, year, week)
+	if err != nil {
+		return nil, fmt.Errorf("counting pending book events: %w", err)
+	}
+	defer rows3.Close()
+	for rows3.Next() {
+		var source string
+		var n int
+		if err := rows3.Scan(&source, &n); err != nil {
+			return nil, fmt.Errorf("scan pending book event: %w", err)
+		}
+		for _, s := range strings.Split(source, ",") {
+			s = strings.TrimSpace(s)
+			if s == "" {
+				continue
+			}
+			label := pendingSourceLabel(s, model.MediaTypeBook)
+			counts[label] += n
+		}
+	}
+	if err := rows3.Err(); err != nil {
+		return nil, err
+	}
+
+	return counts, nil
+}
+
+// pendingSourceLabel maps a raw source name and media type to a display label,
+// using the same logic as sourceDisplayName but without referring to ScrapedItem.
+func pendingSourceLabel(source string, mt model.MediaType) string {
+	switch source {
+	case "tmdb-discover":
+		return "tmdb " + string(mt)
+	case "flixpatrol":
+		return "flixpatrol " + string(mt)
+	case "goodreads_blog":
+		return "goodreads blog"
+	case "anilist":
+		return "anilist (completed)"
+	case "anilist-airing":
+		return "anilist (airing)"
+	case "tenrai":
+		return "tenrai (completed)"
+	case "tenrai-airing":
+		return "tenrai (airing)"
+	case "jikan":
+		return "jikan (completed)"
+	case "jikan-airing":
+		return "jikan (airing)"
+	default:
+		return source
+	}
+}
+
 func (d *DB) CreateBookDownload(ctx context.Context, dl *model.BookDownload) (int64, error) {
 	res, err := d.db.ExecContext(ctx, `
 		INSERT INTO book_downloads (book_id, book_release_event, format, quality, source_type, codec, info_hash, category, status, client_torrent_id)

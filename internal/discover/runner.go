@@ -1042,20 +1042,25 @@ func (r *Runner) Run(ctx context.Context) error {
 		r.log.Warn().Err(err).Msg("library cache failed (will be fetched during process)")
 	}
 
-	// Send notification with per-source breakdown and all titles
+	// Send notification with per-source breakdown and all titles.
+	// Per-source counts come from pending DB events so the header total
+	// always matches what the review TUI will show.
 	if r.notify != nil && totalEvents > 0 {
-		msg := fmt.Sprintf("**%d new release%s** ready for review:\n",
-			totalEvents, map[bool]string{true: "s", false: ""}[totalEvents != 1])
 
-		// Build per-source counts from allItems (pre-dedup — scraper health)
-		sourceCounts := make(map[string]int)
-		sourceNotes := make(map[string]string)
-		for _, item := range allItems {
-			label := sourceDisplayName(item.Source, item.MediaType)
-			sourceCounts[label]++
+		sourceCounts, err := r.db.PendingEventCountsBySource(ctx, progYear, progWeek)
+		if err != nil {
+			r.log.Warn().Err(err).Msg("failed to query pending event counts for notification")
+			sourceCounts = make(map[string]int)
 		}
+		sourceNotes := make(map[string]string)
 
-		// Add expected-but-zero entries for configured scrapers
+		pendingTotal := 0
+		for _, n := range sourceCounts {
+			pendingTotal += n
+		}
+		if pendingTotal == 0 {
+			r.log.Debug().Msg("no pending events to notify about")
+		} else {
 		if wantMovie && r.cfg.MediaTypes.Movies.Enabled {
 			for _, s := range r.cfg.MediaTypes.Movies.Scrapers {
 				label := sourceDisplayName(s, model.MediaTypeMovie)
@@ -1073,29 +1078,20 @@ func (r *Runner) Run(ctx context.Context) error {
 			}
 		}
 
+		// Anime: show both phases but drop deprecated Jikan entirely
 		if wantAnime && r.cfg.MediaTypes.Anime.Enabled {
 			for _, label := range []string{
-				"anilist (completed)", "tenrai (completed)", "jikan (completed)",
+				"anilist (completed)", "tenrai (completed)",
 			} {
 				if _, ok := sourceCounts[label]; !ok {
-					if label == "jikan (completed)" {
-						if sourceCounts["anilist (completed)"] > 0 || sourceCounts["tenrai (completed)"] > 0 {
-							continue
-						}
-					}
 					sourceCounts[label] = 0
 				}
 			}
 			if r.cfg.MediaTypes.Anime.PhaseBEnabled {
 				for _, label := range []string{
-					"anilist (airing)", "tenrai (airing)", "jikan (airing)",
+					"anilist (airing)", "tenrai (airing)",
 				} {
 					if _, ok := sourceCounts[label]; !ok {
-						if label == "jikan (airing)" {
-							if sourceCounts["anilist (airing)"] > 0 || sourceCounts["tenrai (airing)"] > 0 {
-								continue
-							}
-						}
 						sourceCounts[label] = 0
 					}
 				}
@@ -1138,6 +1134,9 @@ func (r *Runner) Run(ctx context.Context) error {
 				}
 			}
 		}
+
+		msg := fmt.Sprintf("**%d new release%s** ready for review:\n",
+			pendingTotal, map[bool]string{true: "s", false: ""}[pendingTotal != 1])
 
 		// Sort labels for consistent ordering
 		labels := make([]string, 0, len(sourceCounts))
@@ -1192,6 +1191,7 @@ func (r *Runner) Run(ctx context.Context) error {
 
 		if err := r.notify.Send("wmdl: New Releases", msg, 5); err != nil {
 			r.log.Warn().Err(err).Msg("notification failed")
+		}
 		}
 	}
 

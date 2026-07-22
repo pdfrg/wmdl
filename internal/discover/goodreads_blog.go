@@ -72,6 +72,7 @@ func (p *GoodreadsBlogProvider) Scrape() ([]ScrapedItem, error) {
 	var matched []grBlogPost
 	foundWeekly := false
 	foundMonths := make(map[int]bool)
+	seenURLs := make(map[string]bool)
 
 	for page := 1; page <= grBlogMaxPages; page++ {
 		url := fmt.Sprintf(grBlogNewsURL, page)
@@ -82,6 +83,11 @@ func (p *GoodreadsBlogProvider) Scrape() ([]ScrapedItem, error) {
 		}
 
 		for _, post := range posts {
+			// Skip posts we've already fetched (same post can appear on multiple pages)
+			if seenURLs[post.URL] {
+				continue
+			}
+			seenURLs[post.URL] = true
 			matched = append(matched, post)
 			if post.IsEditorsPick {
 				foundMonths[post.Month] = true
