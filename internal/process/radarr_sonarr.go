@@ -35,32 +35,6 @@ func (e *Executor) addToLibrary(ctx context.Context, evt db.EventWithTitle, seas
 	return e.addToSonarr(ctx, evt, tvdbID, season, false, false, false)
 }
 
-func (e *Executor) resolveProfileID(ctx context.Context, profileName string) int {
-	profiles, err := e.radarr.GetQualityProfiles(ctx)
-	if err != nil {
-		return 1
-	}
-	for _, p := range profiles {
-		if p.Name == profileName {
-			return p.ID
-		}
-	}
-	return 1
-}
-
-func (e *Executor) resolveSonarrProfileID(ctx context.Context, profileName string) int {
-	profiles, err := e.sonarr.GetQualityProfiles(ctx)
-	if err != nil {
-		return 1
-	}
-	for _, p := range profiles {
-		if p.Name == profileName {
-			return p.ID
-		}
-	}
-	return 1
-}
-
 func (e *Executor) addToRadarr(ctx context.Context, evt db.EventWithTitle, confirmed bool, searchNow bool, monitored bool) error {
 	tmdbID := evt.Title.TmdbID
 	if tmdbID == 0 {
@@ -103,7 +77,10 @@ func (e *Executor) addToRadarr(ctx context.Context, evt db.EventWithTitle, confi
 
 	title := evt.Title.Title
 	year := evt.Title.Year
-	profileID := e.resolveProfileID(ctx, e.cfg.Library.Radarr.QualityProfile)
+	profileID, err := resolveRadarrProfileID(ctx, e.radarr, e.cfg.Library.Radarr.QualityProfile)
+	if err != nil {
+		return fmt.Errorf("resolving Radarr quality profile: %w", err)
+	}
 
 	added, err := e.radarr.Add(ctx, tmdbID, title, year, library.AddMovieOptions{
 		Monitored:           monitored,
@@ -177,10 +154,13 @@ func (e *Executor) AddAiringAnimeToSonarr(ctx context.Context, evt db.EventWithT
 		return nil, nil
 	}
 
-	profileID := e.resolveSonarrProfileID(ctx, e.cfg.Library.Sonarr.QualityProfile)
-	langProfiles, err := e.sonarr.GetLanguageProfiles(ctx)
+	profileID, err := resolveSonarrProfileID(ctx, e.sonarr, e.cfg.Library.Sonarr.QualityProfile)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("resolving Sonarr quality profile: %w", err)
+	}
+	langProfiles, lErr := e.sonarr.GetLanguageProfiles(ctx)
+	if lErr != nil {
+		return nil, lErr
 	}
 	langProfileID := 1
 	if len(langProfiles) > 0 {
@@ -348,11 +328,14 @@ func (e *Executor) addToSonarr(ctx context.Context, evt db.EventWithTitle, tvdbI
 
 	title := evt.Title.Title
 	year := evt.Title.Year
-	profileID := e.resolveSonarrProfileID(ctx, e.cfg.Library.Sonarr.QualityProfile)
-
-	langProfiles, err := e.sonarr.GetLanguageProfiles(ctx)
+	profileID, err := resolveSonarrProfileID(ctx, e.sonarr, e.cfg.Library.Sonarr.QualityProfile)
 	if err != nil {
-		return err
+		return fmt.Errorf("resolving Sonarr quality profile: %w", err)
+	}
+
+	langProfiles, lErr := e.sonarr.GetLanguageProfiles(ctx)
+	if lErr != nil {
+		return lErr
 	}
 	langProfileID := 1
 	if len(langProfiles) > 0 {

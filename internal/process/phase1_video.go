@@ -436,7 +436,11 @@ func (e *Executor) processPhase3BatchItem(ctx context.Context, item *BatchItem) 
 	if sr.Event.Title.MediaType == model.MediaTypeMovie && sr.Event.Title.TmdbID > 0 {
 		existing, err := e.radarr.Exists(ctx, sr.Event.Title.TmdbID)
 		if err == nil && existing == nil {
-			profileID := e.resolveProfileID(ctx, e.cfg.Library.Radarr.QualityProfile)
+			profileID, err := resolveRadarrProfileID(ctx, e.radarr, e.cfg.Library.Radarr.QualityProfile)
+			if err != nil {
+				e.log.Warn().Err(err).Msg("failed to resolve Radarr quality profile")
+				return
+			}
 			if _, addErr := e.radarr.Add(ctx, sr.Event.Title.TmdbID, sr.Event.Title.Title, sr.Event.Title.Year, library.AddMovieOptions{
 				Monitored:           e.cfg.Library.Radarr.Monitor,
 				MinimumAvailability: "released",
