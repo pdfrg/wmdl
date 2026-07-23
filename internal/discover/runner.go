@@ -2032,10 +2032,15 @@ func (r *Runner) processBookItem(ctx context.Context, item ScrapedItem, progYear
 				imageURL = hcResult.ImageURL // last resort
 			}
 		}
-		if hcResult.ReleaseDate != "" {
-			releaseDate = hcResult.ReleaseDate
-		} else if olResult != nil && olResult.ReleaseDate != "" {
-			releaseDate = olResult.ReleaseDate
+		// Bookshop items: use the page header date for week assignment
+		// (lookback_weeks offset applied later). Enrichment dates may be
+		// year-only or inaccurate for this weekly-page source.
+		if !strings.Contains(item.Source, "bookshop") {
+			if hcResult.ReleaseDate != "" {
+				releaseDate = hcResult.ReleaseDate
+			} else if olResult != nil && olResult.ReleaseDate != "" {
+				releaseDate = olResult.ReleaseDate
+			}
 		}
 		if hcResult.ReleaseYear > 0 {
 			releaseYear = hcResult.ReleaseYear
