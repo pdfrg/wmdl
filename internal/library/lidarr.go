@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -385,6 +386,7 @@ func (c *LidarrClient) TriggerAlbumSearch(ctx context.Context, albumIDs []int) e
 			return fmt.Errorf("lidarr search: %w", err)
 		}
 		defer resp.Body.Close()
+		defer func() { _, _ = io.Copy(io.Discard, resp.Body) }()
 
 		if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
 			return fmt.Errorf("lidarr search returned %d", resp.StatusCode)

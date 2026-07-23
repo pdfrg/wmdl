@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -269,6 +270,7 @@ func (r *RadarrClient) TriggerSearch(ctx context.Context, movieID int) error {
 			return fmt.Errorf("radarr search: %w", err)
 		}
 		defer resp.Body.Close()
+		defer func() { _, _ = io.Copy(io.Discard, resp.Body) }()
 
 		if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
 			return fmt.Errorf("radarr search returned %d", resp.StatusCode)

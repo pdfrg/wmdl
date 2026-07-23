@@ -560,7 +560,7 @@ func (s *searcher) addToRadarr(ctx context.Context, tmdbID int, title string, ye
 		return nil
 	}
 
-	if !s.auto && !promptYesNo(ctx, fmt.Sprintf("  Add %s (%d) to Radarr?", title, year)) {
+	if !s.auto && !process.PromptYesNo(ctx, fmt.Sprintf("  Add %s (%d) to Radarr?", title, year)) {
 		fmt.Fprintf(os.Stderr, "  Skipped Radarr add.\n")
 		return nil
 	}
@@ -609,7 +609,7 @@ func (s *searcher) addToSonarr(ctx context.Context, tvdbID int, title string, ye
 		return nil
 	}
 
-	if !s.auto && !promptYesNo(ctx, fmt.Sprintf("  Add %s (%d) to Sonarr?", title, year)) {
+	if !s.auto && !process.PromptYesNo(ctx, fmt.Sprintf("  Add %s (%d) to Sonarr?", title, year)) {
 		fmt.Fprintf(os.Stderr, "  Skipped Sonarr add.\n")
 		return nil
 	}
@@ -722,7 +722,7 @@ func (s *searcher) checkCollectionGaps(ctx context.Context, tmdbID int) error {
 	}
 
 	fmt.Fprintf(os.Stderr, "  %d missing movie(s): %s\n", len(missing), strings.Join(missing, ", "))
-	if !s.auto && !promptYesNo(ctx, "  Search and add missing movies?") {
+	if !s.auto && !process.PromptYesNo(ctx, "  Search and add missing movies?") {
 		return nil
 	}
 

@@ -32,7 +32,7 @@ func runDiscoverForWeek(ctx context.Context, database *db.DB, cfg *config.Config
 
 	if ws != nil && ws.Discovered && len(lookbackOverrides) == 0 {
 		fmt.Fprintf(os.Stderr, "Week %d-W%02d already discovered.\n", year, week)
-		if !promptYesNo(ctx, "Continue anyway?") {
+		if !process.PromptYesNo(ctx, "Continue anyway?") {
 			return false, nil
 		}
 	}
@@ -408,7 +408,7 @@ func runProcessForWeek(ctx context.Context, database *db.DB, cfg *config.Config,
 		log.Info().Msgf("All %d releases for %d-W%02d already downloaded.", len(downloaded), year, week)
 		if modes[config.ProcessModeYolo] {
 			log.Info().Msg("yolo mode: re-processing all")
-		} else if !promptYesNo(ctx, "Continue anyway (re-process all)?") {
+		} else if !process.PromptYesNo(ctx, "Continue anyway (re-process all)?") {
 			return nil
 		}
 		events = downloaded
@@ -574,15 +574,15 @@ func runProcessForWeek(ctx context.Context, database *db.DB, cfg *config.Config,
 
 	preWarmDone := make(chan struct{}, 4)
 	if !skipLibrary {
-		go func() { exec.PreWarmRadarr(warmCtx); preWarmDone <- struct{}{} }()
-		go func() { exec.PreWarmSonarr(warmCtx); preWarmDone <- struct{}{} }()
+		go func() { defer func() { preWarmDone <- struct{}{} }(); exec.PreWarmRadarr(warmCtx) }()
+		go func() { defer func() { preWarmDone <- struct{}{} }(); exec.PreWarmSonarr(warmCtx) }()
 		if len(albumEventsForProcess) > 0 {
-			go func() { exec.PreWarmLidarr(warmCtx); preWarmDone <- struct{}{} }()
+			go func() { defer func() { preWarmDone <- struct{}{} }(); exec.PreWarmLidarr(warmCtx) }()
 		} else {
 			preWarmDone <- struct{}{} // skip Lidarr
 		}
 		if hasBooks && exec.BookClientAvailable() {
-			go func() { exec.PreWarmBookClient(warmCtx); preWarmDone <- struct{}{} }()
+			go func() { defer func() { preWarmDone <- struct{}{} }(); exec.PreWarmBookClient(warmCtx) }()
 		} else {
 			preWarmDone <- struct{}{} // skip book client
 		}

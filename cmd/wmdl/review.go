@@ -12,6 +12,7 @@ import (
 	"github.com/pdfrg/wmdl/internal/config"
 	"github.com/pdfrg/wmdl/internal/db"
 	"github.com/pdfrg/wmdl/internal/model"
+	"github.com/pdfrg/wmdl/internal/process"
 )
 
 func newReviewCmd() *cobra.Command {
@@ -77,7 +78,7 @@ func newReviewCmd() *cobra.Command {
 
 			if approved > 0 && term.IsTerminal(int(os.Stdin.Fd())) {
 				fmt.Fprintln(os.Stderr)
-				if promptYesNo(cmd.Context(), "Process this week now?") {
+				if process.PromptYesNo(cmd.Context(), "Process this week now?") {
 					return runProcessForWeek(cmd.Context(), database, cfg, targetYear, targetWeek, "")
 				}
 			}

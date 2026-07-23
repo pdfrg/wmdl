@@ -143,22 +143,6 @@ and send it to the download client.`,
 	return cmd
 }
 
-func promptYesNo(ctx context.Context, prompt string) bool {
-	fmt.Printf("%s [y/N] ", prompt)
-	ch := make(chan string, 1)
-	go func() {
-		scanner := bufio.NewScanner(os.Stdin)
-		scanner.Scan()
-		ch <- scanner.Text()
-	}()
-	select {
-	case ans := <-ch:
-		return strings.ToLower(strings.TrimSpace(ans)) == "y" || strings.ToLower(strings.TrimSpace(ans)) == "yes"
-	case <-ctx.Done():
-		return false
-	}
-}
-
 func runBacklogBatch(ctx context.Context, database *db.DB, cfg *config.Config, typeFilter model.MediaType, onlyYear, onlyWeek, skipYear, skipWeek int) error {
 	startTime := time.Now()
 
@@ -330,7 +314,7 @@ func runBacklogBatch(ctx context.Context, database *db.DB, cfg *config.Config, t
 	}
 	fmt.Fprintln(os.Stderr)
 
-	if !modes[config.ProcessModeYolo] && !promptYesNo(ctx, "Continue") {
+	if !modes[config.ProcessModeYolo] && !process.PromptYesNo(ctx, "Continue") {
 		return nil
 	}
 
@@ -438,7 +422,7 @@ func runBacklogBatch(ctx context.Context, database *db.DB, cfg *config.Config, t
 			preWarmDone <- struct{}{}
 		}
 		if hasBooks && exec.BookClientAvailable() {
-			go func() { exec.PreWarmBookClient(warmCtx); preWarmDone <- struct{}{} }()
+			go func() { defer func() { preWarmDone <- struct{}{} }(); exec.PreWarmBookClient(warmCtx) }()
 		} else {
 			preWarmDone <- struct{}{}
 		}

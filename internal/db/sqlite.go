@@ -596,6 +596,16 @@ func (d *DB) upsertTitle(ctx context.Context, q querier, t *model.Title) (int64,
 	if err != nil {
 		return 0, fmt.Errorf("getting last insert id: %w", err)
 	}
+	if id == 0 {
+		// UPSERT matched existing row (UPDATE rather than INSERT).
+		// Re-query the existing ID by the conflict key.
+		err := q.QueryRowContext(ctx,
+			`SELECT id FROM titles WHERE tmdb_id = ? AND mal_id = ?`,
+			t.TmdbID, t.MalID).Scan(&id)
+		if err != nil {
+			return 0, fmt.Errorf("re-querying title id after upsert: %w", err)
+		}
+	}
 	return id, nil
 }
 
@@ -1657,18 +1667,16 @@ func (d *DB) UpdateBookReleaseEventStatusAndFormatTx(ctx context.Context, tx *sq
 }
 
 func (d *DB) MarkBookFormatProcessed(ctx context.Context, id int64, format model.BookFormat) error {
-	var col string
 	switch format {
 	case model.BookFormatEbook:
-		col = "ebook_processed"
+		_, err := d.db.ExecContext(ctx, `UPDATE book_release_events SET ebook_processed = 1 WHERE id = ?`, id)
+		return err
 	case model.BookFormatAudiobook:
-		col = "audiobook_processed"
+		_, err := d.db.ExecContext(ctx, `UPDATE book_release_events SET audiobook_processed = 1 WHERE id = ?`, id)
+		return err
 	default:
 		return fmt.Errorf("unknown book format: %s", format)
 	}
-	_, err := d.db.ExecContext(ctx,
-		fmt.Sprintf(`UPDATE book_release_events SET %s = 1 WHERE id = ?`, col), id)
-	return err
 }
 
 func (d *DB) RequeueBookReleaseEvent(ctx context.Context, id int64, source, notes string) error {
@@ -2584,7 +2592,10 @@ func (d *DB) BulkUpsertLibraryCache(ctx context.Context, entries []LibraryCache)
 			return fmt.Errorf("inserting cache entry %s/%s: %w", e.Source, e.ExtID, err)
 		}
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit: %w", err)
+	}
+	return nil
 }
 
 func (d *DB) GetLibraryCache(ctx context.Context, source, extID string) (*LibraryCache, error) {

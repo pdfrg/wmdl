@@ -660,10 +660,19 @@ func addISOWeekOffset(year, week, offset int) (int, int) {
 }
 
 // waitDone returns a channel that closes when the WaitGroup counter reaches zero.
+// If the context is cancelled first, the channel closes without waiting for the WaitGroup.
 func waitDone(ctx context.Context, wg *sync.WaitGroup) chan struct{} {
 	done := make(chan struct{})
 	go func() {
-		wg.Wait()
+		doneCh := make(chan struct{})
+		go func() {
+			wg.Wait()
+			close(doneCh)
+		}()
+		select {
+		case <-doneCh:
+		case <-ctx.Done():
+		}
 		close(done)
 	}()
 	return done

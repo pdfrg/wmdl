@@ -131,7 +131,7 @@ func posterCacheDir() (string, error) {
 		cacheBase = filepath.Join(home, ".cache")
 	}
 	dir := filepath.Join(cacheBase, "wmdl", "posters")
-	if err := os.MkdirAll(dir, 0755); err != nil {
+	if err := os.MkdirAll(dir, 0700); err != nil {
 		return "", err
 	}
 	return dir, nil
@@ -165,7 +165,8 @@ func fetchPoster(url string) (image.Image, error) {
 		return nil, err
 	}
 	req.Header.Set("User-Agent", "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36")
-	resp, err := http.DefaultClient.Do(req)
+	client := &http.Client{Timeout: httpTimeout}
+	resp, err := client.Do(req)
 	if err != nil {
 		return nil, err
 	}

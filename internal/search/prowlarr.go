@@ -177,7 +177,8 @@ func (p *ProwlarrClient) Ping(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("prowlarr ping: %w", err)
 	}
-	resp.Body.Close()
+	defer resp.Body.Close()
+	_, _ = io.Copy(io.Discard, resp.Body)
 
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("prowlarr ping returned %d", resp.StatusCode)
@@ -282,6 +283,7 @@ func (p *ProwlarrClient) Grab(ctx context.Context, indexerID int, guid string) e
 		return fmt.Errorf("prowlarr grab: %w", err)
 	}
 	defer resp.Body.Close()
+	defer func() { _, _ = io.Copy(io.Discard, resp.Body) }()
 
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("prowlarr grab returned %d", resp.StatusCode)

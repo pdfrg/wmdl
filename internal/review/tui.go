@@ -132,6 +132,9 @@ func (it *itemState) libraryInfo(dbCache map[string]*db.LibraryCache) libInfo {
 	}
 
 	tl := it.event.Title
+	if tl == nil {
+		return libInfo{status: libNone}
+	}
 	if tl.TmdbID > 0 {
 		if c := dbCache["radarr:"+strconv.Itoa(tl.TmdbID)]; c != nil {
 			return libInfo{

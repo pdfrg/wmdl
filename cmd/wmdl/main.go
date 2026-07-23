@@ -94,7 +94,6 @@ weekly DVD/streaming releases via Prowlarr, your preferred torrent client, and R
 
 	if err := cmd.Execute(); err != nil {
 		log.Fatal().Err(err).Msg("command failed")
-		os.Exit(1)
 	}
 }
 
@@ -108,12 +107,12 @@ func openLogFile() *os.File {
 		base = filepath.Join(home, ".local", "state")
 	}
 	dir := filepath.Join(base, "wmdl")
-	if err := os.MkdirAll(dir, 0755); err != nil {
+	if err := os.MkdirAll(dir, 0700); err != nil {
 		return nil
 	}
 	path := filepath.Join(dir, "wmdl.log")
 	trimLogFile(path)
-	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
 	if err != nil {
 		return nil
 	}
@@ -153,5 +152,5 @@ func trimLogFile(path string) {
 		return
 	}
 
-	_ = os.WriteFile(path, rest, 0644)
+	_ = os.WriteFile(path, rest, 0600)
 }

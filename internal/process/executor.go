@@ -1049,20 +1049,6 @@ func (e *Executor) processMusicBatchItem(ctx context.Context, item *BatchItem) *
 			}
 		}
 
-		dl := &model.Download{
-			TitleID:         0,
-			ReleaseEventID:  releaseEventID,
-			Quality:         release.Source,
-			SourceType:      release.Source,
-			Codec:           release.Codec,
-			InfoHash:        release.InfoHash,
-			Category:        category,
-			Status:          model.DownloadAdded,
-			ClientTorrentID: "",
-		}
-		if _, err := e.db.CreateDownload(ctx, dl); err != nil {
-			e.log.Warn().Err(err).Msg("saving music download record")
-		}
 		_ = e.db.UpdateAlbumReleaseEventStatus(ctx, releaseEventID, model.StatusDownloaded)
 	}
 
@@ -1136,7 +1122,7 @@ func (e *Executor) handleSkipLibrary(ctx context.Context, evt db.EventWithTitle,
 						}
 					}
 				}
-				if promptYesNo(ctx, fmt.Sprintf("  Add %s to Sonarr anyway?", evt.Title.Title)) {
+				if PromptYesNo(ctx, fmt.Sprintf("  Add %s to Sonarr anyway?", evt.Title.Title)) {
 					beforeSeasons := len(e.phase3Seasons)
 					if err := e.addToSonarr(ctx, evt, tvdbID, season, true, false, true); err != nil {
 						e.log.Warn().Err(err).Str("title", evt.Title.Title).Msg("adding to Sonarr after skip")
@@ -1164,7 +1150,7 @@ func (e *Executor) handleSkipLibrary(ctx context.Context, evt db.EventWithTitle,
 						}
 					}
 				}
-				if promptYesNo(ctx, fmt.Sprintf("  Add %s to Radarr anyway?", evt.Title.Title)) {
+				if PromptYesNo(ctx, fmt.Sprintf("  Add %s to Radarr anyway?", evt.Title.Title)) {
 					if err := e.addToRadarr(ctx, evt, true, false, true); err != nil {
 						e.log.Warn().Err(err).Str("title", evt.Title.Title).Msg("adding to Radarr after skip")
 					} else {
@@ -1197,7 +1183,7 @@ func (e *Executor) handleSkipLibraryMusic(ctx context.Context, ae db.EventWithAl
 		e.log.Info().Str("artist", ae.Release.ArtistName).Int("lidarr_id", existing.ID).Msg("artist already in Lidarr")
 		return
 	}
-	if !promptYesNo(ctx, fmt.Sprintf("  Add %s to Lidarr anyway?", ae.Release.ArtistName)) {
+	if !PromptYesNo(ctx, fmt.Sprintf("  Add %s to Lidarr anyway?", ae.Release.ArtistName)) {
 		return
 	}
 	qualProfileID, err := e.lidarr.ResolveQualityProfileID(ctx, e.cfg.Library.Lidarr.QualityProfile)
@@ -1904,7 +1890,7 @@ processPicked:
 				}
 			}
 			e.log.Info().Str("profile", e.cfg.Library.Radarr.QualityProfile).Str("root", e.cfg.Library.Radarr.RootFolder).Msg("Radarr config")
-			if autoConfirm || promptYesNo(ctx, "  Add to Radarr?") {
+			if autoConfirm || PromptYesNo(ctx, "  Add to Radarr?") {
 				addActions = append(addActions, addAction{
 					evt:       item.Event,
 					isTV:      false,
@@ -1959,7 +1945,7 @@ processPicked:
 								enqueue = true
 								e.log.Info().Str("series", existing.Title).Int("season", missingS.SeasonNumber).Msg("auto-queueing earlier season search")
 							} else {
-								enqueue = promptYesNo(ctx, fmt.Sprintf("    %s: Search for Season %d?", existing.Title, missingS.SeasonNumber))
+								enqueue = PromptYesNo(ctx, fmt.Sprintf("    %s: Search for Season %d?", existing.Title, missingS.SeasonNumber))
 							}
 							if enqueue {
 								e.phase3Seasons = append(e.phase3Seasons, struct {
@@ -2009,7 +1995,7 @@ processPicked:
 				}
 			}
 			e.log.Info().Str("profile", e.cfg.Library.Sonarr.QualityProfile).Str("root", e.cfg.Library.Sonarr.RootFolder).Msg("Sonarr config")
-			if autoConfirm || promptYesNo(ctx, "  Add to Sonarr?") {
+			if autoConfirm || PromptYesNo(ctx, "  Add to Sonarr?") {
 				addActions = append(addActions, addAction{
 					evt:       item.Event,
 					season:    item.Season,
@@ -2418,7 +2404,7 @@ func (e *Executor) addToRadarr(ctx context.Context, evt db.EventWithTitle, confi
 			}
 		}
 		e.log.Info().Str("profile", e.cfg.Library.Radarr.QualityProfile).Str("root", e.cfg.Library.Radarr.RootFolder).Msg("Radarr config")
-		if !promptYesNo(ctx, "  Add to Radarr?") {
+		if !PromptYesNo(ctx, "  Add to Radarr?") {
 			return nil
 		}
 	}
@@ -2494,7 +2480,7 @@ func (e *Executor) AddAiringAnimeToSonarr(ctx context.Context, evt db.EventWithT
 	e.log.Info().Str("profile", e.cfg.Library.Sonarr.QualityProfile).Str("root", e.cfg.Library.Sonarr.RootFolder).Msg("Sonarr config")
 	if searchNow {
 		e.log.Info().Str("title", searchTitle).Msg("auto-adding airing anime to Sonarr")
-	} else if !promptYesNo(ctx, "  Add to Sonarr?") {
+	} else if !PromptYesNo(ctx, "  Add to Sonarr?") {
 		e.log.Info().Str("title", searchTitle).Msg("skipped adding airing anime to Sonarr")
 		return nil, nil
 	}
@@ -2576,7 +2562,7 @@ func (e *Executor) SearchAiringAnimeEarlierSeasons(ctx context.Context, evt db.E
 			searchSeason = true
 			e.log.Info().Str("title", displayTitle).Int("season", ms.SeasonNumber).Msg("auto-searching earlier season")
 		} else {
-			searchSeason = promptYesNo(ctx, fmt.Sprintf("    %s: Search for Season %d?", displayTitle, ms.SeasonNumber))
+			searchSeason = PromptYesNo(ctx, fmt.Sprintf("    %s: Search for Season %d?", displayTitle, ms.SeasonNumber))
 		}
 		if !searchSeason {
 			markProcessed()
@@ -2669,7 +2655,7 @@ func (e *Executor) addToSonarr(ctx context.Context, evt db.EventWithTitle, tvdbI
 			}
 		}
 		e.log.Info().Str("profile", e.cfg.Library.Sonarr.QualityProfile).Str("root", e.cfg.Library.Sonarr.RootFolder).Msg("Sonarr config")
-		if !promptYesNo(ctx, "  Add to Sonarr?") {
+		if !PromptYesNo(ctx, "  Add to Sonarr?") {
 			return nil
 		}
 	}
@@ -2736,7 +2722,7 @@ func (e *Executor) addToSonarr(ctx context.Context, evt db.EventWithTitle, tvdbI
 				enqueue = true
 				e.log.Info().Str("title", title).Int("season", s).Msg("auto-queueing earlier season search")
 			} else {
-				enqueue = promptYesNo(ctx, fmt.Sprintf("    %s: Search for Season %d?", title, s))
+				enqueue = PromptYesNo(ctx, fmt.Sprintf("    %s: Search for Season %d?", title, s))
 			}
 			if enqueue {
 				e.phase3Seasons = append(e.phase3Seasons, struct {
@@ -2910,7 +2896,7 @@ func (e *Executor) checkCollectionGaps(ctx context.Context, tmdbID int, colTMDBI
 				addIt = true
 				e.log.Info().Str("title", m.Title).Str("collection", col.Name).Msg("auto-adding collection movie")
 			} else {
-				addIt = promptYesNo(ctx, fmt.Sprintf("    Collection %q: Add %s?", col.Name, m.Title))
+				addIt = PromptYesNo(ctx, fmt.Sprintf("    Collection %q: Add %s?", col.Name, m.Title))
 			}
 			if addIt {
 				if _, err := e.radarr.Add(ctx, m.TMDBID, m.Title, m.Year, library.AddMovieOptions{
@@ -2935,22 +2921,6 @@ func (e *Executor) checkCollectionGaps(ctx context.Context, tmdbID int, colTMDBI
 		}
 	}
 	return phase3
-}
-
-func promptYesNo(ctx context.Context, prompt string) bool {
-	fmt.Printf("%s [y/N] ", prompt)
-	ch := make(chan string, 1)
-	go func() {
-		scanner := bufio.NewScanner(os.Stdin)
-		scanner.Scan()
-		ch <- scanner.Text()
-	}()
-	select {
-	case ans := <-ch:
-		return strings.ToLower(strings.TrimSpace(ans)) == "y" || strings.ToLower(strings.TrimSpace(ans)) == "yes"
-	case <-ctx.Done():
-		return false
-	}
 }
 
 // ─── Music album processing ─────────────────────────────────────────────
@@ -3200,22 +3170,8 @@ func (e *Executor) PickMusicAlbum(ctx context.Context, sr *MusicSearchResult) *M
 			}
 		}
 
-		// Create download record in DB
-		dl := &model.Download{
-			TitleID:         0,
-			ReleaseEventID:  releaseEventID,
-			Quality:         release.Source,
-			SourceType:      release.Source,
-			Codec:           release.Codec,
-			InfoHash:        release.InfoHash,
-			Category:        category,
-			Status:          model.DownloadAdded,
-			ClientTorrentID: "",
-		}
-		if _, err := e.db.CreateDownload(ctx, dl); err != nil {
-			e.log.Warn().Err(err).Msg("saving music download record")
-		}
-
+		// Music state is tracked via album_release_events.status;
+		// no separate download record (the downloads table references movies/TV).
 		_ = e.db.UpdateAlbumReleaseEventStatus(ctx, releaseEventID, model.StatusDownloaded)
 	}
 
@@ -3294,7 +3250,7 @@ func (e *Executor) ProcessMusicAlbumDecisions(ctx context.Context, results []Mus
 		}
 
 		e.log.Info().Msgf("Add to Lidarr? %s — %s (%d)", ae.Release.ArtistName, ae.Release.Title, ae.Release.Year)
-		if autoConfirm || promptYesNo(ctx, "  Add artist to Lidarr?") {
+		if autoConfirm || PromptYesNo(ctx, "  Add artist to Lidarr?") {
 			decisions = append(decisions, albumDecision{
 				evt:        ae,
 				artistMbid: artistMbid,
@@ -3962,7 +3918,7 @@ func (e *Executor) ProcessBookLibraryDecisions(ctx context.Context, events []db.
 
 		if !autoConfirm {
 			label := fmt.Sprintf("  Add \"%s\" by %s to LazyLibrarian?", title, author)
-			if !promptYesNo(ctx, label) {
+			if !PromptYesNo(ctx, label) {
 				e.log.Info().Str("book", title).Msg("skipped LazyLibrarian (user declined)")
 				continue
 			}

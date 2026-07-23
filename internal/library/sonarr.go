@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -243,6 +244,7 @@ func (s *SonarrClient) TriggerSeasonSearch(ctx context.Context, seriesID, season
 			return fmt.Errorf("sonarr season search: %w", err)
 		}
 		defer resp.Body.Close()
+		defer func() { _, _ = io.Copy(io.Discard, resp.Body) }()
 
 		if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
 			return fmt.Errorf("sonarr season search returned %d", resp.StatusCode)

@@ -14,6 +14,7 @@ import (
 	"github.com/pdfrg/wmdl/internal/db"
 	"github.com/pdfrg/wmdl/internal/discover"
 	"github.com/pdfrg/wmdl/internal/model"
+	"github.com/pdfrg/wmdl/internal/process"
 )
 
 func newDiscoverCmd() *cobra.Command {
@@ -98,14 +99,14 @@ Notes:
 
 			if discovered && !headless && term.IsTerminal(int(os.Stdin.Fd())) {
 				fmt.Fprintln(os.Stderr)
-				if promptYesNo(cmd.Context(), "Review this week now?") {
+				if process.PromptYesNo(cmd.Context(), "Review this week now?") {
 					approved, err := runReviewForWeek(cmd.Context(), database, cfg, targetYear, targetWeek)
 					if err != nil {
 						return err
 					}
 					if approved > 0 && term.IsTerminal(int(os.Stdin.Fd())) {
 						fmt.Fprintln(os.Stderr)
-						if promptYesNo(cmd.Context(), "Process this week now?") {
+						if process.PromptYesNo(cmd.Context(), "Process this week now?") {
 							return runProcessForWeek(cmd.Context(), database, cfg, targetYear, targetWeek, "")
 						}
 					}
@@ -196,7 +197,7 @@ func dataDir() (string, error) {
 		base = filepath.Join(home, ".local", "share")
 	}
 	dir := filepath.Join(base, "wmdl")
-	if err := os.MkdirAll(dir, 0755); err != nil {
+	if err := os.MkdirAll(dir, 0700); err != nil {
 		return "", fmt.Errorf("creating data dir: %w", err)
 	}
 	return dir, nil
