@@ -18,8 +18,9 @@ import (
 
 func newDiscoverCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "discover",
-		Short: "Scrape release sources and notify",
+		Use:     "discover",
+		Aliases: []string{"d"},
+		Short:   "Scrape release sources and notify",
 		Long: `Scrape DVD/streaming release sites, enrich with TMDB/RT data, save to database, and send notification.
 
 Lookback config keys (set in config.yaml):

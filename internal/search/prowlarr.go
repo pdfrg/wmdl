@@ -215,6 +215,11 @@ func (p *ProwlarrClient) GetIndexerName(ctx context.Context, id int) string {
 	}
 
 	p.mu.Lock()
+	// Re-check cache: another goroutine may have populated it while we fetched
+	if name, ok := p.indexerNames[id]; ok {
+		p.mu.Unlock()
+		return name
+	}
 	for _, idx := range indexers {
 		p.indexerNames[idx.ID] = idx.Name
 	}

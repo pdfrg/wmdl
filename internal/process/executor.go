@@ -953,7 +953,7 @@ func (e *Executor) ProcessBatchResults(ctx context.Context, items []*BatchItem) 
 		case item.SearchResult != nil:
 			sr := item.SearchResult
 			mode := e.cfg.MediaTypeMode(sr.Event.Title.MediaType)
-			if mode == "prowlarr-grab" {
+			if mode == config.ProcessModeProwlarrGrab {
 				e.grabViaProwlarr(ctx, sr.Event, item.Selected)
 			} else {
 				e.addToClient(ctx, sr.Event, item.Selected)
@@ -1117,7 +1117,7 @@ func (e *Executor) processBookBatchItem(ctx context.Context, item *BatchItem, bo
 
 func (e *Executor) handleSkipLibrary(ctx context.Context, evt db.EventWithTitle, season int) {
 	mode := e.cfg.MediaTypeMode(evt.Title.MediaType)
-	if mode != "full" {
+	if mode != config.ProcessModeFull {
 		return
 	}
 	switch evt.Title.MediaType {
@@ -1181,7 +1181,7 @@ func (e *Executor) handleSkipLibraryMusic(ctx context.Context, ae db.EventWithAl
 		return
 	}
 	mode := e.cfg.MediaTypeMode(model.MediaTypeMusic)
-	if mode != "full" {
+	if mode != config.ProcessModeFull {
 		return
 	}
 	artistMbid := ae.Release.ArtistMBID
@@ -1245,13 +1245,25 @@ func (e *Executor) handleSkipLibraryMusic(ctx context.Context, ae db.EventWithAl
 func (e *Executor) ComputePhase3Candidates(ctx context.Context, events []db.EventWithTitle) []Phase3Candidate {
 	var candidates []Phase3Candidate
 
-	// Pre-fetch Radarr collections once for all movie collection gap checks
+	// Pre-fetch Radarr collections + all movies once for all movie collection gap checks
 	var radarrCollections []library.RadarrCollection
 	if e.cfg.CheckCollections && e.radarr != nil {
 		var err error
 		radarrCollections, err = e.radarr.GetCollections(ctx)
 		if err != nil {
 			e.log.Warn().Err(err).Msg("failed to fetch Radarr collections, skipping Phase 3 movies")
+		}
+	}
+	var movieByTMDB map[int]library.RadarrMovie
+	if e.radarr != nil {
+		allRadarrMovies, err := e.radarr.GetAllMovies(ctx)
+		if err != nil {
+			e.log.Warn().Err(err).Msg("failed to fetch all Radarr movies for Phase 3")
+		} else {
+			movieByTMDB = make(map[int]library.RadarrMovie, len(allRadarrMovies))
+			for _, m := range allRadarrMovies {
+				movieByTMDB[m.TMDBID] = m
+			}
 		}
 	}
 
@@ -1274,52 +1286,34 @@ func (e *Executor) ComputePhase3Candidates(ctx context.Context, events []db.Even
 			if existing == nil || existing.Collection == nil || existing.Collection.TMDBID == 0 {
 				// Phase 3 Stage 2: check local TMDB collection cache for movies not yet in Radarr
 				if ev.Title.CollectionID > 0 {
-					allMovies, err := e.radarr.GetAllMovies(ctx)
-					if err == nil {
-						movieByTMDB := make(map[int]library.RadarrMovie, len(allMovies))
-						for _, m := range allMovies {
-							movieByTMDB[m.TMDBID] = m
+					if c, cErr := e.db.GetLibraryCache(ctx, "tmdb-collection", strconv.Itoa(ev.Title.CollectionID)); cErr == nil && c != nil {
+						var data struct {
+							Name   string `json:"name"`
+							Movies []struct {
+								TmdbID int    `json:"tmdb_id"`
+								Title  string `json:"title"`
+								Year   int    `json:"year"`
+							} `json:"movies"`
 						}
-						if c, cErr := e.db.GetLibraryCache(ctx, "tmdb-collection", strconv.Itoa(ev.Title.CollectionID)); cErr == nil && c != nil {
-							var data struct {
-								Name   string `json:"name"`
-								Movies []struct {
-									TmdbID int    `json:"tmdb_id"`
-									Title  string `json:"title"`
-									Year   int    `json:"year"`
-								} `json:"movies"`
-							}
-							if json.Unmarshal([]byte(c.Details), &data) == nil {
-								for _, m := range data.Movies {
-									if m.TmdbID == tmdbID {
-										continue
-									}
-									if ex, ok := movieByTMDB[m.TmdbID]; ok && ex.HasFile {
-										continue
-									}
-									candidates = append(candidates, Phase3Candidate{
-										Title:     m.Title,
-										Year:      m.Year,
-										MediaType: model.MediaTypeMovie,
-										TmdbID:    m.TmdbID,
-									})
+						if json.Unmarshal([]byte(c.Details), &data) == nil {
+							for _, m := range data.Movies {
+								if m.TmdbID == tmdbID {
+									continue
 								}
+								if ex, ok := movieByTMDB[m.TmdbID]; ok && ex.HasFile {
+									continue
+								}
+								candidates = append(candidates, Phase3Candidate{
+									Title:     m.Title,
+									Year:      m.Year,
+									MediaType: model.MediaTypeMovie,
+									TmdbID:    m.TmdbID,
+								})
 							}
 						}
 					}
 				}
 				continue
-			}
-
-			// Fetch all Radarr movies for "not in library" check
-			allMovies, err := e.radarr.GetAllMovies(ctx)
-			if err != nil {
-				e.log.Warn().Err(err).Msg("failed to fetch Radarr movies for Phase 3")
-				continue
-			}
-			movieByTMDB := make(map[int]library.RadarrMovie, len(allMovies))
-			for _, m := range allMovies {
-				movieByTMDB[m.TMDBID] = m
 			}
 
 			for _, col := range radarrCollections {
@@ -1508,7 +1502,7 @@ func (e *Executor) ProcessPhase3Pickers(ctx context.Context) {
 			}
 		}
 
-		if mode == "arr" || mode == "auto" || mode == "yolo" {
+		if mode == config.ProcessModeArr || mode == config.ProcessModeAuto || mode == config.ProcessModeYolo {
 			// Arr mode: add to *arr with SearchNow, skip picker & download
 			if c.MediaType == model.MediaTypeMovie && c.TmdbID > 0 {
 				existing, err := e.radarr.Exists(ctx, c.TmdbID)
@@ -1606,7 +1600,7 @@ func (e *Executor) ProcessPhase3Pickers(ctx context.Context) {
 	if len(e.phase3Movies) > 0 {
 		mode := e.cfg.MediaTypeMode(model.MediaTypeMovie)
 
-		if mode == "arr" || mode == "auto" || mode == "yolo" {
+		if mode == config.ProcessModeArr || mode == config.ProcessModeAuto || mode == config.ProcessModeYolo {
 			fmt.Fprintln(os.Stderr, "\n── Adding collection movies to Radarr ──")
 			for _, p3m := range e.phase3Movies {
 				existing, err := e.radarr.Exists(ctx, p3m.TMDBID)
@@ -1674,7 +1668,7 @@ func (e *Executor) ProcessPhase3Pickers(ctx context.Context) {
 		// Check mode from the first season entry (all should be same media type)
 		seasonMode := e.cfg.MediaTypeMode(e.phase3Seasons[0].MediaType)
 
-		if seasonMode == "arr" || seasonMode == "auto" || seasonMode == "yolo" {
+		if seasonMode == config.ProcessModeArr || seasonMode == config.ProcessModeAuto || seasonMode == config.ProcessModeYolo {
 			fmt.Fprintln(os.Stderr, "\n── Triggering Sonarr season searches ──")
 			for _, p3s := range e.phase3Seasons {
 				existing, err := e.sonarr.Exists(ctx, p3s.SeriesID)
@@ -1842,8 +1836,8 @@ func (e *Executor) ProcessLibraryDecisions(ctx context.Context, picked []PickedI
 processPicked:
 	for _, item := range picked {
 		mode := e.cfg.MediaTypeMode(item.Event.Title.MediaType)
-		searchNow := mode == "arr" || mode == "auto" || mode == "yolo"
-		autoConfirm := mode == "auto" || mode == "yolo"
+		searchNow := mode == config.ProcessModeArr || mode == config.ProcessModeAuto || mode == config.ProcessModeYolo
+		autoConfirm := mode == config.ProcessModeAuto || mode == config.ProcessModeYolo
 		if item.Event.Title.MediaType == model.MediaTypeMovie {
 			tmdbID := item.Event.Title.TmdbID
 			if tmdbID == 0 {
@@ -2578,7 +2572,7 @@ func (e *Executor) SearchAiringAnimeEarlierSeasons(ctx context.Context, evt db.E
 		}
 
 		searchSeason := false
-		if mode == "auto" || mode == "yolo" {
+		if mode == config.ProcessModeAuto || mode == config.ProcessModeYolo {
 			searchSeason = true
 			e.log.Info().Str("title", displayTitle).Int("season", ms.SeasonNumber).Msg("auto-searching earlier season")
 		} else {
@@ -2738,7 +2732,7 @@ func (e *Executor) addToSonarr(ctx context.Context, evt db.EventWithTitle, tvdbI
 				continue
 			}
 			enqueue := false
-			if mode == "auto" || mode == "yolo" {
+			if mode == config.ProcessModeAuto || mode == config.ProcessModeYolo {
 				enqueue = true
 				e.log.Info().Str("title", title).Int("season", s).Msg("auto-queueing earlier season search")
 			} else {
@@ -2912,7 +2906,7 @@ func (e *Executor) checkCollectionGaps(ctx context.Context, tmdbID int, colTMDBI
 		for _, m := range missing {
 			addIt := false
 			mode := e.cfg.MediaTypeMode(model.MediaTypeMovie)
-			if mode == "auto" || mode == "yolo" {
+			if mode == config.ProcessModeAuto || mode == config.ProcessModeYolo {
 				addIt = true
 				e.log.Info().Str("title", m.Title).Str("collection", col.Name).Msg("auto-adding collection movie")
 			} else {
@@ -3234,7 +3228,7 @@ func (e *Executor) ProcessMusicAlbumDecisions(ctx context.Context, results []Mus
 	}
 
 	mode := e.cfg.MediaTypeMode(model.MediaTypeMusic)
-	autoConfirm := mode == "auto" || mode == "yolo"
+	autoConfirm := mode == config.ProcessModeAuto || mode == config.ProcessModeYolo
 
 	fmt.Fprintln(os.Stderr, "\n── Lidarr decisions ──")
 
@@ -3929,7 +3923,7 @@ func (e *Executor) HCClientAvailable() bool {
 
 func (e *Executor) ProcessBookLibraryDecisions(ctx context.Context, events []db.EventWithBook, downloaded map[int64]*BookDownloadInfo) {
 	mode := e.cfg.MediaTypeMode(model.MediaTypeBook)
-	autoConfirm := mode == "auto" || mode == "yolo"
+	autoConfirm := mode == config.ProcessModeAuto || mode == config.ProcessModeYolo
 
 	if e.bookClient == nil {
 		return

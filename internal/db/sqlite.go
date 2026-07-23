@@ -600,11 +600,69 @@ func (d *DB) upsertTitle(ctx context.Context, q querier, t *model.Title) (int64,
 }
 
 func (d *DB) GetTitleByTmdbID(ctx context.Context, tmdbID int) (*model.Title, error) {
-	return d.getTitleByField(ctx, "tmdb_id", tmdbID)
+	var t model.Title
+	var mediaType string
+	var createdAt string
+	err := d.db.QueryRowContext(ctx, `
+		SELECT id, tmdb_id, tvdb_id, mal_id, title, tmdb_title, year, media_type, imdb_id,
+		       imdb_rating, imdb_votes, awards, box_office, director, writer, actors, rt_url, rt_critics_score, rt_audience_score,
+		       tmdb_rating, metacritic_score, yt_trailer_views, us_rating, original_language, origin_country,
+		       overview, genres, runtime, poster_path, created_at,
+		       anime_type, anime_episodes, anime_status, anime_members, anime_rank,
+		       anime_source, anime_studio, themes, demographics, streaming,
+		       collection_id, collection_name
+		FROM titles WHERE tmdb_id = ?
+	`, tmdbID).Scan(
+		&t.ID, &t.TmdbID, &t.TvdbID, &t.MalID, &t.Title, &t.TmdbTitle, &t.Year, &mediaType,
+		&t.ImdbID, &t.ImdbRating, &t.ImdbVotes, &t.Awards, &t.BoxOffice, &t.Director, &t.Writer, &t.Actors, &t.RTURL, &t.RTCriticsScore, &t.RTAudienceScore,
+		&t.TmdbRating, &t.MetacriticScore, &t.YoutubeViews, &t.USRating, &t.OriginalLanguage, &t.OriginCountry,
+		&t.Overview, &t.Genres, &t.Runtime, &t.PosterPath, &createdAt,
+		&t.AnimeType, &t.AnimeEpisodes, &t.AnimeStatus, &t.AnimeMembers, &t.AnimeRank,
+		&t.AnimeSource, &t.AnimeStudio, &t.Themes, &t.Demographics, &t.Streaming,
+		&t.CollectionID, &t.CollectionName,
+	)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("querying title by tmdb_id: %w", err)
+	}
+	t.MediaType = model.MediaType(mediaType)
+	t.CreatedAt = createdAt
+	return &t, nil
 }
 
 func (d *DB) GetTitleByMalID(ctx context.Context, malID int) (*model.Title, error) {
-	return d.getTitleByField(ctx, "mal_id", malID)
+	var t model.Title
+	var mediaType string
+	var createdAt string
+	err := d.db.QueryRowContext(ctx, `
+		SELECT id, tmdb_id, tvdb_id, mal_id, title, tmdb_title, year, media_type, imdb_id,
+		       imdb_rating, imdb_votes, awards, box_office, director, writer, actors, rt_url, rt_critics_score, rt_audience_score,
+		       tmdb_rating, metacritic_score, yt_trailer_views, us_rating, original_language, origin_country,
+		       overview, genres, runtime, poster_path, created_at,
+		       anime_type, anime_episodes, anime_status, anime_members, anime_rank,
+		       anime_source, anime_studio, themes, demographics, streaming,
+		       collection_id, collection_name
+		FROM titles WHERE mal_id = ?
+	`, malID).Scan(
+		&t.ID, &t.TmdbID, &t.TvdbID, &t.MalID, &t.Title, &t.TmdbTitle, &t.Year, &mediaType,
+		&t.ImdbID, &t.ImdbRating, &t.ImdbVotes, &t.Awards, &t.BoxOffice, &t.Director, &t.Writer, &t.Actors, &t.RTURL, &t.RTCriticsScore, &t.RTAudienceScore,
+		&t.TmdbRating, &t.MetacriticScore, &t.YoutubeViews, &t.USRating, &t.OriginalLanguage, &t.OriginCountry,
+		&t.Overview, &t.Genres, &t.Runtime, &t.PosterPath, &createdAt,
+		&t.AnimeType, &t.AnimeEpisodes, &t.AnimeStatus, &t.AnimeMembers, &t.AnimeRank,
+		&t.AnimeSource, &t.AnimeStudio, &t.Themes, &t.Demographics, &t.Streaming,
+		&t.CollectionID, &t.CollectionName,
+	)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("querying title by mal_id: %w", err)
+	}
+	t.MediaType = model.MediaType(mediaType)
+	t.CreatedAt = createdAt
+	return &t, nil
 }
 
 func (d *DB) getTitleByMalID(ctx context.Context, q querier, malID int) (*model.Title, error) {
@@ -637,39 +695,6 @@ func (d *DB) getTitleByMalID(ctx context.Context, q querier, malID int) (*model.
 			return nil, nil
 		}
 		return nil, fmt.Errorf("querying title by mal_id: %w", err)
-	}
-	t.MediaType = model.MediaType(mediaType)
-	t.CreatedAt = createdAt
-	return &t, nil
-}
-
-func (d *DB) getTitleByField(ctx context.Context, field string, value int) (*model.Title, error) {
-	var t model.Title
-	var mediaType string
-	var createdAt string
-	err := d.db.QueryRowContext(ctx, fmt.Sprintf(`
-		SELECT id, tmdb_id, tvdb_id, mal_id, title, tmdb_title, year, media_type, imdb_id,
-		       imdb_rating, imdb_votes, awards, box_office, director, writer, actors, rt_url, rt_critics_score, rt_audience_score,
-		       tmdb_rating, metacritic_score, yt_trailer_views, us_rating, original_language, origin_country,
-		       overview, genres, runtime, poster_path, created_at,
-		       anime_type, anime_episodes, anime_status, anime_members, anime_rank,
-		       anime_source, anime_studio, themes, demographics, streaming,
-		       collection_id, collection_name
-		FROM titles WHERE %s = ?
-	`, field), value).Scan(
-		&t.ID, &t.TmdbID, &t.TvdbID, &t.MalID, &t.Title, &t.TmdbTitle, &t.Year, &mediaType,
-		&t.ImdbID, &t.ImdbRating, &t.ImdbVotes, &t.Awards, &t.BoxOffice, &t.Director, &t.Writer, &t.Actors, &t.RTURL, &t.RTCriticsScore, &t.RTAudienceScore,
-		&t.TmdbRating, &t.MetacriticScore, &t.YoutubeViews, &t.USRating, &t.OriginalLanguage, &t.OriginCountry,
-		&t.Overview, &t.Genres, &t.Runtime, &t.PosterPath, &createdAt,
-		&t.AnimeType, &t.AnimeEpisodes, &t.AnimeStatus, &t.AnimeMembers, &t.AnimeRank,
-		&t.AnimeSource, &t.AnimeStudio, &t.Themes, &t.Demographics, &t.Streaming,
-		&t.CollectionID, &t.CollectionName,
-	)
-	if err != nil {
-		if err == sql.ErrNoRows {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("querying title by %s: %w", field, err)
 	}
 	t.MediaType = model.MediaType(mediaType)
 	t.CreatedAt = createdAt
@@ -731,7 +756,11 @@ func (d *DB) createReleaseEvent(ctx context.Context, q querier, e *model.Release
 	if err != nil {
 		return 0, fmt.Errorf("creating release event: %w", err)
 	}
-	return res.LastInsertId()
+	id, err := res.LastInsertId()
+	if err != nil {
+		return 0, fmt.Errorf("getting last insert id: %w", err)
+	}
+	return id, nil
 }
 
 func (d *DB) ListReleaseEvents(ctx context.Context, status model.ReleaseStatus) ([]*model.ReleaseEvent, error) {
@@ -872,7 +901,11 @@ func (d *DB) CreateDownload(ctx context.Context, dl *model.Download) (int64, err
 	if err != nil {
 		return 0, fmt.Errorf("creating download: %w", err)
 	}
-	return res.LastInsertId()
+	id, err := res.LastInsertId()
+	if err != nil {
+		return 0, fmt.Errorf("getting last insert id: %w", err)
+	}
+	return id, nil
 }
 
 func (d *DB) UpdateDownloadStatus(ctx context.Context, id int64, status model.DownloadStatus) error {
@@ -1566,7 +1599,11 @@ func (d *DB) createBookReleaseEvent(ctx context.Context, q querier, e *model.Boo
 	if err != nil {
 		return 0, fmt.Errorf("creating book release event: %w", err)
 	}
-	return res.LastInsertId()
+	id, err := res.LastInsertId()
+	if err != nil {
+		return 0, fmt.Errorf("getting last insert id: %w", err)
+	}
+	return id, nil
 }
 
 func (d *DB) GetLatestBookReleaseEvent(ctx context.Context, bookID int64) (*model.BookReleaseEvent, error) {
@@ -1936,7 +1973,11 @@ func (d *DB) CreateBookDownload(ctx context.Context, dl *model.BookDownload) (in
 	if err != nil {
 		return 0, fmt.Errorf("creating book download: %w", err)
 	}
-	return res.LastInsertId()
+	id, err := res.LastInsertId()
+	if err != nil {
+		return 0, fmt.Errorf("getting last insert id: %w", err)
+	}
+	return id, nil
 }
 
 func scanEventWithBookRows(rows *sql.Rows) ([]EventWithBook, error) {
@@ -2230,7 +2271,11 @@ func (d *DB) CreateAlbumReleaseEvent(ctx context.Context, e *model.AlbumReleaseE
 	if err != nil {
 		return 0, fmt.Errorf("creating album release event: %w", err)
 	}
-	return res.LastInsertId()
+	id, err := res.LastInsertId()
+	if err != nil {
+		return 0, fmt.Errorf("getting last insert id: %w", err)
+	}
+	return id, nil
 }
 
 func (d *DB) GetLatestAlbumReleaseEvent(ctx context.Context, releaseID int64) (*model.AlbumReleaseEvent, error) {

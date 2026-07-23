@@ -19,8 +19,9 @@ func newMarkDownloadedCmd() *cobra.Command {
 	var formatPref string
 
 	cmd := &cobra.Command{
-		Use:   "mark-downloaded [flags] <compound-id> [<compound-id> ...]",
-		Short: "Manually mark approved items as downloaded",
+		Use:     "mark-downloaded [flags] <compound-id> [<compound-id> ...]",
+		Aliases: []string{"mark"},
+		Short:   "Manually mark approved items as downloaded",
 		Long: `Mark approved items as downloaded when obtained through other means.
 
 Compound IDs use the format shown in "wmdl status -v":

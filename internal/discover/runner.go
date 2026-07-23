@@ -1254,6 +1254,7 @@ func (r *Runner) processItem(ctx context.Context, item ScrapedItem, progYear, pr
 
 	// Phase 1: TMDB enrichment (gets us tmdb_id, imdb_id, rating, metadata)
 	apiCtx, apiCancel := context.WithTimeout(ctx, 20*time.Second)
+	defer apiCancel()
 
 	mediaType := item.MediaType
 	var tmdbID int
@@ -1273,6 +1274,8 @@ func (r *Runner) processItem(ctx context.Context, item ScrapedItem, progYear, pr
 			rating = enrich.Rating
 			imdbID = enrich.IMDbID
 			r.log.Info().Int("tmdb_id", tmdbID).Float64("rating", rating).Str("media", string(enrich.MediaType)).Msg("TMDB enriched (by ID)")
+		} else {
+			r.log.Warn().Err(err).Str("title", item.Title).Msg("TMDB enrich by ID failed")
 		}
 	}
 
@@ -1283,6 +1286,8 @@ func (r *Runner) processItem(ctx context.Context, item ScrapedItem, progYear, pr
 			rating = enrich.Rating
 			imdbID = enrich.IMDbID
 			r.log.Info().Int("tmdb_id", tmdbID).Float64("rating", rating).Str("media", string(enrich.MediaType)).Msg("TMDB enriched")
+		} else {
+			r.log.Warn().Err(err).Str("title", item.Title).Msg("TMDB enrich with prefs failed")
 		}
 	}
 
@@ -1299,6 +1304,8 @@ func (r *Runner) processItem(ctx context.Context, item ScrapedItem, progYear, pr
 				rating = enrich.Rating
 				imdbID = enrich.IMDbID
 				r.log.Info().Int("tmdb_id", tmdbID).Float64("rating", rating).Str("media", string(enrich.MediaType)).Msg("TMDB enriched (retry)")
+			} else {
+				r.log.Warn().Err(err2).Str("title", item.Title).Msg("TMDB retry with original title failed")
 			}
 		}
 
@@ -1314,6 +1321,8 @@ func (r *Runner) processItem(ctx context.Context, item ScrapedItem, progYear, pr
 					rating = enrich.Rating
 					imdbID = enrich.IMDbID
 					r.log.Info().Int("tmdb_id", tmdbID).Float64("rating", rating).Str("media", string(enrich.MediaType)).Msg("TMDB enriched (parenthetical)")
+				} else {
+					r.log.Warn().Err(err3).Str("title", item.Title).Msg("TMDB retry with parenthetical failed")
 				}
 			}
 		}
@@ -1533,7 +1542,7 @@ func (r *Runner) processItem(ctx context.Context, item ScrapedItem, progYear, pr
 		// If previous event was downloaded and this is new, mark the old as "upgraded"
 		if existing != nil && existing.Status == model.StatusDownloaded && evtNotes != "" {
 			if err := r.db.UpdateReleaseEventStatusTx(ctx, tx, existing.ID, model.StatusDownloaded); err != nil {
-				r.log.Warn().Err(err).Msg("failed to mark previous download as upgraded")
+				return fmt.Errorf("marking previous download as upgraded: %w", err)
 			}
 		}
 

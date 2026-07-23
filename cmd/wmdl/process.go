@@ -23,8 +23,9 @@ import (
 
 func newProcessCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "process",
-		Short: "Search and download approved releases",
+		Use:     "process",
+		Aliases: []string{"p"},
+		Short:   "Search and download approved releases",
 		Long: `For each approved release: search Prowlarr, select a release in the TUI picker,
 and send it to the download client.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -290,9 +291,9 @@ func runBacklogBatch(ctx context.Context, database *db.DB, cfg *config.Config, t
 
 	exec := process.NewExecutor(log.Logger, cfg, database)
 	modes := cfg.UsedModes()
-	needsProwlarr := modes["full"] || modes["prowlarr-grab"]
-	needsDownloader := modes["full"]
-	needsLibrary := modes["full"] || modes["arr"] || modes["auto"] || modes["yolo"]
+	needsProwlarr := modes[config.ProcessModeFull] || modes[config.ProcessModeProwlarrGrab]
+	needsDownloader := modes[config.ProcessModeFull]
+	needsLibrary := modes[config.ProcessModeFull] || modes[config.ProcessModeArr] || modes[config.ProcessModeAuto] || modes[config.ProcessModeYolo]
 	hasSearchable := len(allEvents) > 0
 	hasAlbums := len(allAlbumEvents) > 0
 	hasBooks := len(allBookEvents) > 0
@@ -329,7 +330,7 @@ func runBacklogBatch(ctx context.Context, database *db.DB, cfg *config.Config, t
 	}
 	fmt.Fprintln(os.Stderr)
 
-	if !modes["yolo"] && !promptYesNo(ctx, "Continue") {
+	if !modes[config.ProcessModeYolo] && !promptYesNo(ctx, "Continue") {
 		return nil
 	}
 
@@ -348,7 +349,7 @@ func runBacklogBatch(ctx context.Context, database *db.DB, cfg *config.Config, t
 	}
 
 	if len(health.Critical) > 0 {
-		if modes["yolo"] {
+		if modes[config.ProcessModeYolo] {
 			log.Error().Msg("yolo mode: critical services unreachable, aborting")
 			return fmt.Errorf("critical services unreachable")
 		}
@@ -385,7 +386,7 @@ func runBacklogBatch(ctx context.Context, database *db.DB, cfg *config.Config, t
 	}
 
 	if len(health.Warnings) > 0 && len(health.Critical) == 0 {
-		if modes["yolo"] {
+		if modes[config.ProcessModeYolo] {
 			log.Error().Msg("yolo mode: library services unreachable, aborting")
 			return fmt.Errorf("library services unreachable")
 		}
@@ -457,19 +458,19 @@ func runBacklogBatch(ctx context.Context, database *db.DB, cfg *config.Config, t
 	var bookResults []*process.BookSearchResult
 
 	searched := 0
-	if cfg.ProcessMode == "batch" || cfg.ProcessMode == "" {
+	if cfg.ProcessMode == config.ProcessModeBatch || cfg.ProcessMode == "" {
 		var phase3Candidates []process.Phase3Candidate
 		if needsLibrary && (hasSearchable || hasAnimeAiring) {
 			var allForPhase3 []db.EventWithTitle
 			for _, ev := range allEvents {
 				m := cfg.MediaTypeMode(ev.Title.MediaType)
-				if m == "full" || m == "arr" || m == "auto" || m == "yolo" {
+				if m == config.ProcessModeFull || m == config.ProcessModeArr || m == config.ProcessModeAuto || m == config.ProcessModeYolo {
 					allForPhase3 = append(allForPhase3, ev)
 				}
 			}
 			for _, ev := range allAnimeAiring {
 				m := cfg.MediaTypeMode(ev.Title.MediaType)
-				if m == "full" || m == "arr" || m == "auto" || m == "yolo" {
+				if m == config.ProcessModeFull || m == config.ProcessModeArr || m == config.ProcessModeAuto || m == config.ProcessModeYolo {
 					allForPhase3 = append(allForPhase3, ev)
 				}
 			}
@@ -484,7 +485,7 @@ func runBacklogBatch(ctx context.Context, database *db.DB, cfg *config.Config, t
 		var searchEvents []db.EventWithTitle
 		for _, ev := range allEvents {
 			m := cfg.MediaTypeMode(ev.Title.MediaType)
-			if m != "arr" && m != "auto" && m != "yolo" {
+			if m != config.ProcessModeArr && m != config.ProcessModeAuto && m != config.ProcessModeYolo {
 				searchEvents = append(searchEvents, ev)
 			}
 		}
@@ -492,7 +493,7 @@ func runBacklogBatch(ctx context.Context, database *db.DB, cfg *config.Config, t
 		bookPhase3Count := 0
 		if hasBooks && exec.BookClientAvailable() && exec.HCClientAvailable() {
 			bm := cfg.MediaTypeMode(model.MediaTypeBook)
-			if bm == "full" || bm == "prowlarr-grab" {
+			if bm == config.ProcessModeFull || bm == config.ProcessModeProwlarrGrab {
 				fmt.Fprintf(os.Stderr, "  Checking book series for missing entries...\n")
 				exec.ComputeBookPhase3Candidates(ctx, allBookEvents)
 				bookPhase3Count = len(exec.BookPhase3SearchPhase)
@@ -502,7 +503,7 @@ func runBacklogBatch(ctx context.Context, database *db.DB, cfg *config.Config, t
 		totalToSearch := len(searchEvents) + len(phase3Candidates) + len(allAlbumEvents)
 		if hasBooks {
 			bm := cfg.MediaTypeMode(model.MediaTypeBook)
-			if bm != "arr" && bm != "auto" && bm != "yolo" {
+			if bm != config.ProcessModeArr && bm != config.ProcessModeAuto && bm != config.ProcessModeYolo {
 				totalToSearch += len(allBookEvents)
 			}
 		}
@@ -525,7 +526,7 @@ func runBacklogBatch(ctx context.Context, database *db.DB, cfg *config.Config, t
 		}
 		if hasBooks {
 			bm := cfg.MediaTypeMode(model.MediaTypeBook)
-			if bm != "arr" && bm != "auto" && bm != "yolo" {
+			if bm != config.ProcessModeArr && bm != config.ProcessModeAuto && bm != config.ProcessModeYolo {
 				fmt.Fprintf(os.Stderr, "  Searched %d/%d. Searching %d book(s)...\n", searched, totalToSearch, len(allBookEvents))
 				bookResults = exec.SearchBooksAll(ctx, allBookEvents)
 				searched += len(allBookEvents)
@@ -544,11 +545,11 @@ func runBacklogBatch(ctx context.Context, database *db.DB, cfg *config.Config, t
 	var batchItems []*process.BatchItem
 
 	if hasSearchable {
-		if cfg.ProcessMode == "batch" || cfg.ProcessMode == "" {
+		if cfg.ProcessMode == config.ProcessModeBatch || cfg.ProcessMode == "" {
 			var fullResults, grabResults []*process.SearchResult
 			for _, sr := range primaryVideoResults {
 				m := cfg.MediaTypeMode(sr.Event.Title.MediaType)
-				if m == "prowlarr-grab" {
+				if m == config.ProcessModeProwlarrGrab {
 					grabResults = append(grabResults, sr)
 				} else {
 					fullResults = append(fullResults, sr)
@@ -579,7 +580,7 @@ func runBacklogBatch(ctx context.Context, database *db.DB, cfg *config.Config, t
 		} else {
 			for _, ev := range allEvents {
 				m := cfg.MediaTypeMode(ev.Title.MediaType)
-				if m == "prowlarr-grab" {
+				if m == config.ProcessModeProwlarrGrab {
 					exec.SearchAndGrabOne(ctx, ev)
 				} else {
 					if item := exec.SearchAndPickOne(ctx, ev); item != nil {
@@ -592,7 +593,7 @@ func runBacklogBatch(ctx context.Context, database *db.DB, cfg *config.Config, t
 
 	for _, ev := range allEvents {
 		m := cfg.MediaTypeMode(ev.Title.MediaType)
-		if m == "arr" || m == "auto" || m == "yolo" {
+		if m == config.ProcessModeArr || m == config.ProcessModeAuto || m == config.ProcessModeYolo {
 			season := quality.ParseSeasonNumber(ev.Title.Title)
 			picked = append(picked, process.PickedItem{Event: ev, Season: season})
 		}
@@ -602,7 +603,7 @@ func runBacklogBatch(ctx context.Context, database *db.DB, cfg *config.Config, t
 	var albumResults []process.MusicAlbumResult
 	var bookDownloadedInfo map[int64]*process.BookDownloadInfo
 
-	if cfg.ProcessMode == "batch" || cfg.ProcessMode == "" {
+	if cfg.ProcessMode == config.ProcessModeBatch || cfg.ProcessMode == "" {
 		if hasAlbums {
 			for _, sr := range musicResults {
 				if len(sr.Top) == 0 {
@@ -619,7 +620,7 @@ func runBacklogBatch(ctx context.Context, database *db.DB, cfg *config.Config, t
 
 		if hasBooks {
 			bm := cfg.MediaTypeMode(model.MediaTypeBook)
-			if bm != "arr" && bm != "auto" && bm != "yolo" {
+			if bm != config.ProcessModeArr && bm != config.ProcessModeAuto && bm != config.ProcessModeYolo {
 				for _, sr := range bookResults {
 					if len(sr.Top) == 0 {
 						continue
@@ -643,7 +644,7 @@ func runBacklogBatch(ctx context.Context, database *db.DB, cfg *config.Config, t
 			for _, entry := range exec.Phase3SearchPhase {
 				c := entry.Candidate
 				m := cfg.MediaTypeMode(c.MediaType)
-				if m == "arr" || m == "auto" || m == "yolo" {
+				if m == config.ProcessModeArr || m == config.ProcessModeAuto || m == config.ProcessModeYolo {
 					remaining = append(remaining, entry)
 				} else if len(entry.Top) > 0 {
 					label := fmt.Sprintf("%s (%d)", c.Title, c.Year)
@@ -673,7 +674,7 @@ func runBacklogBatch(ctx context.Context, database *db.DB, cfg *config.Config, t
 
 		if hasBooks && exec.BookClientAvailable() && exec.HCClientAvailable() {
 			bm := cfg.MediaTypeMode(model.MediaTypeBook)
-			if bm == "full" || bm == "prowlarr-grab" {
+			if bm == config.ProcessModeFull || bm == config.ProcessModeProwlarrGrab {
 				for _, sr := range exec.BookPhase3SearchPhase {
 					if len(sr.Top) == 0 {
 						continue
@@ -733,7 +734,7 @@ func runBacklogBatch(ctx context.Context, database *db.DB, cfg *config.Config, t
 		if hasBooks && exec.BookClientAvailable() {
 			bm := cfg.MediaTypeMode(model.MediaTypeBook)
 			var be []db.EventWithBook
-			if bm == "arr" || bm == "auto" || bm == "yolo" || bm == "full" {
+			if bm == config.ProcessModeArr || bm == config.ProcessModeAuto || bm == config.ProcessModeYolo || bm == config.ProcessModeFull {
 				be = allBookEvents
 			} else if len(bookDownloadedInfo) > 0 {
 				be = allBookEvents
@@ -757,7 +758,7 @@ func runBacklogBatch(ctx context.Context, database *db.DB, cfg *config.Config, t
 		default:
 		}
 		m := cfg.MediaTypeMode(ae.Title.MediaType)
-		searchNow := m == "arr" || m == "auto" || m == "yolo"
+		searchNow := m == config.ProcessModeArr || m == config.ProcessModeAuto || m == config.ProcessModeYolo
 		series, err := exec.AddAiringAnimeToSonarr(ctx, ae, searchNow)
 		if err != nil {
 			log.Warn().Err(err).Str("title", ae.Title.Title).Msg("error adding airing anime to Sonarr")
@@ -773,13 +774,13 @@ func runBacklogBatch(ctx context.Context, database *db.DB, cfg *config.Config, t
 	}
 
 	// ─── Book interactive (non-batch mode) ────────────────────
-	if hasBooks && cfg.ProcessMode != "batch" && cfg.ProcessMode != "" {
+	if hasBooks && cfg.ProcessMode != config.ProcessModeBatch && cfg.ProcessMode != "" {
 		bm := cfg.MediaTypeMode(model.MediaTypeBook)
-		if bm == "full" {
+		if bm == config.ProcessModeFull {
 			interactiveInfo := exec.ProcessBooks(ctx, allBookEvents)
 			if exec.BookClientAvailable() {
 				var be []db.EventWithBook
-				if bm == "arr" || bm == "auto" || bm == "yolo" || bm == "full" {
+				if bm == config.ProcessModeArr || bm == config.ProcessModeAuto || bm == config.ProcessModeYolo || bm == config.ProcessModeFull {
 					be = allBookEvents
 				} else if len(interactiveInfo) > 0 {
 					be = allBookEvents

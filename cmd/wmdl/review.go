@@ -16,9 +16,10 @@ import (
 
 func newReviewCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "review",
-		Short: "Review pending releases in TUI",
-		Long:  "Open interactive TUI to approve/reject pending releases.",
+		Use:     "review",
+		Aliases: []string{"r"},
+		Short:   "Review pending releases in TUI",
+		Long:    "Open interactive TUI to approve/reject pending releases.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := config.Load()
 			if err != nil {

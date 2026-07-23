@@ -23,7 +23,7 @@ func Run(ctx context.Context, cmd string) error {
 	c := exec.CommandContext(ctx, "sh", "-c", cmd)
 	out, err := c.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("%w: %s", err, strings.TrimSpace(string(out)))
+		return fmt.Errorf("hook exec: %w: %s", err, strings.TrimSpace(string(out)))
 	}
 	return nil
 }

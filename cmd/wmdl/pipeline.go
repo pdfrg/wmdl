@@ -406,7 +406,7 @@ func runProcessForWeek(ctx context.Context, database *db.DB, cfg *config.Config,
 
 	case len(downloaded) > 0 && len(pending) == 0:
 		log.Info().Msgf("All %d releases for %d-W%02d already downloaded.", len(downloaded), year, week)
-		if modes["yolo"] {
+		if modes[config.ProcessModeYolo] {
 			log.Info().Msg("yolo mode: re-processing all")
 		} else if !promptYesNo(ctx, "Continue anyway (re-process all)?") {
 			return nil
@@ -442,9 +442,9 @@ func runProcessForWeek(ctx context.Context, database *db.DB, cfg *config.Config,
 
 	exec := process.NewExecutor(log.Logger, cfg, database)
 
-	needsProwlarr := modes["full"] || modes["prowlarr-grab"]
-	needsDownloader := modes["full"]
-	needsLibrary := modes["full"] || modes["arr"] || modes["auto"] || modes["yolo"]
+	needsProwlarr := modes[config.ProcessModeFull] || modes[config.ProcessModeProwlarrGrab]
+	needsDownloader := modes[config.ProcessModeFull]
+	needsLibrary := modes[config.ProcessModeFull] || modes[config.ProcessModeArr] || modes[config.ProcessModeAuto] || modes[config.ProcessModeYolo]
 
 	// Split anime Phase B (airing) items — skip search, add directly to Sonarr
 	var animeAiring []db.EventWithTitle
@@ -493,7 +493,7 @@ func runProcessForWeek(ctx context.Context, database *db.DB, cfg *config.Config,
 	}
 
 	if len(health.Critical) > 0 {
-		if modes["yolo"] {
+		if modes[config.ProcessModeYolo] {
 			log.Error().Msg("yolo mode: critical services unreachable, aborting")
 			return fmt.Errorf("critical services unreachable")
 		}
@@ -530,7 +530,7 @@ func runProcessForWeek(ctx context.Context, database *db.DB, cfg *config.Config,
 	}
 
 	if len(health.Warnings) > 0 && len(health.Critical) == 0 {
-		if modes["yolo"] {
+		if modes[config.ProcessModeYolo] {
 			log.Error().Msg("yolo mode: library services unreachable, aborting")
 			return fmt.Errorf("library services unreachable")
 		}
@@ -601,7 +601,7 @@ func runProcessForWeek(ctx context.Context, database *db.DB, cfg *config.Config,
 	var musicResults []*process.MusicSearchResult
 	var bookResults []*process.BookSearchResult
 
-	if cfg.ProcessMode == "batch" || cfg.ProcessMode == "" {
+	if cfg.ProcessMode == config.ProcessModeBatch || cfg.ProcessMode == "" {
 		// Compute Phase 3 candidates (collection gaps, earlier seasons) —
 		// only for items using modes that manage a library
 		var phase3Candidates []process.Phase3Candidate
@@ -609,13 +609,13 @@ func runProcessForWeek(ctx context.Context, database *db.DB, cfg *config.Config,
 			allForPhase3 := make([]db.EventWithTitle, 0, len(events)+len(animeAiring))
 			for _, ev := range events {
 				mode := cfg.MediaTypeMode(ev.Title.MediaType)
-				if mode == "full" || mode == "arr" || mode == "auto" || mode == "yolo" {
+				if mode == config.ProcessModeFull || mode == config.ProcessModeArr || mode == config.ProcessModeAuto || mode == config.ProcessModeYolo {
 					allForPhase3 = append(allForPhase3, ev)
 				}
 			}
 			for _, ev := range animeAiring {
 				mode := cfg.MediaTypeMode(ev.Title.MediaType)
-				if mode == "full" || mode == "arr" || mode == "auto" || mode == "yolo" {
+				if mode == config.ProcessModeFull || mode == config.ProcessModeArr || mode == config.ProcessModeAuto || mode == config.ProcessModeYolo {
 					allForPhase3 = append(allForPhase3, ev)
 				}
 			}
@@ -631,7 +631,7 @@ func runProcessForWeek(ctx context.Context, database *db.DB, cfg *config.Config,
 		var searchEvents []db.EventWithTitle
 		for _, ev := range events {
 			mode := cfg.MediaTypeMode(ev.Title.MediaType)
-			if mode != "arr" && mode != "auto" && mode != "yolo" {
+			if mode != config.ProcessModeArr && mode != config.ProcessModeAuto && mode != config.ProcessModeYolo {
 				searchEvents = append(searchEvents, ev)
 			}
 		}
@@ -653,7 +653,7 @@ func runProcessForWeek(ctx context.Context, database *db.DB, cfg *config.Config,
 		// Search all books (skip arr/auto/yolo — LL handles search)
 		if hasBooks {
 			bookMode := cfg.MediaTypeMode(model.MediaTypeBook)
-			if bookMode != "arr" && bookMode != "auto" && bookMode != "yolo" {
+			if bookMode != config.ProcessModeArr && bookMode != config.ProcessModeAuto && bookMode != config.ProcessModeYolo {
 				bookResults = exec.SearchBooksAll(ctx, bookEventsForProcess)
 			}
 		}
@@ -661,7 +661,7 @@ func runProcessForWeek(ctx context.Context, database *db.DB, cfg *config.Config,
 		// Compute and search book Phase 3 candidates (missing series members)
 		if hasBooks && exec.BookClientAvailable() && exec.HCClientAvailable() {
 			bookMode := cfg.MediaTypeMode(model.MediaTypeBook)
-			if bookMode == "full" || bookMode == "prowlarr-grab" {
+			if bookMode == config.ProcessModeFull || bookMode == config.ProcessModeProwlarrGrab {
 				exec.ComputeBookPhase3Candidates(ctx, bookEventsForProcess)
 				if len(exec.BookPhase3SearchPhase) > 0 {
 					log.Info().Int("count", len(exec.BookPhase3SearchPhase)).Msg("book phase 3 candidates to pick")
@@ -695,12 +695,12 @@ func runProcessForWeek(ctx context.Context, database *db.DB, cfg *config.Config,
 	var picked []process.PickedItem
 	var batchItems []*process.BatchItem
 	if hasSearchable {
-		if cfg.ProcessMode == "batch" || cfg.ProcessMode == "" {
+		if cfg.ProcessMode == config.ProcessModeBatch || cfg.ProcessMode == "" {
 			// Batch mode: split results, collect all items, single TUI
 			var fullResults, grabResults []*process.SearchResult
 			for _, sr := range primaryVideoResults {
 				mode := cfg.MediaTypeMode(sr.Event.Title.MediaType)
-				if mode == "prowlarr-grab" {
+				if mode == config.ProcessModeProwlarrGrab {
 					grabResults = append(grabResults, sr)
 				} else {
 					fullResults = append(fullResults, sr)
@@ -734,7 +734,7 @@ func runProcessForWeek(ctx context.Context, database *db.DB, cfg *config.Config,
 			// Interactive mode — process one at a time
 			for _, ev := range events {
 				mode := cfg.MediaTypeMode(ev.Title.MediaType)
-				if mode == "prowlarr-grab" {
+				if mode == config.ProcessModeProwlarrGrab {
 					exec.SearchAndGrabOne(ctx, ev)
 				} else {
 					if item := exec.SearchAndPickOne(ctx, ev); item != nil {
@@ -750,7 +750,7 @@ func runProcessForWeek(ctx context.Context, database *db.DB, cfg *config.Config,
 	// synthetic PickedItems for the library phase.
 	for _, ev := range events {
 		mode := cfg.MediaTypeMode(ev.Title.MediaType)
-		if mode == "arr" || mode == "auto" || mode == "yolo" {
+		if mode == config.ProcessModeArr || mode == config.ProcessModeAuto || mode == config.ProcessModeYolo {
 			season := quality.ParseSeasonNumber(ev.Title.Title)
 			picked = append(picked, process.PickedItem{Event: ev, Season: season})
 		}
@@ -760,7 +760,7 @@ func runProcessForWeek(ctx context.Context, database *db.DB, cfg *config.Config,
 	var albumResults []process.MusicAlbumResult
 	var bookDownloadedInfo map[int64]*process.BookDownloadInfo
 
-	if cfg.ProcessMode == "batch" || cfg.ProcessMode == "" {
+	if cfg.ProcessMode == config.ProcessModeBatch || cfg.ProcessMode == "" {
 		// Collect music results
 		if hasAlbums {
 			for _, sr := range musicResults {
@@ -779,7 +779,7 @@ func runProcessForWeek(ctx context.Context, database *db.DB, cfg *config.Config,
 		// Collect book results (convert ParsedBookRelease to ParsedRelease for picker)
 		if hasBooks {
 			bookMode := cfg.MediaTypeMode(model.MediaTypeBook)
-			if bookMode != "arr" && bookMode != "auto" && bookMode != "yolo" {
+			if bookMode != config.ProcessModeArr && bookMode != config.ProcessModeAuto && bookMode != config.ProcessModeYolo {
 				for _, sr := range bookResults {
 					if len(sr.Top) == 0 {
 						continue
@@ -805,7 +805,7 @@ func runProcessForWeek(ctx context.Context, database *db.DB, cfg *config.Config,
 			for _, entry := range exec.Phase3SearchPhase {
 				c := entry.Candidate
 				mode := cfg.MediaTypeMode(c.MediaType)
-				if mode == "arr" || mode == "auto" || mode == "yolo" {
+				if mode == config.ProcessModeArr || mode == config.ProcessModeAuto || mode == config.ProcessModeYolo {
 					remaining = append(remaining, entry)
 				} else if len(entry.Top) > 0 {
 					label := fmt.Sprintf("%s (%d)", c.Title, c.Year)
@@ -839,7 +839,7 @@ func runProcessForWeek(ctx context.Context, database *db.DB, cfg *config.Config,
 		// Collect book Phase 3 items into BatchPicker
 		if hasBooks && exec.BookClientAvailable() && exec.HCClientAvailable() {
 			bookMode := cfg.MediaTypeMode(model.MediaTypeBook)
-			if bookMode == "full" || bookMode == "prowlarr-grab" {
+			if bookMode == config.ProcessModeFull || bookMode == config.ProcessModeProwlarrGrab {
 				for _, sr := range exec.BookPhase3SearchPhase {
 					if len(sr.Top) == 0 {
 						continue
@@ -905,7 +905,7 @@ func runProcessForWeek(ctx context.Context, database *db.DB, cfg *config.Config,
 		if hasBooks && exec.BookClientAvailable() {
 			bookMode := cfg.MediaTypeMode(model.MediaTypeBook)
 			var bookEvents []db.EventWithBook
-			if bookMode == "arr" || bookMode == "auto" || bookMode == "yolo" || bookMode == "full" {
+			if bookMode == config.ProcessModeArr || bookMode == config.ProcessModeAuto || bookMode == config.ProcessModeYolo || bookMode == config.ProcessModeFull {
 				bookEvents = bookEventsForProcess
 			} else if len(bookDownloadedInfo) > 0 {
 				bookEvents = bookEventsForProcess
@@ -924,7 +924,7 @@ func runProcessForWeek(ctx context.Context, database *db.DB, cfg *config.Config,
 		default:
 		}
 		mode := cfg.MediaTypeMode(ae.Title.MediaType)
-		searchNow := mode == "arr" || mode == "auto" || mode == "yolo"
+		searchNow := mode == config.ProcessModeArr || mode == config.ProcessModeAuto || mode == config.ProcessModeYolo
 		series, err := exec.AddAiringAnimeToSonarr(ctx, ae, searchNow)
 		if err != nil {
 			log.Warn().Err(err).Str("title", ae.Title.Title).Msg("error adding airing anime to Sonarr")
@@ -946,18 +946,18 @@ func runProcessForWeek(ctx context.Context, database *db.DB, cfg *config.Config,
 
 	// ─── Book interactive processing (search+download only) ─────
 	var bookInteractiveInfo map[int64]*process.BookDownloadInfo
-	if hasBooks && cfg.ProcessMode != "batch" && cfg.ProcessMode != "" {
+	if hasBooks && cfg.ProcessMode != config.ProcessModeBatch && cfg.ProcessMode != "" {
 		bookMode := cfg.MediaTypeMode(model.MediaTypeBook)
-		if bookMode == "full" {
+		if bookMode == config.ProcessModeFull {
 			bookInteractiveInfo = exec.ProcessBooks(ctx, bookEventsForProcess)
 		}
 	}
 
 	// Book library decisions for interactive mode (if not already handled above)
-	if hasBooks && exec.BookClientAvailable() && cfg.ProcessMode != "batch" && cfg.ProcessMode != "" {
+	if hasBooks && exec.BookClientAvailable() && cfg.ProcessMode != config.ProcessModeBatch && cfg.ProcessMode != "" {
 		bookMode := cfg.MediaTypeMode(model.MediaTypeBook)
 		var bookEvents []db.EventWithBook
-		if bookMode == "arr" || bookMode == "auto" || bookMode == "yolo" || bookMode == "full" {
+		if bookMode == config.ProcessModeArr || bookMode == config.ProcessModeAuto || bookMode == config.ProcessModeYolo || bookMode == config.ProcessModeFull {
 			bookEvents = bookEventsForProcess
 		} else if len(bookInteractiveInfo) > 0 {
 			bookEvents = bookEventsForProcess
@@ -989,7 +989,7 @@ func runProcessForWeek(ctx context.Context, database *db.DB, cfg *config.Config,
 	}
 
 	// ─── Yolo notification: send summary if notifier is configured ──
-	if modes["yolo"] && cfg.Notifier.Service != "" {
+	if modes[config.ProcessModeYolo] && cfg.Notifier.Service != "" {
 		notify, nErr := notifier.New(cfg.Notifier)
 		if nErr == nil {
 			msg := fmt.Sprintf("%d-W%02d processed", year, week)
@@ -1020,7 +1020,7 @@ func autoApproveYoloItems(ctx context.Context, database *db.DB, cfg *config.Conf
 		return
 	}
 	for _, ev := range events {
-		if ev.Event.Status == model.StatusPending && cfg.MediaTypeMode(ev.Title.MediaType) == "yolo" {
+		if ev.Event.Status == model.StatusPending && cfg.MediaTypeMode(ev.Title.MediaType) == config.ProcessModeYolo {
 			if err := database.UpdateReleaseEventStatus(ctx, ev.Event.ID, model.StatusApproved); err != nil {
 				log.Warn().Err(err).Str("title", ev.Title.Title).Msg("yolo auto-approve failed")
 			} else {
@@ -1035,7 +1035,7 @@ func autoApproveYoloItems(ctx context.Context, database *db.DB, cfg *config.Conf
 		return
 	}
 	for _, ae := range albumEvents {
-		if ae.Event.Status == model.StatusPending && cfg.MediaTypeMode(model.MediaTypeMusic) == "yolo" {
+		if ae.Event.Status == model.StatusPending && cfg.MediaTypeMode(model.MediaTypeMusic) == config.ProcessModeYolo {
 			if err := database.UpdateAlbumReleaseEventStatus(ctx, ae.Event.ID, model.StatusApproved); err != nil {
 				log.Warn().Err(err).Str("album", ae.Release.Title).Msg("yolo auto-approve failed")
 			} else {
@@ -1050,7 +1050,7 @@ func autoApproveYoloItems(ctx context.Context, database *db.DB, cfg *config.Conf
 		return
 	}
 	for _, be := range bookEvents {
-		if be.Event.Status == model.StatusPending && cfg.MediaTypeMode(model.MediaTypeBook) == "yolo" {
+		if be.Event.Status == model.StatusPending && cfg.MediaTypeMode(model.MediaTypeBook) == config.ProcessModeYolo {
 			if err := database.UpdateBookReleaseEventStatus(ctx, be.Event.ID, model.StatusApproved); err != nil {
 				log.Warn().Err(err).Str("book", be.Book.Title).Msg("yolo auto-approve failed")
 			} else {

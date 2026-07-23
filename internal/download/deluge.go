@@ -15,6 +15,8 @@ type DelugeClient struct {
 	baseURL  string
 	password string
 	http     *http.Client
+	reqID    int
+	reqMu    sync.Mutex
 }
 
 var _ Client = (*DelugeClient)(nil)
@@ -46,16 +48,11 @@ type delugeError struct {
 	Code    int    `json:"code"`
 }
 
-var (
-	delugeReqID int
-	delugeReqMu sync.Mutex
-)
-
 func (d *DelugeClient) call(ctx context.Context, method string, params []interface{}) (*delugeResponse, error) {
-	delugeReqMu.Lock()
-	delugeReqID++
-	id := delugeReqID
-	delugeReqMu.Unlock()
+	d.reqMu.Lock()
+	d.reqID++
+	id := d.reqID
+	d.reqMu.Unlock()
 	body, err := json.Marshal(delugeRequest{
 		Method: method,
 		Params: params,

@@ -306,12 +306,21 @@ func Load() (*Config, error) {
 	return &cfg, nil
 }
 
+const (
+	ProcessModeFull         = "full"
+	ProcessModeArr          = "arr"
+	ProcessModeAuto         = "auto"
+	ProcessModeYolo         = "yolo"
+	ProcessModeProwlarrGrab = "prowlarr-grab"
+	ProcessModeBatch        = "batch"
+)
+
 var validModes = map[string]bool{
-	"full":          true,
-	"prowlarr-grab": true,
-	"arr":           true,
-	"auto":          true,
-	"yolo":          true,
+	ProcessModeFull:         true,
+	ProcessModeProwlarrGrab: true,
+	ProcessModeArr:          true,
+	ProcessModeAuto:         true,
+	ProcessModeYolo:         true,
 }
 
 func (c *Config) UsedModes() map[string]bool {
@@ -347,7 +356,7 @@ func (c *Config) MediaTypeMode(mt model.MediaType) string {
 	case model.MediaTypeBook:
 		return c.MediaTypes.Books.Mode
 	default:
-		return "full"
+		return ProcessModeFull
 	}
 }
 
@@ -367,7 +376,7 @@ func (c *Config) Validate() error {
 		{"media_types.books.mode", c.MediaTypes.Books.Mode},
 	} {
 		if mt.mode != "" && !validModes[mt.mode] {
-			errs = append(errs, fmt.Sprintf("%s must be one of: full, prowlarr-grab, arr, auto, yolo", mt.label))
+			errs = append(errs, fmt.Sprintf("%s must be one of: %s, %s, %s, %s, %s", mt.label, ProcessModeFull, ProcessModeProwlarrGrab, ProcessModeArr, ProcessModeAuto, ProcessModeYolo))
 		}
 	}
 
@@ -377,8 +386,8 @@ func (c *Config) Validate() error {
 
 	// Conditional service requirements based on active modes
 	modes := c.UsedModes()
-	needsProwlarr := modes["full"] || modes["prowlarr-grab"]
-	needsDownloader := modes["full"]
+	needsProwlarr := modes[ProcessModeFull] || modes[ProcessModeProwlarrGrab]
+	needsDownloader := modes[ProcessModeFull]
 
 	if needsProwlarr {
 		if c.Prowlarr.URL == "" {
@@ -412,7 +421,7 @@ func (c *Config) Validate() error {
 
 	// Mode-aware *arr validation: require config when arr/auto/yolo modes are used
 	needsLibMode := func(mode string) bool {
-		return mode == "arr" || mode == "auto" || mode == "yolo"
+		return mode == ProcessModeArr || mode == ProcessModeAuto || mode == ProcessModeYolo
 	}
 
 	if c.MediaTypes.Movies.Enabled && needsLibMode(c.MediaTypes.Movies.Mode) {

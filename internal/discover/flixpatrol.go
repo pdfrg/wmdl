@@ -175,7 +175,7 @@ func (f *FlixPatrolProvider) fetchPage(page int, windowStart, windowEnd time.Tim
 		return nil, fmt.Errorf("HTTP %d", resp.StatusCode)
 	}
 
-	body, err := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 5<<20))
 	if err != nil {
 		return nil, err
 	}
