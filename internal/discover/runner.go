@@ -596,9 +596,8 @@ func (r *Runner) Run(ctx context.Context) error {
 	albumCount, _ := r.db.CountAlbumReleaseEventsByWeek(ctx, progYear, progWeek)
 	bookEventCount, _ := r.db.CountBookReleaseEventsByWeek(ctx, progYear, progWeek)
 	totalEvents := eventCount + albumCount + bookEventCount
-	skipped := processed - totalEvents
-	r.log.Info().Msgf("Created %d events from %d items (%d filtered/skipped)",
-		totalEvents, processed, skipped)
+	r.log.Info().Msgf("Week %d-W%02d: %d events in DB, %d items processed",
+		progYear, progWeek, totalEvents, processed)
 
 	// Track week state — use target week when set, never derive from
 	// streaming items (which can be 2 months in the past).

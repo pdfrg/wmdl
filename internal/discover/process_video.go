@@ -252,43 +252,27 @@ func (r *Runner) processItem(ctx context.Context, item ScrapedItem, progYear, pr
 			return fmt.Errorf("checking existing events: %w", err)
 		}
 
-		if existing != nil {
-			existingEvent = existing
-			return nil
-		}
-
 		var evtNotes string
 		var evtPrev model.ReleaseStatus
 
 		if existing != nil {
+			existingEvent = existing
 			evtPrev = existing.Status
 
-			if existing.Status == model.StatusDownloaded {
-				dl, err := r.db.GetDownloadByTitleIDTx(ctx, tx, titleID)
-				if err == nil && dl != nil && dl.SourceType != "" {
+			switch existing.Status {
+			case model.StatusPending, model.StatusApproved:
+				return nil
+			case model.StatusDownloaded:
+				dl, dlErr := r.db.GetDownloadByTitleIDTx(ctx, tx, titleID)
+				if dlErr == nil && dl != nil && dl.SourceType != "" {
 					if isUpgrade(dl.SourceType, item.ReleaseType) {
 						evtNotes = fmt.Sprintf("upgrade: %s → %s", dl.SourceType, item.ReleaseType)
 					}
 				}
-			}
-		}
-
-		st := model.StatusPending
-		if existing != nil && evtNotes == "" {
-			switch existing.Status {
+				if evtNotes == "" {
+					return nil
+				}
 			case model.StatusRejected:
-				st = model.StatusPending
-			case model.StatusDownloaded:
-				st = model.StatusPending
-			}
-		}
-		if evtNotes != "" {
-			st = model.StatusPending
-		}
-
-		if existing != nil && existing.Status == model.StatusDownloaded && evtNotes != "" {
-			if err := r.db.UpdateReleaseEventStatusTx(ctx, tx, existing.ID, model.StatusDownloaded); err != nil {
-				return fmt.Errorf("marking previous download as upgraded: %w", err)
 			}
 		}
 
@@ -297,7 +281,7 @@ func (r *Runner) processItem(ctx context.Context, item ScrapedItem, progYear, pr
 			Source:         item.Source,
 			ReleaseType:    item.ReleaseType,
 			ReleaseDate:    item.ReleaseDate,
-			Status:         st,
+			Status:         model.StatusPending,
 			PreviousStatus: evtPrev,
 			Notes:          evtNotes,
 			ISOYear:        progYear,
@@ -308,7 +292,6 @@ func (r *Runner) processItem(ctx context.Context, item ScrapedItem, progYear, pr
 			return fmt.Errorf("saving release event: %w", err)
 		}
 
-		existingEvent = existing
 		return nil
 	})
 
@@ -368,7 +351,7 @@ func isUpgrade(prevSource string, newReleaseType model.ReleaseType) bool {
 	case "bluray", "remux":
 		return false
 	}
-	return newReleaseType == model.ReleasePhysical
+	return false
 }
 
 func cleanTitleForSearch(title string) string {
