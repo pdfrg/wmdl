@@ -83,7 +83,7 @@ func (d *TMDBDetails) DisplayYear() int {
 	}
 	if len(date) >= 4 {
 		var y int
-		fmt.Sscanf(date[:4], "%d", &y)
+		_, _ = fmt.Sscanf(date[:4], "%d", &y)
 		return y
 	}
 	return 0
@@ -190,7 +190,7 @@ func (c *TMDBClient) discoverStream(ctx context.Context, u *url.URL, mediaType s
 			}
 			year := 0
 			if len(date) >= 4 {
-				fmt.Sscanf(date[:4], "%d", &year)
+				_, _ = fmt.Sscanf(date[:4], "%d", &year)
 			}
 
 			items = append(items, StreamingItem{

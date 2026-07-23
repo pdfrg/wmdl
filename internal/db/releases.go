@@ -432,7 +432,7 @@ func (d *DB) PendingEventCountsBySource(ctx context.Context, year, week int) (ma
 	if err != nil {
 		return nil, fmt.Errorf("counting pending album events: %w", err)
 	}
-	defer rows2.Close()
+	defer func() { _ = rows2.Close() }()
 	for rows2.Next() {
 		var source string
 		var n int
@@ -460,7 +460,7 @@ func (d *DB) PendingEventCountsBySource(ctx context.Context, year, week int) (ma
 	if err != nil {
 		return nil, fmt.Errorf("counting pending book events: %w", err)
 	}
-	defer rows3.Close()
+	defer func() { _ = rows3.Close() }()
 	for rows3.Next() {
 		var source string
 		var n int

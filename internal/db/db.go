@@ -37,6 +37,13 @@ func (d *DB) Close() error {
 	return d.db.Close()
 }
 
+// migrateExec runs a migration DDL statement, ignoring errors.
+// ALTER TABLE ADD COLUMN and CREATE INDEX can fail harmlessly when
+// the column or index already exists — these are best-effort migrations.
+func (d *DB) migrateExec(ctx context.Context, query string) {
+	_, _ = d.db.ExecContext(ctx, query)
+}
+
 func (d *DB) Transaction(ctx context.Context, fn func(tx *sql.Tx) error) error {
 	tx, err := d.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -286,15 +293,15 @@ func (d *DB) Migrate(ctx context.Context) error {
 	}
 
 	// Migrations for existing databases
-	d.db.ExecContext(ctx, `ALTER TABLE titles ADD COLUMN tvdb_id INTEGER NOT NULL DEFAULT 0`)
-	d.db.ExecContext(ctx, `ALTER TABLE titles ADD COLUMN mal_id INTEGER NOT NULL DEFAULT 0`)
-	d.db.ExecContext(ctx, `ALTER TABLE book_release_events ADD COLUMN ebook_processed INTEGER NOT NULL DEFAULT 0`)
-	d.db.ExecContext(ctx, `ALTER TABLE book_release_events ADD COLUMN audiobook_processed INTEGER NOT NULL DEFAULT 0`)
-	d.db.ExecContext(ctx, `ALTER TABLE books ADD COLUMN shelvings_count INTEGER DEFAULT 0`)
-	d.db.ExecContext(ctx, `ALTER TABLE books ADD COLUMN hardcover_slug TEXT NOT NULL DEFAULT ''`)
+	d.migrateExec(ctx, `ALTER TABLE titles ADD COLUMN tvdb_id INTEGER NOT NULL DEFAULT 0`)
+	d.migrateExec(ctx, `ALTER TABLE titles ADD COLUMN mal_id INTEGER NOT NULL DEFAULT 0`)
+	d.migrateExec(ctx, `ALTER TABLE book_release_events ADD COLUMN ebook_processed INTEGER NOT NULL DEFAULT 0`)
+	d.migrateExec(ctx, `ALTER TABLE book_release_events ADD COLUMN audiobook_processed INTEGER NOT NULL DEFAULT 0`)
+	d.migrateExec(ctx, `ALTER TABLE books ADD COLUMN shelvings_count INTEGER DEFAULT 0`)
+	d.migrateExec(ctx, `ALTER TABLE books ADD COLUMN hardcover_slug TEXT NOT NULL DEFAULT ''`)
 
 	// Recreate titles table to update media_type CHECK constraint for anime support
-	d.db.ExecContext(ctx, `
+	d.migrateExec(ctx, `
 		CREATE TABLE IF NOT EXISTS titles_new (
 			id              INTEGER PRIMARY KEY AUTOINCREMENT,
 			tmdb_id         INTEGER NOT NULL,
@@ -356,52 +363,52 @@ func (d *DB) Migrate(ctx context.Context) error {
 			anime_source, anime_studio, themes, demographics, streaming
 		FROM titles
 	`); err == nil {
-		d.db.ExecContext(ctx, `DROP TABLE IF EXISTS titles`)
-		d.db.ExecContext(ctx, `ALTER TABLE titles_new RENAME TO titles`)
+		d.migrateExec(ctx, `DROP TABLE IF EXISTS titles`)
+		d.migrateExec(ctx, `ALTER TABLE titles_new RENAME TO titles`)
 	} else {
-		d.db.ExecContext(ctx, `DROP TABLE IF EXISTS titles_new`)
+		d.migrateExec(ctx, `DROP TABLE IF EXISTS titles_new`)
 	}
-	d.db.ExecContext(ctx, `ALTER TABLE release_events ADD COLUMN iso_year INTEGER DEFAULT 0`)
-	d.db.ExecContext(ctx, `ALTER TABLE release_events ADD COLUMN iso_week INTEGER DEFAULT 0`)
-	d.db.ExecContext(ctx, `ALTER TABLE release_events ADD COLUMN notes TEXT DEFAULT ''`)
-	d.db.ExecContext(ctx, `ALTER TABLE titles ADD COLUMN overview TEXT DEFAULT ''`)
-	d.db.ExecContext(ctx, `ALTER TABLE titles ADD COLUMN genres TEXT DEFAULT ''`)
-	d.db.ExecContext(ctx, `ALTER TABLE titles ADD COLUMN runtime INTEGER DEFAULT 0`)
-	d.db.ExecContext(ctx, `ALTER TABLE titles ADD COLUMN imdb_rating REAL DEFAULT 0`)
-	d.db.ExecContext(ctx, `ALTER TABLE titles ADD COLUMN yt_trailer_views INTEGER DEFAULT 0`)
-	d.db.ExecContext(ctx, `ALTER TABLE titles ADD COLUMN metacritic_score REAL DEFAULT 0`)
-	d.db.ExecContext(ctx, `ALTER TABLE titles ADD COLUMN us_rating TEXT DEFAULT ''`)
-	d.db.ExecContext(ctx, `ALTER TABLE titles ADD COLUMN poster_path TEXT DEFAULT ''`)
-	d.db.ExecContext(ctx, `ALTER TABLE titles ADD COLUMN original_language TEXT DEFAULT ''`)
-	d.db.ExecContext(ctx, `ALTER TABLE titles ADD COLUMN origin_country TEXT DEFAULT ''`)
-	d.db.ExecContext(ctx, `ALTER TABLE titles ADD COLUMN tmdb_title TEXT DEFAULT ''`)
+	d.migrateExec(ctx, `ALTER TABLE release_events ADD COLUMN iso_year INTEGER DEFAULT 0`)
+	d.migrateExec(ctx, `ALTER TABLE release_events ADD COLUMN iso_week INTEGER DEFAULT 0`)
+	d.migrateExec(ctx, `ALTER TABLE release_events ADD COLUMN notes TEXT DEFAULT ''`)
+	d.migrateExec(ctx, `ALTER TABLE titles ADD COLUMN overview TEXT DEFAULT ''`)
+	d.migrateExec(ctx, `ALTER TABLE titles ADD COLUMN genres TEXT DEFAULT ''`)
+	d.migrateExec(ctx, `ALTER TABLE titles ADD COLUMN runtime INTEGER DEFAULT 0`)
+	d.migrateExec(ctx, `ALTER TABLE titles ADD COLUMN imdb_rating REAL DEFAULT 0`)
+	d.migrateExec(ctx, `ALTER TABLE titles ADD COLUMN yt_trailer_views INTEGER DEFAULT 0`)
+	d.migrateExec(ctx, `ALTER TABLE titles ADD COLUMN metacritic_score REAL DEFAULT 0`)
+	d.migrateExec(ctx, `ALTER TABLE titles ADD COLUMN us_rating TEXT DEFAULT ''`)
+	d.migrateExec(ctx, `ALTER TABLE titles ADD COLUMN poster_path TEXT DEFAULT ''`)
+	d.migrateExec(ctx, `ALTER TABLE titles ADD COLUMN original_language TEXT DEFAULT ''`)
+	d.migrateExec(ctx, `ALTER TABLE titles ADD COLUMN origin_country TEXT DEFAULT ''`)
+	d.migrateExec(ctx, `ALTER TABLE titles ADD COLUMN tmdb_title TEXT DEFAULT ''`)
 
-	d.db.ExecContext(ctx, `ALTER TABLE titles ADD COLUMN anime_type TEXT NOT NULL DEFAULT ''`)
-	d.db.ExecContext(ctx, `ALTER TABLE titles ADD COLUMN anime_episodes INTEGER NOT NULL DEFAULT 0`)
-	d.db.ExecContext(ctx, `ALTER TABLE titles ADD COLUMN anime_status TEXT NOT NULL DEFAULT ''`)
-	d.db.ExecContext(ctx, `ALTER TABLE titles ADD COLUMN anime_members INTEGER NOT NULL DEFAULT 0`)
-	d.db.ExecContext(ctx, `ALTER TABLE titles ADD COLUMN anime_rank INTEGER NOT NULL DEFAULT 0`)
-	d.db.ExecContext(ctx, `ALTER TABLE titles ADD COLUMN anime_source TEXT NOT NULL DEFAULT ''`)
-	d.db.ExecContext(ctx, `ALTER TABLE titles ADD COLUMN anime_studio TEXT NOT NULL DEFAULT ''`)
-	d.db.ExecContext(ctx, `ALTER TABLE titles ADD COLUMN themes TEXT NOT NULL DEFAULT ''`)
-	d.db.ExecContext(ctx, `ALTER TABLE titles ADD COLUMN demographics TEXT NOT NULL DEFAULT ''`)
-	d.db.ExecContext(ctx, `ALTER TABLE titles ADD COLUMN streaming TEXT NOT NULL DEFAULT ''`)
-	d.db.ExecContext(ctx, `ALTER TABLE titles ADD COLUMN collection_id INTEGER DEFAULT 0`)
-	d.db.ExecContext(ctx, `ALTER TABLE titles ADD COLUMN collection_name TEXT DEFAULT ''`)
-	d.db.ExecContext(ctx, `ALTER TABLE titles ADD COLUMN imdb_votes INTEGER DEFAULT 0`)
-	d.db.ExecContext(ctx, `ALTER TABLE titles ADD COLUMN awards TEXT DEFAULT ''`)
-	d.db.ExecContext(ctx, `ALTER TABLE titles ADD COLUMN box_office TEXT DEFAULT ''`)
-	d.db.ExecContext(ctx, `ALTER TABLE titles ADD COLUMN director TEXT DEFAULT ''`)
-	d.db.ExecContext(ctx, `ALTER TABLE titles ADD COLUMN writer TEXT DEFAULT ''`)
-	d.db.ExecContext(ctx, `ALTER TABLE titles ADD COLUMN actors TEXT DEFAULT ''`)
-	d.db.ExecContext(ctx, `ALTER TABLE books ADD COLUMN series_id TEXT DEFAULT ''`)
-	d.db.ExecContext(ctx, `ALTER TABLE books ADD COLUMN series_name TEXT DEFAULT ''`)
+	d.migrateExec(ctx, `ALTER TABLE titles ADD COLUMN anime_type TEXT NOT NULL DEFAULT ''`)
+	d.migrateExec(ctx, `ALTER TABLE titles ADD COLUMN anime_episodes INTEGER NOT NULL DEFAULT 0`)
+	d.migrateExec(ctx, `ALTER TABLE titles ADD COLUMN anime_status TEXT NOT NULL DEFAULT ''`)
+	d.migrateExec(ctx, `ALTER TABLE titles ADD COLUMN anime_members INTEGER NOT NULL DEFAULT 0`)
+	d.migrateExec(ctx, `ALTER TABLE titles ADD COLUMN anime_rank INTEGER NOT NULL DEFAULT 0`)
+	d.migrateExec(ctx, `ALTER TABLE titles ADD COLUMN anime_source TEXT NOT NULL DEFAULT ''`)
+	d.migrateExec(ctx, `ALTER TABLE titles ADD COLUMN anime_studio TEXT NOT NULL DEFAULT ''`)
+	d.migrateExec(ctx, `ALTER TABLE titles ADD COLUMN themes TEXT NOT NULL DEFAULT ''`)
+	d.migrateExec(ctx, `ALTER TABLE titles ADD COLUMN demographics TEXT NOT NULL DEFAULT ''`)
+	d.migrateExec(ctx, `ALTER TABLE titles ADD COLUMN streaming TEXT NOT NULL DEFAULT ''`)
+	d.migrateExec(ctx, `ALTER TABLE titles ADD COLUMN collection_id INTEGER DEFAULT 0`)
+	d.migrateExec(ctx, `ALTER TABLE titles ADD COLUMN collection_name TEXT DEFAULT ''`)
+	d.migrateExec(ctx, `ALTER TABLE titles ADD COLUMN imdb_votes INTEGER DEFAULT 0`)
+	d.migrateExec(ctx, `ALTER TABLE titles ADD COLUMN awards TEXT DEFAULT ''`)
+	d.migrateExec(ctx, `ALTER TABLE titles ADD COLUMN box_office TEXT DEFAULT ''`)
+	d.migrateExec(ctx, `ALTER TABLE titles ADD COLUMN director TEXT DEFAULT ''`)
+	d.migrateExec(ctx, `ALTER TABLE titles ADD COLUMN writer TEXT DEFAULT ''`)
+	d.migrateExec(ctx, `ALTER TABLE titles ADD COLUMN actors TEXT DEFAULT ''`)
+	d.migrateExec(ctx, `ALTER TABLE books ADD COLUMN series_id TEXT DEFAULT ''`)
+	d.migrateExec(ctx, `ALTER TABLE books ADD COLUMN series_name TEXT DEFAULT ''`)
 
 	var hasOldTables bool
 	if err := d.db.QueryRowContext(ctx,
 		`SELECT COUNT(*) > 0 FROM sqlite_master WHERE type='table' AND name='artists'`,
 	).Scan(&hasOldTables); err == nil && hasOldTables {
-		d.db.ExecContext(ctx, `
+		d.migrateExec(ctx, `
 			INSERT OR IGNORE INTO album_releases (
 				artist_name, title, year, mbid, artist_mbid, album_type,
 				release_date, genres, overview, poster_path,
@@ -419,7 +426,7 @@ func (d *DB) Migrate(ctx context.Context) error {
 			FROM albums al
 			JOIN artists a ON a.id = al.artist_id
 		`)
-		d.db.ExecContext(ctx, `
+		d.migrateExec(ctx, `
 			UPDATE album_release_events
 			SET release_id = (
 				SELECT ar.id FROM album_releases ar
@@ -427,27 +434,27 @@ func (d *DB) Migrate(ctx context.Context) error {
 				WHERE al.id = album_release_events.album_id
 			)
 		`)
-		d.db.ExecContext(ctx, `DROP TABLE IF EXISTS albums`)
-		d.db.ExecContext(ctx, `DROP TABLE IF EXISTS artists`)
+		d.migrateExec(ctx, `DROP TABLE IF EXISTS albums`)
+		d.migrateExec(ctx, `DROP TABLE IF EXISTS artists`)
 	}
 
-	d.db.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_release_events_week ON release_events(iso_year, iso_week)`)
-	d.db.ExecContext(ctx, `CREATE UNIQUE INDEX IF NOT EXISTS idx_album_releases_mbid ON album_releases(mbid) WHERE mbid != ''`)
-	d.db.ExecContext(ctx, `CREATE UNIQUE INDEX IF NOT EXISTS idx_album_releases_aoty_url ON album_releases(aoty_url) WHERE aoty_url != ''`)
-	d.db.ExecContext(ctx, `CREATE UNIQUE INDEX IF NOT EXISTS idx_album_releases_allmusic_url ON album_releases(allmusic_url) WHERE allmusic_url != ''`)
-	d.db.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_album_release_events_release_id ON album_release_events(release_id)`)
-	d.db.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_album_release_events_status ON album_release_events(status)`)
-	d.db.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_album_release_events_week ON album_release_events(iso_year, iso_week)`)
-	d.db.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_library_cache_source_ext ON library_cache(source, ext_id)`)
+	d.migrateExec(ctx, `CREATE INDEX IF NOT EXISTS idx_release_events_week ON release_events(iso_year, iso_week)`)
+	d.migrateExec(ctx, `CREATE UNIQUE INDEX IF NOT EXISTS idx_album_releases_mbid ON album_releases(mbid) WHERE mbid != ''`)
+	d.migrateExec(ctx, `CREATE UNIQUE INDEX IF NOT EXISTS idx_album_releases_aoty_url ON album_releases(aoty_url) WHERE aoty_url != ''`)
+	d.migrateExec(ctx, `CREATE UNIQUE INDEX IF NOT EXISTS idx_album_releases_allmusic_url ON album_releases(allmusic_url) WHERE allmusic_url != ''`)
+	d.migrateExec(ctx, `CREATE INDEX IF NOT EXISTS idx_album_release_events_release_id ON album_release_events(release_id)`)
+	d.migrateExec(ctx, `CREATE INDEX IF NOT EXISTS idx_album_release_events_status ON album_release_events(status)`)
+	d.migrateExec(ctx, `CREATE INDEX IF NOT EXISTS idx_album_release_events_week ON album_release_events(iso_year, iso_week)`)
+	d.migrateExec(ctx, `CREATE INDEX IF NOT EXISTS idx_library_cache_source_ext ON library_cache(source, ext_id)`)
 
-	d.db.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_authors_olid ON authors(olid)`)
-	d.db.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_books_author_id ON books(author_id)`)
-	d.db.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_books_isbn13 ON books(isbn13)`)
-	d.db.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_books_asin ON books(asin)`)
-	d.db.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_book_release_events_book_id ON book_release_events(book_id)`)
-	d.db.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_book_release_events_status ON book_release_events(status)`)
-	d.db.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_book_release_events_week ON book_release_events(iso_year, iso_week)`)
-	d.db.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_book_downloads_book_id ON book_downloads(book_id)`)
+	d.migrateExec(ctx, `CREATE INDEX IF NOT EXISTS idx_authors_olid ON authors(olid)`)
+	d.migrateExec(ctx, `CREATE INDEX IF NOT EXISTS idx_books_author_id ON books(author_id)`)
+	d.migrateExec(ctx, `CREATE INDEX IF NOT EXISTS idx_books_isbn13 ON books(isbn13)`)
+	d.migrateExec(ctx, `CREATE INDEX IF NOT EXISTS idx_books_asin ON books(asin)`)
+	d.migrateExec(ctx, `CREATE INDEX IF NOT EXISTS idx_book_release_events_book_id ON book_release_events(book_id)`)
+	d.migrateExec(ctx, `CREATE INDEX IF NOT EXISTS idx_book_release_events_status ON book_release_events(status)`)
+	d.migrateExec(ctx, `CREATE INDEX IF NOT EXISTS idx_book_release_events_week ON book_release_events(iso_year, iso_week)`)
+	d.migrateExec(ctx, `CREATE INDEX IF NOT EXISTS idx_book_downloads_book_id ON book_downloads(book_id)`)
 
 	return nil
 }

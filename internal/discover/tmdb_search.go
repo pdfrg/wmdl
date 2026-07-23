@@ -187,7 +187,7 @@ func (c *TMDBClient) enrichWithPrefs(ctx context.Context, query string, year int
 		}
 		releaseYear := 0
 		if len(releaseDate) >= 4 {
-			fmt.Sscanf(releaseDate[:4], "%d", &releaseYear)
+			_, _ = fmt.Sscanf(releaseDate[:4], "%d", &releaseYear)
 		}
 
 		yearScore := 0

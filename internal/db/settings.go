@@ -60,7 +60,7 @@ func (d *DB) BulkUpsertLibraryCache(ctx context.Context, entries []LibraryCache)
 	if err != nil {
 		return fmt.Errorf("begin tx: %w", err)
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	stmt, err := tx.PrepareContext(ctx, `
 		INSERT INTO library_cache (source, ext_id, arr_id, arr_title, details, fetched_at)
@@ -74,7 +74,7 @@ func (d *DB) BulkUpsertLibraryCache(ctx context.Context, entries []LibraryCache)
 	if err != nil {
 		return fmt.Errorf("prepare: %w", err)
 	}
-	defer stmt.Close()
+	defer func() { _ = stmt.Close() }()
 
 	for _, e := range entries {
 		if _, err := stmt.ExecContext(ctx, e.Source, e.ExtID, e.ArrID, e.ArrTitle, e.Details); err != nil {
