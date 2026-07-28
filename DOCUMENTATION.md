@@ -119,6 +119,7 @@ downloader:
     movies: "Movies"
     tv: "TV"
     music: "Music"
+    music_trial: "Music-Trial"   # trial albums (not added to Lidarr)
     anime: "Anime"
     ebooks: "Books"           # for LazyLibrarian: set both to the same category whose
     audiobooks: "Books"       # save path is LL's Alternate Import Folder
@@ -616,14 +617,20 @@ External APIs enrich each discovered item:
    - **Batch mode:** A single multi-item TUI lists all pending releases (video,
      music, books, and pre-computed Phase 3 gaps). Navigate items, pick releases
      per item, skip unwanted items — all in one session.
-   - **Interactive mode:** One picker per item, shown immediately after its search
-5. Torrents added to download client
-6. Download records saved to SQLite
+    - **Interactive mode:** One picker per item, shown immediately after its search
+5. **Music trial prompt (batch mode):** After the picker closes, each music item
+   with selected releases asks "Add to Lidarr?" — answering N assigns the
+   `music_trial` category instead of the default music category
+6. Torrents added to download client
+7. Download records saved to SQLite
 
 ### Phase 2: Library Add
 
 Movies/series/albums/books added to their respective library manager with
 confirmation. Quality profile, root folder, and monitor settings are respected.
+Trial albums (answered N to "Add to Lidarr?") skip this phase entirely — no
+Lidarr add is attempted, though the torrents remain seeding in their trial
+category.
 
 ### Phase 3: Gap Detection
 
@@ -682,6 +689,17 @@ library:
     monitor: "all"
     monitor_new_albums: true
 ```
+
+**Trial albums (new/experimental music):** When processing in `full` mode, each
+downloaded album prompts "Add to Lidarr?" — answering N:
+- Downloads to the `music_trial` category (configure `downloader.categories.music_trial`)
+- Skips the Lidarr add entirely
+- Torrents still seed in the trial category's save path
+
+This lets you listen before committing to library management. To later add a
+trial album to Lidarr, move its files to Lidarr's root folder and add the
+artist manually in the Lidarr UI. Leave `music_trial` unset or empty to send
+all music to the default `music` category (preserving existing behavior).
 
 ## Anime Pipeline
 
