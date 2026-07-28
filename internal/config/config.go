@@ -114,6 +114,7 @@ type CategoryConfig struct {
 	Movies     string `mapstructure:"movies"`
 	TV         string `mapstructure:"tv"`
 	Music      string `mapstructure:"music"`
+	MusicTrial string `mapstructure:"music_trial"`
 	Anime      string `mapstructure:"anime"`
 	Ebooks     string `mapstructure:"ebooks"`
 	Audiobooks string `mapstructure:"audiobooks"`

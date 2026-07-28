@@ -870,6 +870,19 @@ func runProcessForWeek(ctx context.Context, database *db.DB, cfg *config.Config,
 			if errors.Is(err, process.ErrAbort) {
 				log.Info().Msg("pipeline aborted by user")
 			}
+			// Prompt for music trial decisions after batch picker
+			if hasAlbums && !skipLibrary && cfg.Library.Lidarr.URL != "" {
+				musicMode := cfg.MediaTypeMode(model.MediaTypeMusic)
+				if musicMode == config.ProcessModeFull {
+					for _, item := range result.Items {
+						if item.MusicResult == nil || len(item.Selected) == 0 {
+							continue
+						}
+						item.Trial = !process.PromptYesNo(ctx, fmt.Sprintf("  Add %s to Lidarr?", item.MusicResult.Event.Release.ArtistName))
+					}
+				}
+			}
+
 			batchPicked, batchAlbumResults, batchBookInfo := exec.ProcessBatchResults(ctx, result.Items)
 			picked = append(picked, batchPicked...)
 			albumResults = batchAlbumResults

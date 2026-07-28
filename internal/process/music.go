@@ -25,6 +25,7 @@ type MusicSearchResult struct {
 type MusicAlbumResult struct {
 	Event      db.EventWithAlbumRelease
 	Downloaded bool
+	Trial      bool
 }
 
 func musicSearchQueries(artist, album string, year int) []string {
@@ -228,10 +229,15 @@ func (e *Executor) PickMusicAlbum(ctx context.Context, sr *MusicSearchResult) *M
 		return &MusicAlbumResult{Event: ae}
 	}
 
-	category := e.cfg.Downloader.Categories.Music
-	if category == "" {
-		category = "Music"
+	trial := false
+	if e.lidarr != nil {
+		mode := e.cfg.MediaTypeMode(model.MediaTypeMusic)
+		if mode == config.ProcessModeFull {
+			trial = !PromptYesNo(ctx, fmt.Sprintf("  Add %s to Lidarr?", ae.Release.ArtistName))
+		}
 	}
+
+	category := e.musicCategory(trial)
 	var releaseEventID int64
 	if ae.Event != nil {
 		releaseEventID = ae.Event.ID
@@ -256,7 +262,7 @@ func (e *Executor) PickMusicAlbum(ctx context.Context, sr *MusicSearchResult) *M
 		_ = e.db.UpdateAlbumReleaseEventStatus(ctx, releaseEventID, model.StatusDownloaded)
 	}
 
-	return &MusicAlbumResult{Event: ae, Downloaded: true}
+	return &MusicAlbumResult{Event: ae, Downloaded: true, Trial: trial}
 }
 
 func (e *Executor) ProcessMusicAlbumDecisions(ctx context.Context, results []MusicAlbumResult) {
@@ -312,6 +318,10 @@ func (e *Executor) ProcessMusicAlbumDecisions(ctx context.Context, results []Mus
 
 	for _, r := range results {
 		if !r.Downloaded {
+			continue
+		}
+		if r.Trial {
+			e.log.Info().Str("artist", r.Event.Release.ArtistName).Str("album", r.Event.Release.Title).Msg("trial album, skipping Lidarr add")
 			continue
 		}
 		ae := r.Event
@@ -490,6 +500,20 @@ func (e *Executor) handleSkipLibraryMusic(ctx context.Context, ae db.EventWithAl
 	e.log.Info().Int("lidarr_id", added.ID).Str("artist", ae.Release.ArtistName).Msg("added artist to Lidarr after skip (monitored, RSS will pick up)")
 }
 
+func (e *Executor) musicCategory(trial bool) string {
+	if trial {
+		cat := e.cfg.Downloader.Categories.MusicTrial
+		if cat != "" {
+			return cat
+		}
+	}
+	cat := e.cfg.Downloader.Categories.Music
+	if cat == "" {
+		cat = "Music"
+	}
+	return cat
+}
+
 func (e *Executor) processMusicBatchItem(ctx context.Context, item *BatchItem) *MusicAlbumResult {
 	sr := item.MusicResult
 	if sr == nil {
@@ -497,10 +521,7 @@ func (e *Executor) processMusicBatchItem(ctx context.Context, item *BatchItem) *
 	}
 	ae := sr.Event
 
-	category := e.cfg.Downloader.Categories.Music
-	if category == "" {
-		category = "Music"
-	}
+	category := e.musicCategory(item.Trial)
 	var releaseEventID int64
 	if ae.Event != nil {
 		releaseEventID = ae.Event.ID
@@ -524,5 +545,5 @@ func (e *Executor) processMusicBatchItem(ctx context.Context, item *BatchItem) *
 		_ = e.db.UpdateAlbumReleaseEventStatus(ctx, releaseEventID, model.StatusDownloaded)
 	}
 
-	return &MusicAlbumResult{Event: ae, Downloaded: true}
+	return &MusicAlbumResult{Event: ae, Downloaded: true, Trial: item.Trial}
 }

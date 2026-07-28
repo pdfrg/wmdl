@@ -18,6 +18,7 @@ type BatchItem struct {
 	Releases []quality.ParsedRelease
 	Selected []quality.ParsedRelease
 	Skipped  bool
+	Trial    bool
 
 	SearchResult *SearchResult
 	MusicResult  *MusicSearchResult

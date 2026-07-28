@@ -106,6 +106,7 @@ downloader:
     movies: "Movies"
     tv: "TV"
     music: "Music"
+    music_trial: "Music-Trial"  # separate category for trial albums (not added to Lidarr)
     anime: "Anime"
     ebooks: "Books"           # for LazyLibrarian: set both to the same category whose
     audiobooks: "Books"       # save path is LL's Alternate Import Folder
