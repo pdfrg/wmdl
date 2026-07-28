@@ -5,6 +5,8 @@ import (
 	"strings"
 	"time"
 
+	"charm.land/lipgloss/v2"
+
 	"github.com/pdfrg/wmdl/internal/db"
 	"github.com/pdfrg/wmdl/internal/model"
 )
@@ -725,16 +727,30 @@ func (t *TUI) buildRightContent(tl *model.Title, ev *model.ReleaseEvent, rw int,
 		if tl.ImdbVotes > 0 {
 			imdbStr = fmt.Sprintf("%s (%s votes)", imdbStr, fmtViews(tl.ImdbVotes))
 		}
-		ratings := fmt.Sprintf("TMDB: %s · IMDb: %s · MC: %s · YT: %s · 🍅 %s · 🍿 %s",
+		ratings := fmt.Sprintf("TMDB: %s · IMDb: %s · MC: %s · YT: %s · 🍅 %s",
 			fmtRating(tl.TmdbRating),
 			imdbStr,
 			fmtRating(tl.MetacriticScore),
 			fmtViews(tl.YoutubeViews),
 			fmtPct(tl.RTCriticsScore),
-			fmtPct(tl.RTAudienceScore),
 		)
+
+		audiencePart := fmt.Sprintf("🍿 %s", fmtPct(tl.RTAudienceScore))
+		if tl.RTAudienceRealScore > 0 && tl.RTRealVotes >= 30 {
+			gap := tl.RTAudienceScore - tl.RTAudienceRealScore
+			gapColor := "46"
+			if gap < 0 {
+				gapColor = "196"
+			}
+			gapStyled := lipgloss.NewStyle().Foreground(lipgloss.Color(gapColor)).Render(fmt.Sprintf("%+.0f%%", gap))
+			audiencePart = fmt.Sprintf("%s (real %s, %s) · %s pull votes",
+				audiencePart, fmtPct(tl.RTAudienceRealScore), gapStyled, fmtViews(int64(tl.RTRealVotes)))
+		}
+
 		b.WriteString("\n\n")
 		b.WriteString(ratingsLine.Render(ratings))
+		b.WriteString(" · ")
+		b.WriteString(audiencePart)
 	}
 
 	if tl.MediaType != model.MediaTypeAnime {

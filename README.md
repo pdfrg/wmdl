@@ -39,6 +39,8 @@ ntfy, or generic webhook.
   in gaps.
 - **Ad-hoc commands** — `wmdl search` for one-off Prowlarr searches, `wmdl add` to inject titles
   into the pipeline, `wmdl mark-downloaded` for manual bookkeeping.
+- **Real audience scores** — RT ratings strip out Fandango push-votes to reveal what the
+  pre-2019 "pull" crowd really thought (method pioneered by [PopcornGap](https://popcorngap.com)).
 - **Automation** — Run `wmdl discover --headless` via systemd timer or cron. Example scripts
   for qBittorrent completion hooks and Gotify notifications in [scripts/](scripts/).
 
@@ -61,7 +63,7 @@ wmdl all
 ## Recommended
 
 - Chromium-based browser — Brave (recommended), Chrome, Chromium, Edge, Vivaldi, Opera. Required for Goodreads,
-Bookshop, AllMusic, and Rotten Tomatoes chromedp-based scrapers. Other scrapers work without any browser.
+Bookshop, and AllMusic chromedp-based scrapers. Other scrapers work without any browser.
 - Radarr, Sonarr, Lidarr, LazyLibrarian — required for `arr, auto, yolo` modes. `full, prowlarr-grab` work without.
 - Terminal with Kitty image protocol support — Kitty, Ghostty, or Rio. Required for TUI rendering of movie/TV posters,
 album and book covers.

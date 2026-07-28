@@ -401,6 +401,8 @@ func (d *DB) Migrate(ctx context.Context) error {
 	d.migrateExec(ctx, `ALTER TABLE titles ADD COLUMN director TEXT DEFAULT ''`)
 	d.migrateExec(ctx, `ALTER TABLE titles ADD COLUMN writer TEXT DEFAULT ''`)
 	d.migrateExec(ctx, `ALTER TABLE titles ADD COLUMN actors TEXT DEFAULT ''`)
+	d.migrateExec(ctx, `ALTER TABLE titles ADD COLUMN rt_audience_real_score REAL DEFAULT 0`)
+	d.migrateExec(ctx, `ALTER TABLE titles ADD COLUMN rt_real_votes INTEGER DEFAULT 0`)
 	d.migrateExec(ctx, `ALTER TABLE books ADD COLUMN series_id TEXT DEFAULT ''`)
 	d.migrateExec(ctx, `ALTER TABLE books ADD COLUMN series_name TEXT DEFAULT ''`)
 

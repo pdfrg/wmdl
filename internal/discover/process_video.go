@@ -154,16 +154,21 @@ func (r *Runner) processItem(ctx context.Context, item ScrapedItem, progYear, pr
 	}
 	apiCancel()
 
-	rtCritics, rtAudience := 0.0, 0.0
+	rtCritics, rtAudience, rtAudienceReal, rtRealVotes := 0.0, 0.0, 0.0, 0
 	if rtURL != "" {
 		r.log.Info().Str("url", rtURL).Msg("RT URL found")
-		ratings := ScrapeRTRatings(ctx, r.allocCtx, rtURL)
+		ratings := ScrapeRTRatings(ctx, rtURL)
 		rtCritics = ratings.CriticsScore
 		rtAudience = ratings.AudienceScore
+		rtAudienceReal = ratings.AudienceRealScore
+		rtRealVotes = ratings.RealVotes
 		if rtCritics > 0 || rtAudience > 0 {
 			r.log.Info().Str("url", rtURL).Float64("critics", rtCritics).Float64("audience", rtAudience).Msg("RT scores")
 		} else {
 			r.log.Warn().Str("url", rtURL).Msg("RT scrape: no scores found")
+		}
+		if rtAudienceReal > 0 {
+			r.log.Info().Str("url", rtURL).Float64("real", rtAudienceReal).Int("votes", rtRealVotes).Msg("RT real audience score")
 		}
 	} else {
 		r.log.Info().Msg("RT URL not found")
@@ -197,35 +202,37 @@ func (r *Runner) processItem(ctx context.Context, item ScrapedItem, progYear, pr
 	}
 
 	title := &model.Title{
-		TmdbID:           tmdbID,
-		TvdbID:           tvdbID,
-		Title:            item.Title,
-		TmdbTitle:        tmdbTitle,
-		Year:             item.Year,
-		MediaType:        mediaType,
-		ImdbID:           imdbID,
-		ImdbRating:       imdbRating,
-		ImdbVotes:        imdbVotes,
-		Awards:           awards,
-		BoxOffice:        boxOffice,
-		Director:         director,
-		Writer:           writer,
-		Actors:           actors,
-		MetacriticScore:  metacriticScore,
-		RTURL:            rtURL,
-		RTCriticsScore:   rtCritics,
-		RTAudienceScore:  rtAudience,
-		TmdbRating:       rating,
-		USRating:         usRating,
-		YoutubeViews:     item.YoutubeViews,
-		Overview:         overview,
-		Genres:           genres,
-		Runtime:          runtime,
-		PosterPath:       posterPath,
-		OriginalLanguage: originalLanguage,
-		OriginCountry:    originCountry,
-		CollectionID:     collectionID,
-		CollectionName:   collectionName,
+		TmdbID:              tmdbID,
+		TvdbID:              tvdbID,
+		Title:               item.Title,
+		TmdbTitle:           tmdbTitle,
+		Year:                item.Year,
+		MediaType:           mediaType,
+		ImdbID:              imdbID,
+		ImdbRating:          imdbRating,
+		ImdbVotes:           imdbVotes,
+		Awards:              awards,
+		BoxOffice:           boxOffice,
+		Director:            director,
+		Writer:              writer,
+		Actors:              actors,
+		MetacriticScore:     metacriticScore,
+		RTURL:               rtURL,
+		RTCriticsScore:      rtCritics,
+		RTAudienceScore:     rtAudience,
+		RTAudienceRealScore: rtAudienceReal,
+		RTRealVotes:         rtRealVotes,
+		TmdbRating:          rating,
+		USRating:            usRating,
+		YoutubeViews:        item.YoutubeViews,
+		Overview:            overview,
+		Genres:              genres,
+		Runtime:             runtime,
+		PosterPath:          posterPath,
+		OriginalLanguage:    originalLanguage,
+		OriginCountry:       originCountry,
+		CollectionID:        collectionID,
+		CollectionName:      collectionName,
 	}
 
 	cf := &r.cfg.MediaTypes.Movies.Filter

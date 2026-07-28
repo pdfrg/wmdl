@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"net/url"
 	"regexp"
 	"strconv"
@@ -15,74 +17,155 @@ import (
 )
 
 type RTRatings struct {
-	URL           string
-	CriticsScore  float64
-	AudienceScore float64
+	URL               string
+	CriticsScore      float64
+	AudienceScore     float64
+	AudienceRealScore float64
+	RealVotes         int
 }
 
-func ScrapeRTRatings(ctx context.Context, allocCtx context.Context, rtURL string) *RTRatings {
+// rtPool is a pool of audience ratings from the RT media-scorecard JSON.
+type rtPool struct {
+	ScoreType     string `json:"scoreType"` // "VERIFIED" or "ALL"
+	Score         string `json:"score"`     // percentage as string, e.g. "97"
+	LikedCount    *int   `json:"likedCount"`
+	NotLikedCount *int   `json:"notLikedCount"`
+}
+
+type rtScorecardJSON struct {
+	AudienceScore *rtPool    `json:"audienceScore"`
+	Overlay       *rtOverlay `json:"overlay"`
+}
+
+type rtOverlay struct {
+	AudienceAll      *rtPool `json:"audienceAll"`
+	AudienceVerified *rtPool `json:"audienceVerified"`
+}
+
+var scorecardRE = regexp.MustCompile(
+	`id="media-scorecard-json"[^>]*type="application/json"[^>]*>([^<]*)</script>`)
+
+// ScrapeRTRatings fetches an RT movie/TV page, extracts the embedded
+// media-scorecard-json, and returns headline + real audience scores.
+func ScrapeRTRatings(ctx context.Context, rtURL string) *RTRatings {
 	ratings := &RTRatings{URL: rtURL}
 
-	ct, cancel := chromedp.NewContext(allocCtx, chromedp.WithLogf(func(string, ...interface{}) {}))
-	defer cancel()
-
-	scrapeCtx, cancel := context.WithTimeout(ct, 20*time.Second)
-	defer cancel()
-
-	if err := chromedp.Run(scrapeCtx,
-		chromedp.Navigate(rtURL),
-		chromedp.WaitReady("body"),
-	); err != nil {
-		log.Warn().Err(err).Msg("RT navigate failed")
+	data, err := fetchScorecard(ctx, rtURL)
+	if err != nil {
+		log.Warn().Err(err).Str("url", rtURL).Msg("RT scrape failed")
 		return ratings
 	}
 
-	// Wait for the scorecard to render, with a short grace period
-	_ = chromedp.Run(scrapeCtx, chromedp.WaitVisible("media-scorecard", chromedp.ByQuery))
-
-	// Scope all queries to the first media-scorecard to avoid picking up
-	// scores from "recommended" or "you might also like" carousels.
-	ratings.CriticsScore = extractPctFromSlot(scrapeCtx, "collapsed-critics-score")
-	if ratings.CriticsScore == 0 {
-		ratings.CriticsScore = extractPctFromSlot(scrapeCtx, "critics-score")
+	// --- Critics score ---
+	if data.AudienceScore != nil {
+		cs := data.AudienceScore
+		if s := parsePct(cs.Score); s > 0 {
+			ratings.AudienceScore = s
+		}
 	}
 
-	ratings.AudienceScore = extractPctFromSlot(scrapeCtx, "collapsed-audience-score")
-	if ratings.AudienceScore == 0 {
-		ratings.AudienceScore = extractPctFromSlot(scrapeCtx, "audience-score")
+	// --- Critic scores (extract from overlay) ---
+	if ov := data.Overlay; ov != nil {
+		if ca := ov.AudienceAll; ca != nil {
+			if s := parsePct(ca.Score); s > 0 && ratings.AudienceScore == 0 {
+				ratings.AudienceScore = s
+			}
+		}
 	}
+
+	// --- Real audience score ---
+	computeRealScore(ratings, data)
 
 	return ratings
 }
 
-func extractPct(ctx context.Context, js string) float64 {
-	var text string
-	if err := chromedp.Run(ctx, chromedp.Evaluate(js, &text)); err != nil || text == "" {
+func fetchScorecard(ctx context.Context, rtURL string) (*rtScorecardJSON, error) {
+	req, err := http.NewRequestWithContext(ctx, "GET", rtURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("User-Agent",
+		"Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36")
+
+	client := &http.Client{Timeout: 15 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("http get: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("read body: %w", err)
+	}
+
+	m := scorecardRE.FindSubmatch(body)
+	if m == nil {
+		return nil, fmt.Errorf("media-scorecard-json not found")
+	}
+
+	var data rtScorecardJSON
+	if err := json.Unmarshal(m[1], &data); err != nil {
+		return nil, fmt.Errorf("json parse: %w", err)
+	}
+	return &data, nil
+}
+
+// computeRealScore computes the unverified-only audience score from the
+// verified push pool subtracted from the all-audience pool. Only computed
+// when the headline score type is VERIFIED — meaning there IS a push pool
+// to strip out.
+func computeRealScore(r *RTRatings, data *rtScorecardJSON) {
+	ov := data.Overlay
+	if ov == nil {
+		return
+	}
+
+	// Only meaningful when the headline represents a VERIFIED (push) pool.
+	// For ALL-type headlines the headline IS the real score already.
+	if data.AudienceScore == nil || data.AudienceScore.ScoreType != "VERIFIED" {
+		return
+	}
+
+	aa := ov.AudienceAll
+	av := ov.AudienceVerified
+
+	hasAll := aa != nil && aa.LikedCount != nil && aa.NotLikedCount != nil
+	hasVer := av != nil && av.LikedCount != nil && av.NotLikedCount != nil
+
+	if !hasAll || !hasVer {
+		return
+	}
+
+	allLikes := *aa.LikedCount
+	allDislikes := *aa.NotLikedCount
+	verLikes := *av.LikedCount
+	verDislikes := *av.NotLikedCount
+
+	unvLikes := allLikes - verLikes
+	unvDislikes := allDislikes - verDislikes
+	unvTotal := unvLikes + unvDislikes
+
+	if unvTotal < 30 {
+		return
+	}
+
+	realScore := float64(unvLikes) / float64(unvTotal) * 100
+
+	r.AudienceRealScore = realScore
+	r.RealVotes = unvTotal
+}
+
+func parsePct(s string) float64 {
+	if s == "" {
 		return 0
 	}
-	m := percentPattern.FindStringSubmatch(text)
-	if len(m) > 1 {
-		if v, err := strconv.ParseFloat(m[1], 64); err == nil {
-			return v
-		}
+	v, err := strconv.ParseFloat(s, 64)
+	if err != nil {
+		return 0
 	}
-	return 0
+	return v
 }
-
-// extractPctFromSlot queries the first media-scorecard on the page for the
-// given slot name and returns its percentage value. Scoping to the first
-// scorecard avoids picking up scores from recommended/related carousels.
-func extractPctFromSlot(ctx context.Context, slotName string) float64 {
-	js := fmt.Sprintf(`(() => {
-  const sc = document.querySelector('media-scorecard');
-  if (!sc) return '';
-  const el = sc.querySelector('rt-text[slot="%s"]');
-  return el?.textContent?.trim() || '';
-})()`, slotName)
-	return extractPct(ctx, js)
-}
-
-var percentPattern = regexp.MustCompile(`(\d+)%`)
 
 type RTSearchResult struct {
 	URL   string `json:"url"`

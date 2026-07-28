@@ -60,7 +60,7 @@ A custom Go template can override the JSON payload via `custom_template` with fi
 
 ### Browser (chromedp)
 
-Some scrapers (Rotten Tomatoes, Goodreads, Bookshop, AllMusic) require a Chrome-based browser:
+Some scrapers (Goodreads, Bookshop, AllMusic) require a Chrome-based browser:
 
 ```yaml
 browser:
@@ -597,7 +597,12 @@ External APIs enrich each discovered item:
 
 - **TMDB** — TMDB ID, IMDb ID, overview, genres, runtime, poster, US rating, collection membership
 - **OMDB** — IMDb rating + Metacritic score + votes, awards, box office, credits
-- **Rotten Tomatoes** — chromedp web scraping for critic/audience scores (requires browser)
+- **Rotten Tomatoes** — HTTP GET extraction of embedded `media-scorecard-json` for critic
+  and audience scores. The headline "Popcornmeter" score is the Fandango-verified (push)
+  rating. An **Audience Real Score** strips the verified push votes out of the all-audience
+  pool to reveal the unverified-only "pull" score — what the score would have been before
+  RT's 2019 push-change (`real = unverified_likes / (unverified_likes + unverified_dislikes)`).
+  Method pioneered by [PopcornGap](https://popcorngap.com). No browser required (HTTP only).
 - **MusicBrainz** — release group ID, artist details, ratings, genres
 - **Hardcover** — book metadata (ISBN, pages, ratings, descriptions)
 - **OpenLibrary** — book metadata fallback

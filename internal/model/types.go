@@ -36,36 +36,38 @@ const (
 )
 
 type Title struct {
-	ID               int64
-	TmdbID           int
-	TvdbID           int
-	MalID            int // MyAnimeList ID (anime)
-	Title            string
-	TmdbTitle        string // TMDB-matched title (may differ from scraped Title)
-	Year             int
-	MediaType        MediaType
-	ImdbID           string
-	ImdbRating       float64
-	ImdbVotes        int64
-	Awards           string
-	BoxOffice        string
-	Director         string
-	Writer           string
-	Actors           string
-	RTURL            string
-	RTCriticsScore   float64
-	RTAudienceScore  float64
-	TmdbRating       float64
-	MetacriticScore  float64
-	YoutubeViews     int64
-	USRating         string
-	OriginalLanguage string
-	OriginCountry    string
-	Overview         string
-	Genres           string
-	Runtime          int
-	PosterPath       string
-	CreatedAt        string
+	ID                  int64
+	TmdbID              int
+	TvdbID              int
+	MalID               int // MyAnimeList ID (anime)
+	Title               string
+	TmdbTitle           string // TMDB-matched title (may differ from scraped Title)
+	Year                int
+	MediaType           MediaType
+	ImdbID              string
+	ImdbRating          float64
+	ImdbVotes           int64
+	Awards              string
+	BoxOffice           string
+	Director            string
+	Writer              string
+	Actors              string
+	RTURL               string
+	RTCriticsScore      float64
+	RTAudienceScore     float64
+	RTAudienceRealScore float64
+	RTRealVotes         int
+	TmdbRating          float64
+	MetacriticScore     float64
+	YoutubeViews        int64
+	USRating            string
+	OriginalLanguage    string
+	OriginCountry       string
+	Overview            string
+	Genres              string
+	Runtime             int
+	PosterPath          string
+	CreatedAt           string
 
 	// Anime-specific fields (populated from Jikan)
 	AnimeType     string // TV, Movie, OVA, ONA, Special, Music
