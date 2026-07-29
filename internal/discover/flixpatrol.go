@@ -4,20 +4,20 @@ import (
 	"context"
 	"fmt"
 	"html"
-	"io"
-	"net/http"
 	"regexp"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/chromedp/chromedp"
 	"github.com/rs/zerolog/log"
 
 	"github.com/pdfrg/wmdl/internal/model"
 )
 
 type FlixPatrolProvider struct {
-	http            *http.Client
+	debugURL        string
+	allocCtx        context.Context
 	targetYear      int
 	targetWeek      int
 	hasTargetWeek   bool
@@ -29,9 +29,10 @@ var (
 	_ WeekSettable    = (*FlixPatrolProvider)(nil)
 )
 
-func NewFlixPatrolProvider(_ string) *FlixPatrolProvider {
+func NewFlixPatrolProvider(debugURL string, allocCtx context.Context) *FlixPatrolProvider {
 	return &FlixPatrolProvider{
-		http: &http.Client{Timeout: 10 * time.Second},
+		debugURL: debugURL,
+		allocCtx: allocCtx,
 	}
 }
 
@@ -155,32 +156,36 @@ pageLoop:
 }
 
 func (f *FlixPatrolProvider) fetchPage(page int, windowStart, windowEnd time.Time) ([]flixItem, error) {
+	if f.allocCtx == nil {
+		return nil, fmt.Errorf("chromedp allocator not available")
+	}
+
 	url := fmt.Sprintf("https://flixpatrol.com/calendar/new/titles/streaming/right-now/%d/", page)
 
-	reqCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ct, cancel := chromedp.NewContext(f.allocCtx)
 	defer cancel()
-	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, url, nil)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("User-Agent", "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36")
 
-	resp, err := f.http.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
+	pageCtx, pageCancel := context.WithTimeout(ct, 120*time.Second)
+	defer pageCancel()
 
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("HTTP %d", resp.StatusCode)
+	log.Debug().Str("provider", "flixpatrol").Msgf("navigating to page %d", page)
+	if err := chromedp.Run(pageCtx,
+		chromedp.Navigate(url),
+		chromedp.WaitReady("body"),
+	); err != nil {
+		return nil, fmt.Errorf("navigating to page %d: %w", page, err)
 	}
 
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 5<<20))
-	if err != nil {
-		return nil, err
+	if err := waitForRealPage(ct); err != nil {
+		return nil, fmt.Errorf("page %d cloudflare challenge: %w", page, err)
 	}
 
-	return parseFlixRows(string(body)), nil
+	var html string
+	if err := chromedp.Run(ct, chromedp.OuterHTML("html", &html)); err != nil {
+		return nil, fmt.Errorf("page %d getting HTML: %w", page, err)
+	}
+
+	return parseFlixRows(html), nil
 }
 
 func parseFlixRows(html string) []flixItem {

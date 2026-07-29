@@ -77,7 +77,11 @@ func (r *Runner) buildProviders(wantMovie, wantTV, wantAnime, wantMusic, wantBoo
 							}
 							providers = append(providers, tmdb)
 						case "flixpatrol":
-							fp := NewFlixPatrolProvider(r.debugURL)
+							if r.browserCtx == nil {
+								r.log.Warn().Msg("flixpatrol: browser unavailable, skipping")
+								continue
+							}
+							fp := NewFlixPatrolProvider(r.debugURL, r.browserCtx)
 							fp.SetMediaTypeFilter(mt)
 							if r.hasTargetWeek {
 								fp.SetWeekRange(sy, sw)
