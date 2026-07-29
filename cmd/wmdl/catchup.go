@@ -9,6 +9,7 @@ import (
 
 	"github.com/pdfrg/wmdl/internal/config"
 	"github.com/pdfrg/wmdl/internal/db"
+	"github.com/pdfrg/wmdl/internal/lock"
 )
 
 func newCatchupCmd() *cobra.Command {
@@ -40,6 +41,11 @@ one week at a time — use catchup to handle all outstanding weeks.`,
 			if err != nil {
 				return err
 			}
+			lk, err := lock.Acquire(dbPath)
+			if err != nil {
+				return err
+			}
+			defer lk.Release()
 			database, err := db.Open(filepath.Join(dbPath, "wmdl.db"))
 			if err != nil {
 				return fmt.Errorf("opening database: %w", err)

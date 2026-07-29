@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -300,71 +301,90 @@ func (d *DB) Migrate(ctx context.Context) error {
 	d.migrateExec(ctx, `ALTER TABLE books ADD COLUMN shelvings_count INTEGER DEFAULT 0`)
 	d.migrateExec(ctx, `ALTER TABLE books ADD COLUMN hardcover_slug TEXT NOT NULL DEFAULT ''`)
 
-	// Recreate titles table to update media_type CHECK constraint for anime support
-	d.migrateExec(ctx, `
-		CREATE TABLE IF NOT EXISTS titles_new (
-			id              INTEGER PRIMARY KEY AUTOINCREMENT,
-			tmdb_id         INTEGER NOT NULL,
-			tvdb_id         INTEGER NOT NULL DEFAULT 0,
-			mal_id          INTEGER NOT NULL DEFAULT 0,
-			title           TEXT NOT NULL,
-			year            INTEGER NOT NULL DEFAULT 0,
-			media_type      TEXT NOT NULL DEFAULT 'movie'
-			                CHECK(media_type IN ('movie','tv','anime')),
-			imdb_id         TEXT DEFAULT '',
-			imdb_rating      REAL DEFAULT 0,
-			imdb_votes       INTEGER DEFAULT 0,
-			awards           TEXT DEFAULT '',
-			box_office       TEXT DEFAULT '',
-			director         TEXT DEFAULT '',
-			writer           TEXT DEFAULT '',
-			actors           TEXT DEFAULT '',
-			rt_url           TEXT DEFAULT '',
-			rt_critics_score REAL DEFAULT 0,
-			rt_audience_score REAL DEFAULT 0,
-			tmdb_rating      REAL DEFAULT 0,
-			metacritic_score REAL DEFAULT 0,
-			us_rating         TEXT DEFAULT '',
-			original_language TEXT DEFAULT '',
-			origin_country    TEXT DEFAULT '',
-			overview          TEXT DEFAULT '',
-			genres            TEXT DEFAULT '',
-			runtime           INTEGER DEFAULT 0,
-			yt_trailer_views  INTEGER DEFAULT 0,
-			poster_path       TEXT DEFAULT '',
-			anime_type        TEXT DEFAULT '',
-			anime_episodes    INTEGER DEFAULT 0,
-			anime_status      TEXT DEFAULT '',
-			anime_members     INTEGER DEFAULT 0,
-			anime_rank        INTEGER DEFAULT 0,
-			anime_source      TEXT DEFAULT '',
-			anime_studio      TEXT DEFAULT '',
-			themes            TEXT DEFAULT '',
-			demographics      TEXT DEFAULT '',
-			streaming         TEXT DEFAULT '',
-			created_at        TEXT NOT NULL DEFAULT (datetime('now')),
-			UNIQUE(tmdb_id, mal_id)
-		)
-	`)
-	if _, err := d.db.ExecContext(ctx, `
-		INSERT OR IGNORE INTO titles_new (
-			id, tmdb_id, tvdb_id, mal_id, title, year, media_type,
-			imdb_id, imdb_rating, imdb_votes, awards, box_office, director, writer, actors, rt_url, rt_critics_score, rt_audience_score,
-			tmdb_rating, metacritic_score, us_rating, original_language, origin_country,
-			yt_trailer_views, overview, genres, runtime, poster_path, created_at,
-			anime_type, anime_episodes, anime_status, anime_members, anime_rank,
-			anime_source, anime_studio, themes, demographics, streaming
-		) SELECT
-			id, tmdb_id, tvdb_id, mal_id, title, year, media_type,
-			imdb_id, imdb_rating, imdb_votes, awards, box_office, director, writer, actors, rt_url, rt_critics_score, rt_audience_score,
-			tmdb_rating, metacritic_score, us_rating, original_language, origin_country,
-			yt_trailer_views, overview, genres, runtime, poster_path, created_at,
-			anime_type, anime_episodes, anime_status, anime_members, anime_rank,
-			anime_source, anime_studio, themes, demographics, streaming
-		FROM titles
-	`); err == nil {
-		d.migrateExec(ctx, `DROP TABLE IF EXISTS titles`)
-		d.migrateExec(ctx, `ALTER TABLE titles_new RENAME TO titles`)
+	// Recreate titles table to update media_type CHECK constraint for anime support.
+	// Guarded: only runs if the CHECK constraint still lacks 'anime' (old DB).
+	var tableSQL string
+	if err := d.db.QueryRowContext(ctx,
+		`SELECT sql FROM sqlite_master WHERE type='table' AND name='titles'`,
+	).Scan(&tableSQL); err == nil && !strings.Contains(tableSQL, `IN ('movie','tv','anime')`) {
+		d.migrateExec(ctx, `
+			CREATE TABLE IF NOT EXISTS titles_new (
+				id              INTEGER PRIMARY KEY AUTOINCREMENT,
+				tmdb_id         INTEGER NOT NULL,
+				tvdb_id         INTEGER NOT NULL DEFAULT 0,
+				mal_id          INTEGER NOT NULL DEFAULT 0,
+				title           TEXT NOT NULL,
+				year            INTEGER NOT NULL DEFAULT 0,
+				media_type      TEXT NOT NULL DEFAULT 'movie'
+				                CHECK(media_type IN ('movie','tv','anime')),
+				imdb_id         TEXT DEFAULT '',
+				imdb_rating      REAL DEFAULT 0,
+				imdb_votes       INTEGER DEFAULT 0,
+				awards           TEXT DEFAULT '',
+				box_office       TEXT DEFAULT '',
+				director         TEXT DEFAULT '',
+				writer           TEXT DEFAULT '',
+				actors           TEXT DEFAULT '',
+				rt_url           TEXT DEFAULT '',
+				rt_critics_score REAL DEFAULT 0,
+				rt_audience_score REAL DEFAULT 0,
+				tmdb_rating      REAL DEFAULT 0,
+				metacritic_score REAL DEFAULT 0,
+				us_rating         TEXT DEFAULT '',
+				original_language TEXT DEFAULT '',
+				origin_country    TEXT DEFAULT '',
+				overview          TEXT DEFAULT '',
+				genres            TEXT DEFAULT '',
+				runtime           INTEGER DEFAULT 0,
+				yt_trailer_views  INTEGER DEFAULT 0,
+				poster_path       TEXT DEFAULT '',
+				tmdb_title        TEXT DEFAULT '',
+				anime_type        TEXT DEFAULT '',
+				anime_episodes    INTEGER DEFAULT 0,
+				anime_status      TEXT DEFAULT '',
+				anime_members     INTEGER DEFAULT 0,
+				anime_rank        INTEGER DEFAULT 0,
+				anime_source      TEXT DEFAULT '',
+				anime_studio      TEXT DEFAULT '',
+				themes            TEXT DEFAULT '',
+				demographics      TEXT DEFAULT '',
+				streaming         TEXT DEFAULT '',
+				collection_id     INTEGER DEFAULT 0,
+				collection_name   TEXT DEFAULT '',
+				rt_audience_real_score REAL DEFAULT 0,
+				rt_real_votes     INTEGER DEFAULT 0,
+				created_at        TEXT NOT NULL DEFAULT (datetime('now')),
+				UNIQUE(tmdb_id, mal_id)
+			)
+		`)
+		if _, err := d.db.ExecContext(ctx, `
+			INSERT OR IGNORE INTO titles_new (
+				id, tmdb_id, tvdb_id, mal_id, title, year, media_type,
+				imdb_id, imdb_rating, imdb_votes, awards, box_office, director, writer, actors, rt_url, rt_critics_score, rt_audience_score,
+				tmdb_rating, metacritic_score, us_rating, original_language, origin_country,
+				yt_trailer_views, overview, genres, runtime, poster_path,
+				tmdb_title,
+				anime_type, anime_episodes, anime_status, anime_members, anime_rank,
+				anime_source, anime_studio, themes, demographics, streaming,
+				collection_id, collection_name,
+				rt_audience_real_score, rt_real_votes
+			) SELECT
+				id, tmdb_id, tvdb_id, mal_id, title, year, media_type,
+				imdb_id, imdb_rating, imdb_votes, awards, box_office, director, writer, actors, rt_url, rt_critics_score, rt_audience_score,
+				tmdb_rating, metacritic_score, us_rating, original_language, origin_country,
+				yt_trailer_views, overview, genres, runtime, poster_path,
+				tmdb_title,
+				anime_type, anime_episodes, anime_status, anime_members, anime_rank,
+				anime_source, anime_studio, themes, demographics, streaming,
+				collection_id, collection_name,
+				rt_audience_real_score, rt_real_votes
+			FROM titles
+		`); err == nil {
+			d.migrateExec(ctx, `DROP TABLE IF EXISTS titles`)
+			d.migrateExec(ctx, `ALTER TABLE titles_new RENAME TO titles`)
+		} else {
+			d.migrateExec(ctx, `DROP TABLE IF EXISTS titles_new`)
+		}
 	} else {
 		d.migrateExec(ctx, `DROP TABLE IF EXISTS titles_new`)
 	}

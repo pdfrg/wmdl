@@ -104,8 +104,8 @@ func (d *DB) upsertTitle(ctx context.Context, q querier, t *model.Title) (int64,
 			rt_url               = excluded.rt_url,
 			rt_critics_score     = CASE WHEN excluded.rt_critics_score > 0 THEN excluded.rt_critics_score ELSE titles.rt_critics_score END,
 			rt_audience_score    = CASE WHEN excluded.rt_audience_score > 0 THEN excluded.rt_audience_score ELSE titles.rt_audience_score END,
-			rt_audience_real_score = excluded.rt_audience_real_score,
-			rt_real_votes        = excluded.rt_real_votes,
+			rt_audience_real_score = CASE WHEN excluded.rt_audience_real_score > 0 THEN excluded.rt_audience_real_score ELSE titles.rt_audience_real_score END,
+			rt_real_votes        = CASE WHEN excluded.rt_real_votes > 0 THEN excluded.rt_real_votes ELSE titles.rt_real_votes END,
 			tmdb_rating          = excluded.tmdb_rating,
 			metacritic_score     = CASE WHEN excluded.metacritic_score > 0 THEN excluded.metacritic_score ELSE titles.metacritic_score END,
 			us_rating            = excluded.us_rating,
@@ -142,17 +142,28 @@ func (d *DB) upsertTitle(ctx context.Context, q querier, t *model.Title) (int64,
 	if err != nil {
 		return 0, fmt.Errorf("upserting title: %w", err)
 	}
-	id, err := res.LastInsertId()
+	lastID, err := res.LastInsertId()
 	if err != nil {
 		return 0, fmt.Errorf("getting last insert id: %w", err)
 	}
-	if id == 0 {
-		err := q.QueryRowContext(ctx,
-			`SELECT id FROM titles WHERE tmdb_id = ? AND mal_id = ?`,
-			t.TmdbID, t.MalID).Scan(&id)
-		if err != nil {
-			return 0, fmt.Errorf("re-querying title id after upsert: %w", err)
+
+	// SQLite LastInsertId is unreliable for UPSERT UPDATE — it may return
+	// a stale value from a previous INSERT. Always re-query to get the
+	// real id for this (tmdb_id, mal_id) pair.
+	if lastID > 0 && t.TmdbID > 0 {
+		var match int
+		if err := q.QueryRowContext(ctx,
+			`SELECT COUNT(*) FROM titles WHERE id = ? AND tmdb_id = ? AND mal_id = ?`,
+			lastID, t.TmdbID, t.MalID).Scan(&match); err == nil && match > 0 {
+			return lastID, nil
 		}
+	}
+	var id int64
+	err = q.QueryRowContext(ctx,
+		`SELECT id FROM titles WHERE tmdb_id = ? AND mal_id = ?`,
+		t.TmdbID, t.MalID).Scan(&id)
+	if err != nil {
+		return 0, fmt.Errorf("re-querying title id after upsert: %w", err)
 	}
 	return id, nil
 }

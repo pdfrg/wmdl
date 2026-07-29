@@ -89,6 +89,21 @@ func runReviewForWeek(ctx context.Context, database *db.DB, cfg *config.Config, 
 		return 0, fmt.Errorf("loading events: %w", err)
 	}
 
+	// Deduplicate: keep only the latest event per title (prevents
+	// showing old rejected + new re-queued copies of the same title).
+	{
+		seen := make(map[int64]bool)
+		deduped := make([]db.EventWithTitle, 0, len(events))
+		for _, ev := range events {
+			if seen[ev.Event.TitleID] {
+				continue
+			}
+			seen[ev.Event.TitleID] = true
+			deduped = append(deduped, ev)
+		}
+		events = deduped
+	}
+
 	albumEvents, err := database.ListAlbumReleaseEventsByWeek(ctx, year, week)
 	if err != nil {
 		return 0, fmt.Errorf("loading album events: %w", err)

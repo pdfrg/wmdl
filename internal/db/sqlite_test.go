@@ -85,6 +85,68 @@ func TestUpsertTitleUpdatesExisting(t *testing.T) {
 	}
 }
 
+func TestMigratePreservesEnrichmentColumns(t *testing.T) {
+	d := openTestDB(t)
+	ctx := context.Background()
+
+	t1 := &model.Title{
+		TmdbID:              300,
+		Title:               "Popcorn Gap Movie",
+		Year:                2025,
+		MediaType:           model.MediaTypeMovie,
+		RTCriticsScore:      85,
+		RTAudienceScore:     75,
+		RTAudienceRealScore: 62,
+		RTRealVotes:         1500,
+		TmdbTitle:           "Popcorn Gap Movie (2025)",
+		CollectionID:        42,
+		CollectionName:      "The Popcorn Collection",
+	}
+
+	id, err := d.UpsertTitle(ctx, t1)
+	if err != nil {
+		t.Fatalf("UpsertTitle: %v", err)
+	}
+	if id == 0 {
+		t.Fatal("expected non-zero ID")
+	}
+
+	// Call Migrate again to simulate a re-open
+	if err := d.Migrate(ctx); err != nil {
+		t.Fatalf("Migrate (re-open): %v", err)
+	}
+
+	got, err := d.GetTitleByTmdbID(ctx, 300)
+	if err != nil {
+		t.Fatalf("GetTitleByTmdbID: %v", err)
+	}
+	if got == nil {
+		t.Fatal("expected title after Migrate re-open")
+	}
+
+	if got.RTCriticsScore != 85 {
+		t.Fatalf("RTCriticsScore: expected 85, got %f", got.RTCriticsScore)
+	}
+	if got.RTAudienceScore != 75 {
+		t.Fatalf("RTAudienceScore: expected 75, got %f", got.RTAudienceScore)
+	}
+	if got.RTAudienceRealScore != 62 {
+		t.Fatalf("RTAudienceRealScore: expected 62, got %f", got.RTAudienceRealScore)
+	}
+	if got.RTRealVotes != 1500 {
+		t.Fatalf("RTRealVotes: expected 1500, got %d", got.RTRealVotes)
+	}
+	if got.TmdbTitle != "Popcorn Gap Movie (2025)" {
+		t.Fatalf("TmdbTitle: expected 'Popcorn Gap Movie (2025)', got %q", got.TmdbTitle)
+	}
+	if got.CollectionID != 42 {
+		t.Fatalf("CollectionID: expected 42, got %d", got.CollectionID)
+	}
+	if got.CollectionName != "The Popcorn Collection" {
+		t.Fatalf("CollectionName: expected 'The Popcorn Collection', got %q", got.CollectionName)
+	}
+}
+
 func TestCreateAndListReleaseEvents(t *testing.T) {
 	d := openTestDB(t)
 	ctx := context.Background()

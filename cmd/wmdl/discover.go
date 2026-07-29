@@ -13,6 +13,7 @@ import (
 	"github.com/pdfrg/wmdl/internal/config"
 	"github.com/pdfrg/wmdl/internal/db"
 	"github.com/pdfrg/wmdl/internal/discover"
+	"github.com/pdfrg/wmdl/internal/lock"
 	"github.com/pdfrg/wmdl/internal/model"
 	"github.com/pdfrg/wmdl/internal/process"
 )
@@ -56,6 +57,11 @@ Notes:
 			if err != nil {
 				return err
 			}
+			lk, err := lock.Acquire(dbPath)
+			if err != nil {
+				return err
+			}
+			defer lk.Release()
 			database, err := db.Open(filepath.Join(dbPath, "wmdl.db"))
 			if err != nil {
 				return fmt.Errorf("opening database: %w", err)

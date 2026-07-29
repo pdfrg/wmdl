@@ -280,6 +280,13 @@ func (r *Runner) processItem(ctx context.Context, item ScrapedItem, progYear, pr
 					return nil
 				}
 			case model.StatusRejected:
+				// Re-queue only when the release type changes
+				// (e.g. streaming → physical upgrade).
+				if existing.ReleaseType == item.ReleaseType {
+					return nil
+				}
+				evtNotes = fmt.Sprintf("re-queue: %s → %s",
+					existing.ReleaseType, item.ReleaseType)
 			}
 		}
 

@@ -34,12 +34,15 @@ type rtPool struct {
 
 type rtScorecardJSON struct {
 	AudienceScore *rtPool    `json:"audienceScore"`
+	CriticsScore  *rtPool    `json:"criticsScore"`
 	Overlay       *rtOverlay `json:"overlay"`
 }
 
 type rtOverlay struct {
 	AudienceAll      *rtPool `json:"audienceAll"`
 	AudienceVerified *rtPool `json:"audienceVerified"`
+	CriticsAll       *rtPool `json:"criticsAll"`
+	CriticsTop       *rtPool `json:"criticsTop"`
 }
 
 var scorecardRE = regexp.MustCompile(
@@ -57,18 +60,33 @@ func ScrapeRTRatings(ctx context.Context, rtURL string) *RTRatings {
 	}
 
 	// --- Critics score ---
+	if data.CriticsScore != nil {
+		if s := parsePct(data.CriticsScore.Score); s > 0 {
+			ratings.CriticsScore = s
+		}
+	}
+
+	// --- Audience score ---
 	if data.AudienceScore != nil {
-		cs := data.AudienceScore
-		if s := parsePct(cs.Score); s > 0 {
+		if s := parsePct(data.AudienceScore.Score); s > 0 {
 			ratings.AudienceScore = s
 		}
 	}
 
-	// --- Critic scores (extract from overlay) ---
-	if ov := data.Overlay; ov != nil {
-		if ca := ov.AudienceAll; ca != nil {
-			if s := parsePct(ca.Score); s > 0 && ratings.AudienceScore == 0 {
+	// --- Fallback: overlay audience (ALL pool) ---
+	if ratings.AudienceScore == 0 {
+		if ov := data.Overlay; ov != nil && ov.AudienceAll != nil {
+			if s := parsePct(ov.AudienceAll.Score); s > 0 {
 				ratings.AudienceScore = s
+			}
+		}
+	}
+
+	// --- Fallback: overlay critics ---
+	if ratings.CriticsScore == 0 {
+		if ov := data.Overlay; ov != nil && ov.CriticsAll != nil {
+			if s := parsePct(ov.CriticsAll.Score); s > 0 {
+				ratings.CriticsScore = s
 			}
 		}
 	}
