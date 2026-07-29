@@ -727,17 +727,16 @@ func (t *TUI) buildRightContent(tl *model.Title, ev *model.ReleaseEvent, rw int,
 		if tl.ImdbVotes > 0 {
 			imdbStr = fmt.Sprintf("%s (%s votes)", imdbStr, fmtViews(tl.ImdbVotes))
 		}
-		ratings := fmt.Sprintf("TMDB: %s · IMDb: %s · MC: %s · YT: %s · 🍅 %s",
+		ratings := fmt.Sprintf("TMDB: %s · IMDb: %s · MC: %s · YT: %s",
 			fmtRating(tl.TmdbRating),
 			imdbStr,
 			fmtRating(tl.MetacriticScore),
 			fmtViews(tl.YoutubeViews),
-			fmtPct(tl.RTCriticsScore),
 		)
 
 		audiencePart := fmt.Sprintf("🍿 %s", fmtPct(tl.RTAudienceScore))
 		if tl.RTAudienceRealScore > 0 && tl.RTRealVotes >= 30 {
-			gap := tl.RTAudienceScore - tl.RTAudienceRealScore
+			gap := tl.RTAudienceRealScore - tl.RTAudienceScore
 			gapColor := "46"
 			if gap < 0 {
 				gapColor = "196"
@@ -747,10 +746,11 @@ func (t *TUI) buildRightContent(tl *model.Title, ev *model.ReleaseEvent, rw int,
 				audiencePart, fmtPct(tl.RTAudienceRealScore), gapStyled, fmtViews(int64(tl.RTRealVotes)))
 		}
 
+		rtLine := fmt.Sprintf("🍅 %s · %s", fmtPct(tl.RTCriticsScore), audiencePart)
 		b.WriteString("\n\n")
 		b.WriteString(ratingsLine.Render(ratings))
-		b.WriteString(" · ")
-		b.WriteString(audiencePart)
+		b.WriteString("\n")
+		b.WriteString(ratingsLine.Width(rw).Render(rtLine))
 	}
 
 	if tl.MediaType != model.MediaTypeAnime {
