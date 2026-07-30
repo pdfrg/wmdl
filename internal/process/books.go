@@ -42,33 +42,15 @@ func bookSearchQueries(evt db.EventWithBook) []string {
 	add(evt.Book.ASIN)
 	add(evt.Book.ISBN10)
 
-	if evt.Author.Name != "" {
-		if evt.Book.ReleaseYear > 0 {
-			add(fmt.Sprintf("%s %s %d", evt.Author.Name, evt.Book.Title, evt.Book.ReleaseYear))
-		}
-		add(fmt.Sprintf("%s %s", evt.Author.Name, evt.Book.Title))
-	}
-	if evt.Book.ReleaseYear > 0 {
-		add(fmt.Sprintf("%s %d", evt.Book.Title, evt.Book.ReleaseYear))
-	}
-	add(evt.Book.Title)
-
 	mainTitle := evt.Book.Title
 	if idx := strings.Index(mainTitle, ": "); idx > 0 {
 		mainTitle = strings.TrimSpace(mainTitle[:idx])
 	}
-	if mainTitle != evt.Book.Title {
-		if evt.Author.Name != "" {
-			if evt.Book.ReleaseYear > 0 {
-				add(fmt.Sprintf("%s %s %d", evt.Author.Name, mainTitle, evt.Book.ReleaseYear))
-			}
-			add(fmt.Sprintf("%s %s", evt.Author.Name, mainTitle))
-		}
-		if evt.Book.ReleaseYear > 0 {
-			add(fmt.Sprintf("%s %d", mainTitle, evt.Book.ReleaseYear))
-		}
-		add(mainTitle)
+
+	if evt.Author.Name != "" {
+		add(fmt.Sprintf("%s %s", evt.Author.Name, mainTitle))
 	}
+	add(mainTitle)
 
 	return queries
 }
@@ -115,6 +97,9 @@ func (e *Executor) SearchBook(ctx context.Context, evt db.EventWithBook, format 
 				exactPool = mergeReleases(exactPool, exact)
 				fuzzyPool = mergeReleases(fuzzyPool, fuzzy)
 				e.log.Debug().Msgf("→ %d exact, %d fuzzy (exact total: %d)", len(exact), len(fuzzy), len(exactPool))
+				if len(exact) > 0 {
+					break
+				}
 				if len(exactPool) >= e.cfg.ShowTopN {
 					return e.buildBookSearchResult(evt, exactPool, fuzzyPool, format, preferredID)
 				}
@@ -141,6 +126,9 @@ func (e *Executor) SearchBook(ctx context.Context, evt db.EventWithBook, format 
 			exactPool = mergeReleases(exactPool, exact)
 			fuzzyPool = mergeReleases(fuzzyPool, fuzzy)
 			e.log.Debug().Msgf("→ %d exact, %d fuzzy (exact total: %d)", len(exact), len(fuzzy), len(exactPool))
+			if len(exact) > 0 {
+				break
+			}
 			if len(exactPool) >= e.cfg.ShowTopN {
 				return e.buildBookSearchResult(evt, exactPool, fuzzyPool, format, preferredID)
 			}
