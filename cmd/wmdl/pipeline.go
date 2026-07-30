@@ -350,9 +350,18 @@ func runProcessForWeek(ctx context.Context, database *db.DB, cfg *config.Config,
 
 	if !target.Reviewed {
 		// After auto-approval, check if any non-yolo items remain pending
-		pending, _ := database.ListEventsByWeekAndStatus(ctx, year, week, model.StatusPending)
-		pendingAlbums, _ := database.ListAlbumReleaseEventsByWeekAndStatus(ctx, year, week, model.StatusPending)
-		pendingBooks, _ := database.ListBookEventsByWeekAndStatus(ctx, year, week, model.StatusPending)
+		pending, err := database.ListEventsByWeekAndStatus(ctx, year, week, model.StatusPending)
+		if err != nil {
+			return fmt.Errorf("checking pending events: %w", err)
+		}
+		pendingAlbums, err := database.ListAlbumReleaseEventsByWeekAndStatus(ctx, year, week, model.StatusPending)
+		if err != nil {
+			return fmt.Errorf("checking pending albums: %w", err)
+		}
+		pendingBooks, err := database.ListBookEventsByWeekAndStatus(ctx, year, week, model.StatusPending)
+		if err != nil {
+			return fmt.Errorf("checking pending books: %w", err)
+		}
 		if len(pending) == 0 && len(pendingAlbums) == 0 && len(pendingBooks) == 0 {
 			target.Reviewed = true
 			if err := database.UpsertWeekState(ctx, target); err != nil {
@@ -371,8 +380,14 @@ func runProcessForWeek(ctx context.Context, database *db.DB, cfg *config.Config,
 		log.Info().Msgf("No video/anime releases found for week %d-W%02d.", year, week)
 	}
 
-	albumEventsForProcess, _ := database.ListAlbumReleaseEventsByWeekAndStatus(ctx, year, week, model.StatusApproved)
-	bookEventsForProcess, _ := database.ListBookEventsByWeekAndStatus(ctx, year, week, model.StatusApproved)
+	albumEventsForProcess, err := database.ListAlbumReleaseEventsByWeekAndStatus(ctx, year, week, model.StatusApproved)
+	if err != nil {
+		return fmt.Errorf("loading approved albums: %w", err)
+	}
+	bookEventsForProcess, err := database.ListBookEventsByWeekAndStatus(ctx, year, week, model.StatusApproved)
+	if err != nil {
+		return fmt.Errorf("loading approved books: %w", err)
+	}
 
 	if typeFilter != "" {
 		switch typeFilter {

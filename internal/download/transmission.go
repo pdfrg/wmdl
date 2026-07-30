@@ -74,6 +74,10 @@ func (t *TransmissionClient) getSessionID(ctx context.Context) error {
 }
 
 func (t *TransmissionClient) do(ctx context.Context, method string, args interface{}) (*trpcResponse, error) {
+	return t.doWithRetry(ctx, method, args, 0)
+}
+
+func (t *TransmissionClient) doWithRetry(ctx context.Context, method string, args interface{}, retry int) (*trpcResponse, error) {
 	t.mu.Lock()
 	sid := t.sessionID
 	t.mu.Unlock()
@@ -110,11 +114,14 @@ func (t *TransmissionClient) do(ctx context.Context, method string, args interfa
 	defer resp.Body.Close()
 
 	if resp.StatusCode == http.StatusConflict {
+		if retry >= 1 {
+			return nil, fmt.Errorf("transmission: still getting 409 after retry")
+		}
 		sid := resp.Header.Get("X-Transmission-Session-Id")
 		t.mu.Lock()
 		t.sessionID = sid
 		t.mu.Unlock()
-		return t.do(ctx, method, args)
+		return t.doWithRetry(ctx, method, args, retry+1)
 	}
 
 	if resp.StatusCode != http.StatusOK {

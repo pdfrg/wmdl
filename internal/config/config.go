@@ -322,6 +322,7 @@ var validModes = map[string]bool{
 	ProcessModeArr:          true,
 	ProcessModeAuto:         true,
 	ProcessModeYolo:         true,
+	ProcessModeBatch:        true,
 }
 
 func (c *Config) UsedModes() map[string]bool {
@@ -500,9 +501,9 @@ func (c *Config) Validate() error {
 		if c.MediaTypes.Books.LookbackWeeks < 0 {
 			errs = append(errs, "media_types.books.lookback_weeks must be >= 0")
 		}
-		if c.MediaTypes.Music.LookbackWeeks < 0 {
-			errs = append(errs, "media_types.music.lookback_weeks must be >= 0")
-		}
+	}
+	if c.MediaTypes.Music.LookbackWeeks < 0 {
+		errs = append(errs, "media_types.music.lookback_weeks must be >= 0")
 	}
 	if c.MediaTypes.Movies.StreamingLookbackWeeks < 0 {
 		errs = append(errs, "media_types.movies.streaming_lookback_weeks must be >= 0")

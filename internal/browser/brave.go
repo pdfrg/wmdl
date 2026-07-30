@@ -22,6 +22,11 @@ func EnsureRunning(binary string, debugPort int, profile string, headless bool) 
 	// Kill any existing browser on the debug port (stale compositor state causes
 	// chromedp hangs when creating tabs).
 	if pid := findProcessOnPort(debugPort); pid > 0 {
+		// Verify this is actually a browser process before killing
+		comm, _ := os.ReadFile(fmt.Sprintf("/proc/%d/comm", pid))
+		if !strings.Contains(strings.TrimSpace(string(comm)), binary) {
+			return nil, fmt.Errorf("port %d held by non-browser process (PID %d), not killing", debugPort, pid)
+		}
 		if p, err := os.FindProcess(pid); err == nil {
 			_ = p.Signal(syscall.SIGTERM)
 			// Wait up to 5s for it to release the port
@@ -80,12 +85,19 @@ func EnsureRunning(binary string, debugPort int, profile string, headless bool) 
 		conn, err := net.DialTimeout("tcp", addr, 500*time.Millisecond)
 		if err == nil {
 			conn.Close()
-			return cmd.Process.Kill, nil
+			return func() error {
+				if err := cmd.Process.Kill(); err != nil {
+					return err
+				}
+				_, err := cmd.Process.Wait()
+				return err
+			}, nil
 		}
 		time.Sleep(500 * time.Millisecond)
 	}
 
-	cmd.Process.Kill()
+	_ = cmd.Process.Kill()
+	_ = cmd.Wait()
 	return nil, fmt.Errorf("%s started but not listening on %s within 15s", binary, addr)
 }
 

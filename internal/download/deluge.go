@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/http/cookiejar"
 	"strings"
 	"sync"
 	"time"
@@ -22,11 +23,13 @@ type DelugeClient struct {
 var _ Client = (*DelugeClient)(nil)
 
 func NewDelugeClient(baseURL, password string) *DelugeClient {
+	jar, _ := cookiejar.New(nil)
 	return &DelugeClient{
 		baseURL:  strings.TrimRight(baseURL, "/"),
 		password: password,
 		http: &http.Client{
 			Timeout: 30 * time.Second,
+			Jar:     jar,
 		},
 	}
 }
