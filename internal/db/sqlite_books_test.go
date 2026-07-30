@@ -17,9 +17,9 @@ func TestUpsertAuthor(t *testing.T) {
 	ctx := context.Background()
 
 	a := &model.Author{
-		Name:   "Stephen King",
-		OLID:   "OL21567A",
-		Bio:    "American author",
+		Name:     "Stephen King",
+		OLID:     "OL21567A",
+		Bio:      "American author",
 		BornDate: "1947-09-21",
 	}
 

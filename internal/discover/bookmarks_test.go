@@ -96,13 +96,13 @@ func TestBmFullParseLogic(t *testing.T) {
 	</body></html>`
 
 	var (
-		releaseDate   string
-		isbn          string
-		publisher     string
-		desc          string
-		tags          string
-		verdict       string
-		totalReviews  int
+		releaseDate  string
+		isbn         string
+		publisher    string
+		desc         string
+		tags         string
+		verdict      string
+		totalReviews int
 	)
 
 	if m := bmDetailDateRe.FindStringSubmatch(html); len(m) > 1 {

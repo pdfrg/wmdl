@@ -115,5 +115,3 @@ func TestAniListFuzzyDate(t *testing.T) {
 	assert.True(t, zero.IsZero())
 	assert.True(t, zero.ToTime().IsZero())
 }
-
-

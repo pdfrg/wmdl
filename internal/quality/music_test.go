@@ -112,8 +112,8 @@ func TestScoreMusic(t *testing.T) {
 	}
 
 	tests := []struct {
-		name string
-		rel  ParsedRelease
+		name  string
+		rel   ParsedRelease
 		check func(t *testing.T, score int)
 	}{
 		{

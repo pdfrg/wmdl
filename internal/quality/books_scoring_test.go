@@ -43,7 +43,7 @@ func TestParseBookRelease(t *testing.T) {
 			"audiobook m4b",
 			"Book.Title.m4b-GROUP",
 			ParsedBookRelease{
-				ParsedRelease: ParsedRelease{RawTitle: "Book.Title.m4b-GROUP", ReleaseGroup: "GROUP"},
+				ParsedRelease:   ParsedRelease{RawTitle: "Book.Title.m4b-GROUP", ReleaseGroup: "GROUP"},
 				AudiobookFormat: "m4b",
 				IsAudiobook:     true,
 			},
@@ -52,7 +52,7 @@ func TestParseBookRelease(t *testing.T) {
 			"audiobook mp3",
 			"Book.Title.mp3-GRP",
 			ParsedBookRelease{
-				ParsedRelease: ParsedRelease{RawTitle: "Book.Title.mp3-GRP", ReleaseGroup: "GRP"},
+				ParsedRelease:   ParsedRelease{RawTitle: "Book.Title.mp3-GRP", ReleaseGroup: "GRP"},
 				AudiobookFormat: "mp3",
 				IsAudiobook:     true,
 			},
@@ -61,7 +61,7 @@ func TestParseBookRelease(t *testing.T) {
 			"audiobook flac with narrator",
 			"Book.Title.FLAC.Read.by.Narrator-GRP",
 			ParsedBookRelease{
-				ParsedRelease: ParsedRelease{RawTitle: "Book.Title.FLAC.Read.by.Narrator-GRP", ReleaseGroup: "GRP"},
+				ParsedRelease:   ParsedRelease{RawTitle: "Book.Title.FLAC.Read.by.Narrator-GRP", ReleaseGroup: "GRP"},
 				AudiobookFormat: "flac",
 				IsAudiobook:     true,
 			},
@@ -70,7 +70,7 @@ func TestParseBookRelease(t *testing.T) {
 			"audiobook from keyword",
 			"Book Title Audiobook-GROUP",
 			ParsedBookRelease{
-				ParsedRelease: ParsedRelease{RawTitle: "Book Title Audiobook-GROUP", ReleaseGroup: "GROUP"},
+				ParsedRelease:   ParsedRelease{RawTitle: "Book Title Audiobook-GROUP", ReleaseGroup: "GROUP"},
 				AudiobookFormat: "mp3",
 				IsAudiobook:     true,
 			},
@@ -79,7 +79,7 @@ func TestParseBookRelease(t *testing.T) {
 			"bitrate detection",
 			"Book.Title.VBR.mp3-GRP",
 			ParsedBookRelease{
-				ParsedRelease: ParsedRelease{RawTitle: "Book.Title.VBR.mp3-GRP", ReleaseGroup: "GRP", Codec: "vbr"},
+				ParsedRelease:   ParsedRelease{RawTitle: "Book.Title.VBR.mp3-GRP", ReleaseGroup: "GRP", Codec: "vbr"},
 				AudiobookFormat: "mp3",
 				IsAudiobook:     true,
 			},
@@ -130,8 +130,8 @@ func TestScoreBook(t *testing.T) {
 	}
 
 	tests := []struct {
-		name string
-		rel  ParsedBookRelease
+		name  string
+		rel   ParsedBookRelease
 		check func(t *testing.T, score int)
 	}{
 		{

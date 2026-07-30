@@ -15,12 +15,12 @@ func TestComputeColWidths(t *testing.T) {
 	}
 
 	cw := computeColWidths(releases)
-	assert.Equal(t, 5, cw.resolution) // "2160p" = 5 chars
-	assert.Equal(t, 3, cw.hdr)        // "HDR"
-	assert.Equal(t, 6, cw.source)     // "WEB-DL"
-	assert.Equal(t, 4, cw.codec)      // "x265"
-	assert.Equal(t, 3, cw.seeders)    // "100"
-	assert.Equal(t, 6, cw.size)       // "5.0 GB" = 6 chars
+	assert.Equal(t, 5, cw.resolution)    // "2160p" = 5 chars
+	assert.Equal(t, 3, cw.hdr)           // "HDR"
+	assert.Equal(t, 6, cw.source)        // "WEB-DL"
+	assert.Equal(t, 4, cw.codec)         // "x265"
+	assert.Equal(t, 3, cw.seeders)       // "100"
+	assert.Equal(t, 6, cw.size)          // "5.0 GB" = 6 chars
 	assert.Equal(t, 13, cw.releaseGroup) // "LongGroupName" = 13
 	assert.Equal(t, 19, cw.indexerName)
 }

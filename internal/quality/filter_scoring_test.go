@@ -165,10 +165,10 @@ func TestSeederScore(t *testing.T) {
 
 func TestPreferredIndexerBonus(t *testing.T) {
 	tests := []struct {
-		name         string
-		releaseID    int
-		preferredID  int
-		want         int
+		name        string
+		releaseID   int
+		preferredID int
+		want        int
 	}{
 		{"no preferred", 1, 0, 0},
 		{"match", 1, 1, 250},
@@ -184,12 +184,12 @@ func TestPreferredIndexerBonus(t *testing.T) {
 
 func TestScore(t *testing.T) {
 	prefs := QualityPrefs{
-		TargetResolution: 1080,
-		PreferHDR:        true,
-		SourcePriority:   []string{"bluray", "web-dl", "hdtv"},
-		CodecPriority:    []string{"h265", "h264"},
-		PreferredGroups:  []string{"GRP"},
-		MinSeeders:       0,
+		TargetResolution:   1080,
+		PreferHDR:          true,
+		SourcePriority:     []string{"bluray", "web-dl", "hdtv"},
+		CodecPriority:      []string{"h265", "h264"},
+		PreferredGroups:    []string{"GRP"},
+		MinSeeders:         0,
 		PreferredIndexerID: 0,
 	}
 
@@ -248,9 +248,9 @@ func TestBest(t *testing.T) {
 	}
 
 	tests := []struct {
-		name     string
-		releases []ParsedRelease
-		wantNil  bool
+		name      string
+		releases  []ParsedRelease
+		wantNil   bool
 		wantTitle string
 	}{
 		{"empty slice", nil, true, ""},
@@ -314,9 +314,9 @@ func TestSortAndTop(t *testing.T) {
 
 func TestIsExactTitleMatch(t *testing.T) {
 	tests := []struct {
-		release    string
-		search     string
-		want       bool
+		release string
+		search  string
+		want    bool
 	}{
 		{"Movie.Title.2025.1080p.WEB-DL.x265-GROUP", "Movie Title", true},
 		{"Movie.Title.2025.1080p.WEB-DL.x265-GROUP", "Movie Name", false},

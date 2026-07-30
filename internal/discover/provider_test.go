@@ -195,9 +195,9 @@ func TestExtractImageURL(t *testing.T) {
 
 func TestParseAOTYDate(t *testing.T) {
 	tests := []struct {
-		input string
+		input  string
 		suffix string
-		valid bool
+		valid  bool
 	}{
 		{"January 15", "-01-15", true},
 		{"May 27", "-05-27", true},

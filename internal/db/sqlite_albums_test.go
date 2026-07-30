@@ -41,7 +41,7 @@ func TestUpsertAlbumReleaseByAOTYURL(t *testing.T) {
 		ArtistName: "Artist",
 		Title:      "Album",
 		Year:       2025,
-		AOTYURL:   "https://albumoftheyear.org/album/123",
+		AOTYURL:    "https://albumoftheyear.org/album/123",
 	}
 
 	id, err := d.UpsertAlbumRelease(ctx, r)
