@@ -61,7 +61,7 @@ func ParseBookRelease(rawTitle string) ParsedBookRelease {
 
 	// If no format detected but title contains common audiobook terms
 	if !r.IsEbook && !r.IsAudiobook {
-		if strings.Contains(clean, "audiobook") || strings.Contains(clean, "audio book") {
+		if strings.Contains(strings.ToLower(clean), "audiobook") || strings.Contains(strings.ToLower(clean), "audio book") {
 			r.IsAudiobook = true
 			r.AudiobookFormat = "mp3" // default if unspecified
 		}
