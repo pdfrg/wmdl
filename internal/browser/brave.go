@@ -123,7 +123,13 @@ func findProcessOnPort(port int) int {
 // findPIDByProcNet parses /proc/net/tcp to find the inode of a socket
 // listening on the given port, then scans /proc/*/fd/* for that inode.
 func findPIDByProcNet(port int) int {
-	data, err := os.ReadFile("/proc/net/tcp")
+	return findPIDByProcNetFS("/proc", port)
+}
+
+// findPIDByProcNetFS is like findPIDByProcNet but accepts a proc directory
+// root for testing.
+func findPIDByProcNetFS(procDir string, port int) int {
+	data, err := os.ReadFile(filepath.Join(procDir, "net/tcp"))
 	if err != nil {
 		return 0
 	}
@@ -146,7 +152,7 @@ func findPIDByProcNet(port int) int {
 		return 0
 	}
 
-	entries, err := os.ReadDir("/proc")
+	entries, err := os.ReadDir(procDir)
 	if err != nil {
 		return 0
 	}
@@ -158,7 +164,7 @@ func findPIDByProcNet(port int) int {
 		if err != nil || pid <= 0 {
 			continue
 		}
-		fdDir := fmt.Sprintf("/proc/%d/fd", pid)
+		fdDir := filepath.Join(procDir, fmt.Sprintf("%d/fd", pid))
 		fds, err := os.ReadDir(fdDir)
 		if err != nil {
 			continue
