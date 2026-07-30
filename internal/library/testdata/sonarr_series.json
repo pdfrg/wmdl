@@ -1,0 +1,19 @@
+{
+  "id": 99,
+  "tvdbId": 121361,
+  "title": "Breaking Bad",
+  "year": 2008,
+  "overview": "A high school chemistry teacher diagnosed with inoperable cancer turns to manufacturing and selling methamphetamine.",
+  "monitored": true,
+  "seasonFolder": true,
+  "qualityProfileId": 1,
+  "languageProfileId": 1,
+  "rootFolderPath": "/tv",
+  "seasons": [
+    {"seasonNumber": 1, "monitored": true},
+    {"seasonNumber": 2, "monitored": true}
+  ],
+  "images": [
+    {"coverType": "poster", "url": "http://example.com/bb-poster.jpg"}
+  ]
+}

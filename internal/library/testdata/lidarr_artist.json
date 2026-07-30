@@ -1,0 +1,19 @@
+{
+  "id": 7,
+  "foreignArtistId": "b10bbbfc-cf9e-42e0-be17-e2c3e1d2600d",
+  "artistName": "Radiohead",
+  "mbId": "b10bbbfc-cf9e-42e0-be17-e2c3e1d2600d",
+  "monitored": true,
+  "monitorNewAlbums": true,
+  "qualityProfileId": 1,
+  "metadataProfileId": 1,
+  "rootFolderPath": "/music",
+  "path": "/music/Radiohead",
+  "genres": ["Alternative", "Rock"],
+  "images": [
+    {"coverType": "poster", "url": "http://example.com/radiohead.jpg"}
+  ],
+  "statistics": {
+    "albumCount": 9
+  }
+}

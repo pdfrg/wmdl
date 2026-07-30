@@ -24,7 +24,13 @@ jobs:
         run: go vet ./...
 
       - name: Test
-        run: go test ./... -count=1
+        run: go test ./... -race -count=1 -coverprofile=coverage.out
+
+      - name: Upload coverage
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: coverage.out
 
       - name: Build
         run: go build -ldflags="-X main.version=$(git describe --tags --dirty --always 2>/dev/null || echo dev)" ./cmd/wmdl

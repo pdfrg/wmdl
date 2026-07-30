@@ -1,0 +1,36 @@
+[
+  {
+    "title": "Show.Name.S01.1080p.WEB-DL.x265-GROUP",
+    "guid": "guid-show-s01",
+    "indexerId": 1,
+    "indexer": "TorrentLeech",
+    "downloadUrl": "http://example.com/download/show.torrent",
+    "magnetUrl": "",
+    "infoHash": "DDD",
+    "seeders": 80,
+    "leechers": 15,
+    "size": 3500000000,
+    "protocol": "torrent",
+    "publishDate": "2025-06-01T10:00:00Z",
+    "categories": [
+      {"id": 5000, "name": "TV"}
+    ]
+  },
+  {
+    "title": "Show.Name.S01.720p.WEB-DL.x264-GROUP2",
+    "guid": "guid-show-s01-720",
+    "indexerId": 2,
+    "indexer": "IPTorrents",
+    "downloadUrl": "http://example.com/download/show2.torrent",
+    "magnetUrl": "magnet:?xt=urn:btih:EEE&dn=Show+Name",
+    "infoHash": "EEE",
+    "seeders": 200,
+    "leechers": 50,
+    "size": 1500000000,
+    "protocol": "torrent",
+    "publishDate": "2025-06-01T09:00:00Z",
+    "categories": [
+      {"id": 5000, "name": "TV"}
+    ]
+  }
+]

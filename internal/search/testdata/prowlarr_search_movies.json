@@ -1,0 +1,53 @@
+[
+  {
+    "title": "The Matrix 2025 1080p WEB-DL x265-GROUP",
+    "guid": "guid-matrix-1",
+    "indexerId": 1,
+    "indexer": "TorrentLeech",
+    "downloadUrl": "http://example.com/download/matrix1.torrent",
+    "magnetUrl": "magnet:?xt=urn:btih:AAA&dn=The+Matrix",
+    "infoHash": "AAA",
+    "seeders": 45,
+    "leechers": 10,
+    "size": 4500000000,
+    "protocol": "torrent",
+    "publishDate": "2025-06-01T12:00:00Z",
+    "categories": [
+      {"id": 2000, "name": "Movies"}
+    ]
+  },
+  {
+    "title": "The Matrix 2025 2160p WEB-DL HEVC DV HDR-GROUP",
+    "guid": "guid-matrix-2",
+    "indexerId": 2,
+    "indexer": "IPTorrents",
+    "downloadUrl": "http://example.com/download/matrix2.torrent",
+    "magnetUrl": "",
+    "infoHash": "BBB",
+    "seeders": 120,
+    "leechers": 30,
+    "size": 15000000000,
+    "protocol": "torrent",
+    "publishDate": "2025-06-01T14:00:00Z",
+    "categories": [
+      {"id": 2000, "name": "Movies"}
+    ]
+  },
+  {
+    "title": "The.Matrix.2025.1080p.BluRay.x264-GROUP",
+    "guid": "guid-matrix-3",
+    "indexerId": 1,
+    "indexer": "TorrentLeech",
+    "downloadUrl": "",
+    "magnetUrl": "magnet:?xt=urn:btih:CCC&dn=The+Matrix",
+    "infoHash": "CCC",
+    "seeders": 5,
+    "leechers": 2,
+    "size": 8000000000,
+    "protocol": "torrent",
+    "publishDate": "2025-06-02T08:00:00Z",
+    "categories": [
+      {"id": 2000, "name": "Movies"}
+    ]
+  }
+]

@@ -1,0 +1,19 @@
+{
+  "id": 42,
+  "tmdbId": 603,
+  "title": "The Matrix",
+  "year": 1999,
+  "overview": "A computer hacker learns about the true nature of reality.",
+  "monitored": true,
+  "minimumAvailability": "announced",
+  "qualityProfileId": 1,
+  "rootFolderPath": "/movies",
+  "folder": "/movies/The Matrix (1999)",
+  "images": [
+    {"coverType": "poster", "url": "http://example.com/poster.jpg"}
+  ],
+  "hasFile": true,
+  "isExisting": false,
+  "isAvailable": true,
+  "status": "released"
+}
