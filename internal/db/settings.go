@@ -157,15 +157,15 @@ func (d *DB) GetAllLibraryCache(ctx context.Context) ([]LibraryCache, error) {
 }
 
 func (d *DB) GetLibraryCacheFetchedAt(ctx context.Context, source string) (string, error) {
-	var fetchedAt string
+	var fetchedAt sql.NullString
 	err := d.db.QueryRowContext(ctx, `
 		SELECT MAX(fetched_at) FROM library_cache WHERE source = ?
 	`, source).Scan(&fetchedAt)
 	if err != nil {
-		if err == sql.ErrNoRows {
-			return "", nil
-		}
 		return "", fmt.Errorf("querying max fetched_at for %s: %w", source, err)
 	}
-	return fetchedAt, nil
+	if !fetchedAt.Valid {
+		return "", nil
+	}
+	return fetchedAt.String, nil
 }
