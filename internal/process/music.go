@@ -233,7 +233,12 @@ func (e *Executor) PickMusicAlbum(ctx context.Context, sr *MusicSearchResult) *M
 	if e.lidarr != nil {
 		mode := e.cfg.MediaTypeMode(model.MediaTypeMusic)
 		if mode == config.ProcessModeFull {
-			trial = !PromptYesNo(ctx, fmt.Sprintf("  Add %s to Lidarr?", ae.Release.ArtistName))
+			artistMBID := ae.Release.ArtistMBID
+			if artistMBID != "" && e.LidarrArtistExists(ctx, artistMBID) {
+				trial = !PromptYesNo(ctx, fmt.Sprintf("  %s is tracked in Lidarr. Add this release to Lidarr?", ae.Release.ArtistName))
+			} else {
+				trial = !PromptYesNo(ctx, fmt.Sprintf("  Add %s to Lidarr?", ae.Release.ArtistName))
+			}
 		}
 	}
 

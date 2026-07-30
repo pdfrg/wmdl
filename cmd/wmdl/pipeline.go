@@ -893,7 +893,13 @@ func runProcessForWeek(ctx context.Context, database *db.DB, cfg *config.Config,
 						if item.MusicResult == nil || len(item.Selected) == 0 {
 							continue
 						}
-						item.Trial = !process.PromptYesNo(ctx, fmt.Sprintf("  Add %s to Lidarr?", item.MusicResult.Event.Release.ArtistName))
+						ae := item.MusicResult.Event.Release
+						artistMBID := ae.ArtistMBID
+						if artistMBID != "" && exec.LidarrArtistExists(ctx, artistMBID) {
+							item.Trial = !process.PromptYesNo(ctx, fmt.Sprintf("  %s is tracked in Lidarr. Add this release to Lidarr?", ae.ArtistName))
+						} else {
+							item.Trial = !process.PromptYesNo(ctx, fmt.Sprintf("  Add %s to Lidarr?", ae.ArtistName))
+						}
 					}
 				}
 			}

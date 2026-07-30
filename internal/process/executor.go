@@ -163,6 +163,14 @@ type HealthCheckResult struct {
 	Warnings []string
 }
 
+func (e *Executor) LidarrArtistExists(ctx context.Context, mbid string) bool {
+	if e.lidarr == nil {
+		return false
+	}
+	artist, err := e.lidarr.GetArtist(ctx, mbid)
+	return err == nil && artist != nil
+}
+
 func (e *Executor) HealthCheck(ctx context.Context, checkProwlarr, checkDownloader, checkLibrary bool) HealthCheckResult {
 	var result HealthCheckResult
 
