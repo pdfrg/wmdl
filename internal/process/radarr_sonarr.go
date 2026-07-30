@@ -1,13 +1,10 @@
 package process
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
 	"strconv"
-	"strings"
 
 	"github.com/pdfrg/wmdl/internal/config"
 	"github.com/pdfrg/wmdl/internal/db"
@@ -445,29 +442,19 @@ func (e *Executor) checkExistingSonarrSeasons(ctx context.Context, series *libra
 }
 
 func (e *Executor) checkCollectionGaps(ctx context.Context, tmdbID int, colTMDBID int, profileID int, searchNow bool) []Phase3Movie {
-	allMovies, err := e.radarr.GetAllMovies(ctx)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "  Radarr error fetching movie list: %v\n", err)
-		fmt.Fprintf(os.Stderr, "    [r] retry  [s] skip collections  [q] quit pipeline\n")
-		fmt.Fprintf(os.Stderr, "  Choose: ")
-		ch := make(chan string, 1)
-		go func() {
-			scanner := bufio.NewScanner(os.Stdin)
-			scanner.Scan()
-			ch <- scanner.Text()
-		}()
-		select {
-		case ans := <-ch:
-			switch strings.ToLower(strings.TrimSpace(ans)) {
-			case "r", "retry":
-				return e.checkCollectionGaps(ctx, tmdbID, colTMDBID, profileID, searchNow)
-			case "q", "quit":
-				return nil
-			}
-		case <-ctx.Done():
+	var allMovies []library.RadarrMovie
+	var err error
+	for {
+		allMovies, err = e.radarr.GetAllMovies(ctx)
+		if err == nil {
+			break
+		}
+		switch PromptRetry(ctx, "Radarr error fetching movie list", err) {
+		case RetryActionRetry:
+			continue
+		case RetryActionSkip, RetryActionQuit:
 			return nil
 		}
-		return nil
 	}
 
 	movieByTMDB := make(map[int]library.RadarrMovie, len(allMovies))
@@ -475,29 +462,18 @@ func (e *Executor) checkCollectionGaps(ctx context.Context, tmdbID int, colTMDBI
 		movieByTMDB[m.TMDBID] = m
 	}
 
-	collections, err := e.radarr.GetCollections(ctx)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "  Radarr collections error: %v\n", err)
-		fmt.Fprintf(os.Stderr, "    [r] retry  [s] skip collections  [q] quit pipeline\n")
-		fmt.Fprintf(os.Stderr, "  Choose: ")
-		ch := make(chan string, 1)
-		go func() {
-			scanner := bufio.NewScanner(os.Stdin)
-			scanner.Scan()
-			ch <- scanner.Text()
-		}()
-		select {
-		case ans := <-ch:
-			switch strings.ToLower(strings.TrimSpace(ans)) {
-			case "r", "retry":
-				return e.checkCollectionGaps(ctx, tmdbID, colTMDBID, profileID, searchNow)
-			case "q", "quit":
-				return nil
-			}
-		case <-ctx.Done():
+	var collections []library.RadarrCollection
+	for {
+		collections, err = e.radarr.GetCollections(ctx)
+		if err == nil {
+			break
+		}
+		switch PromptRetry(ctx, "Radarr collections error", err) {
+		case RetryActionRetry:
+			continue
+		case RetryActionSkip, RetryActionQuit:
 			return nil
 		}
-		return nil
 	}
 
 	var phase3 []Phase3Movie

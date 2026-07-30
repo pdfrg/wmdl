@@ -293,7 +293,7 @@ func (d *DB) updateBookFields(ctx context.Context, q querier, b *model.Book, exi
 	_, err := q.ExecContext(ctx, `
 		UPDATE books SET
 			title = ?, subtitle = ?, hardcover_id = ?,
-			hardcover_slug = ?, olid = ?, isbn10 = ?, asin = ?,
+			hardcover_slug = ?, olid = ?, isbn13 = ?, isbn10 = ?, asin = ?,
 			pages = ?, audio_seconds = ?, description = ?,
 			release_date = ?, release_year = ?,
 			rating = ?, ratings_count = ?, shelvings_count = ?, image_url = ?,
@@ -301,7 +301,7 @@ func (d *DB) updateBookFields(ctx context.Context, q querier, b *model.Book, exi
 			series_id = ?, series_name = ?
 		WHERE id = ?
 	`, b.Title, b.Subtitle, b.HardcoverID,
-		b.HardcoverSlug, b.OLID, b.ISBN10, b.ASIN,
+		b.HardcoverSlug, b.OLID, b.ISBN13, b.ISBN10, b.ASIN,
 		b.Pages, b.AudioSeconds, b.Description,
 		b.ReleaseDate, b.ReleaseYear,
 		b.Rating, b.RatingsCount, b.ShelvingsCount, b.ImageURL,

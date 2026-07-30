@@ -254,7 +254,7 @@ func (p *BookshopProvider) fetchPage(url string) (string, error) {
 	}
 
 	// Wait for Cloudflare challenge to pass (title will be "Just a moment..." initially)
-	if err := waitForBookshopPage(ct); err != nil {
+	if err := waitForRealPage(ct, 90*time.Second); err != nil {
 		return "", fmt.Errorf("page load: %w", err)
 	}
 
@@ -264,33 +264,6 @@ func (p *BookshopProvider) fetchPage(url string) (string, error) {
 	}
 
 	return html, nil
-}
-
-// waitForBookshopPage polls the page title until the real page loads
-// (Cloudflare challenge passes). Times out after 90 seconds.
-func waitForBookshopPage(ct context.Context) error {
-	waitCtx, waitCancel := context.WithTimeout(ct, 90*time.Second)
-	defer waitCancel()
-
-	var title string
-	for i := 0; i < 45; i++ {
-		if err := chromedp.Run(waitCtx, chromedp.Title(&title)); err != nil {
-			return err
-		}
-
-		if !strings.Contains(title, "Just a moment") &&
-			!strings.Contains(title, "503") &&
-			title != "" {
-			return nil
-		}
-
-		select {
-		case <-waitCtx.Done():
-			return waitCtx.Err()
-		case <-time.After(2 * time.Second):
-		}
-	}
-	return fmt.Errorf("timed out waiting for real page, last title: %q", title)
 }
 
 func extractEANFromHref(href string) string {

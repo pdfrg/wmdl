@@ -554,40 +554,6 @@ func (e *Executor) ProcessLibraryDecisions(ctx context.Context, picked []PickedI
 	}
 	var addActions []addAction
 
-	type retryAction int
-	const (
-		retryActionSkip retryAction = iota
-		retryActionRetry
-		retryActionQuit
-	)
-
-	promptRetry := func(label string, err error) retryAction {
-		fmt.Fprintf(os.Stderr, "  %s error: %v\n", label, err)
-		for {
-			fmt.Fprintf(os.Stderr, "    [r] retry  [s] skip this item  [q] quit pipeline\n")
-			fmt.Fprintf(os.Stderr, "  Choose: ")
-			ch := make(chan string, 1)
-			go func() {
-				scanner := bufio.NewScanner(os.Stdin)
-				scanner.Scan()
-				ch <- scanner.Text()
-			}()
-			select {
-			case ans := <-ch:
-				switch strings.ToLower(strings.TrimSpace(ans)) {
-				case "r", "retry":
-					return retryActionRetry
-				case "s", "skip":
-					return retryActionSkip
-				case "q", "quit":
-					return retryActionQuit
-				}
-			case <-ctx.Done():
-				return retryActionQuit
-			}
-		}
-	}
-
 processPicked:
 	for _, item := range picked {
 		mode := e.cfg.MediaTypeMode(item.Event.Title.MediaType)
@@ -608,12 +574,12 @@ processPicked:
 			for {
 				existing, err := e.radarr.Exists(ctx, tmdbID)
 				if err != nil {
-					switch promptRetry("Radarr", err) {
-					case retryActionRetry:
+					switch PromptRetry(ctx, "Radarr", err) {
+					case RetryActionRetry:
 						continue
-					case retryActionSkip:
+					case RetryActionSkip:
 						goto nextPicked
-					case retryActionQuit:
+					case RetryActionQuit:
 						break processPicked
 					}
 				}
@@ -641,12 +607,12 @@ processPicked:
 				var err error
 				lookup, err = e.radarr.Lookup(ctx, tmdbID)
 				if err != nil {
-					switch promptRetry("Radarr lookup", err) {
-					case retryActionRetry:
+					switch PromptRetry(ctx, "Radarr lookup", err) {
+					case RetryActionRetry:
 						continue
-					case retryActionSkip:
+					case RetryActionSkip:
 						goto nextPicked
-					case retryActionQuit:
+					case RetryActionQuit:
 						break processPicked
 					}
 				}
@@ -694,12 +660,12 @@ processPicked:
 			for {
 				existing, err := e.sonarr.Exists(ctx, tvdbID)
 				if err != nil {
-					switch promptRetry("Sonarr", err) {
-					case retryActionRetry:
+					switch PromptRetry(ctx, "Sonarr", err) {
+					case RetryActionRetry:
 						continue
-					case retryActionSkip:
+					case RetryActionSkip:
 						goto nextPicked
-					case retryActionQuit:
+					case RetryActionQuit:
 						break processPicked
 					}
 				}
@@ -745,12 +711,12 @@ processPicked:
 				var err error
 				lookup, err = e.sonarr.Lookup(ctx, tvdbID)
 				if err != nil {
-					switch promptRetry("Sonarr lookup", err) {
-					case retryActionRetry:
+					switch PromptRetry(ctx, "Sonarr lookup", err) {
+					case RetryActionRetry:
 						continue
-					case retryActionSkip:
+					case RetryActionSkip:
 						goto nextPicked
-					case retryActionQuit:
+					case RetryActionQuit:
 						break processPicked
 					}
 				}

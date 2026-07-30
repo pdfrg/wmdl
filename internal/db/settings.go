@@ -162,7 +162,10 @@ func (d *DB) GetLibraryCacheFetchedAt(ctx context.Context, source string) (strin
 		SELECT MAX(fetched_at) FROM library_cache WHERE source = ?
 	`, source).Scan(&fetchedAt)
 	if err != nil {
-		return "", nil
+		if err == sql.ErrNoRows {
+			return "", nil
+		}
+		return "", fmt.Errorf("querying max fetched_at for %s: %w", source, err)
 	}
 	return fetchedAt, nil
 }

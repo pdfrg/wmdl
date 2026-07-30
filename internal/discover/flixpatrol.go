@@ -176,7 +176,7 @@ func (f *FlixPatrolProvider) fetchPage(page int, windowStart, windowEnd time.Tim
 		return nil, fmt.Errorf("navigating to page %d: %w", page, err)
 	}
 
-	if err := waitForRealPage(ct); err != nil {
+	if err := waitForRealPage(ct, 120*time.Second); err != nil {
 		return nil, fmt.Errorf("page %d cloudflare challenge: %w", page, err)
 	}
 

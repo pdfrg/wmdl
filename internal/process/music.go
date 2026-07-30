@@ -1,7 +1,6 @@
 package process
 
 import (
-	"bufio"
 	"context"
 	"fmt"
 	"os"
@@ -280,40 +279,6 @@ func (e *Executor) ProcessMusicAlbumDecisions(ctx context.Context, results []Mus
 
 	fmt.Fprintln(os.Stderr, "\n── Lidarr decisions ──")
 
-	type retryAction int
-	const (
-		retryActionSkip retryAction = iota
-		retryActionRetry
-		retryActionQuit
-	)
-
-	promptRetry := func(label string, err error) retryAction {
-		fmt.Fprintf(os.Stderr, "  %s error: %v\n", label, err)
-		for {
-			fmt.Fprintf(os.Stderr, "    [r] retry  [s] skip this item  [q] quit pipeline\n")
-			fmt.Fprintf(os.Stderr, "  Choose: ")
-			ch := make(chan string, 1)
-			go func() {
-				scanner := bufio.NewScanner(os.Stdin)
-				scanner.Scan()
-				ch <- scanner.Text()
-			}()
-			select {
-			case ans := <-ch:
-				switch strings.ToLower(strings.TrimSpace(ans)) {
-				case "r", "retry":
-					return retryActionRetry
-				case "s", "skip":
-					return retryActionSkip
-				case "q", "quit":
-					return retryActionQuit
-				}
-			case <-ctx.Done():
-				return retryActionQuit
-			}
-		}
-	}
-
 	type albumDecision struct {
 		evt        db.EventWithAlbumRelease
 		artistMbid string
@@ -369,10 +334,10 @@ decisionsLoop:
 		qualProfileID, err := e.lidarr.ResolveQualityProfileID(ctx, e.cfg.Library.Lidarr.QualityProfile)
 		if err != nil {
 			e.log.Warn().Err(err).Msg("resolving quality profile")
-			switch promptRetry("Lidarr add", err) {
-			case retryActionRetry:
+			switch PromptRetry(ctx, "Lidarr add", err) {
+			case RetryActionRetry:
 				goto addRetry
-			case retryActionQuit:
+			case RetryActionQuit:
 				break decisionsLoop
 			}
 			continue
@@ -381,10 +346,10 @@ decisionsLoop:
 		metaProfileID, err := e.lidarr.ResolveMetadataProfileID(ctx, e.cfg.Library.Lidarr.MetadataProfile)
 		if err != nil {
 			e.log.Warn().Err(err).Msg("resolving metadata profile")
-			switch promptRetry("Lidarr add", err) {
-			case retryActionRetry:
+			switch PromptRetry(ctx, "Lidarr add", err) {
+			case RetryActionRetry:
 				goto addRetry
-			case retryActionQuit:
+			case RetryActionQuit:
 				break decisionsLoop
 			}
 			continue
@@ -412,10 +377,10 @@ decisionsLoop:
 		})
 		if err != nil {
 			e.log.Warn().Err(err).Str("artist", ae.Release.ArtistName).Msg("failed adding to Lidarr")
-			switch promptRetry("Lidarr add", err) {
-			case retryActionRetry:
+			switch PromptRetry(ctx, "Lidarr add", err) {
+			case RetryActionRetry:
 				goto addRetry
-			case retryActionQuit:
+			case RetryActionQuit:
 				break decisionsLoop
 			}
 			continue

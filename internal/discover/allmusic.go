@@ -165,7 +165,7 @@ func (p *AllMusicProvider) fetchPageOnce(url string) (string, error) {
 		return "", fmt.Errorf("navigating to %s: %w", url, err)
 	}
 
-	if err := waitForRealPage(ct); err != nil {
+	if err := waitForRealPage(ct, 120*time.Second); err != nil {
 		return "", fmt.Errorf("cloudflare challenge: %w", err)
 	}
 
@@ -175,65 +175,6 @@ func (p *AllMusicProvider) fetchPageOnce(url string) (string, error) {
 	}
 
 	return html, nil
-}
-
-// retry calls fn up to n times with the given delay between attempts.
-func retry(n int, delay time.Duration, fn func() error) error {
-	var lastErr error
-	for i := 0; i < n; i++ {
-		if err := fn(); err != nil {
-			lastErr = err
-			time.Sleep(delay)
-			continue
-		}
-		return nil
-	}
-	return lastErr
-}
-
-// waitForRealPage polls the page title until the real page loads (Cloudflare
-// challenge passes) or a Varnish 503 is detected. Times out after 120 seconds.
-// Title reads are retried on transient errors — the Cloudflare challenge
-// redirect briefly resets the CDP session, and chromedp.Title can return
-// context.Canceled during that window.
-func waitForRealPage(ct context.Context) error {
-	waitCtx, waitCancel := context.WithTimeout(ct, 120*time.Second)
-	defer waitCancel()
-
-	var title string
-	for i := 0; i < 60; i++ {
-		if err := retry(5, 500*time.Millisecond, func() error {
-			return chromedp.Run(waitCtx, chromedp.Title(&title))
-		}); err != nil {
-			return err
-		}
-
-		// Check for Varnish 503 immediately (title contains "503" or "Error")
-		if strings.Contains(title, "503") || strings.Contains(title, "Error") {
-			var html string
-			if err := retry(3, 500*time.Millisecond, func() error {
-				return chromedp.Run(waitCtx, chromedp.OuterHTML("html", &html))
-			}); err == nil {
-				if strings.Contains(html, "503 Backend fetch failed") {
-					return fmt.Errorf("backend fetch failed (503)")
-				}
-			}
-		}
-
-		if !strings.Contains(title, "Just a moment") &&
-			!strings.Contains(title, "503") &&
-			!strings.Contains(title, "Error") &&
-			title != "" {
-			return nil
-		}
-
-		select {
-		case <-waitCtx.Done():
-			return waitCtx.Err()
-		case <-time.After(2 * time.Second):
-		}
-	}
-	return fmt.Errorf("timed out waiting for real page, last title: %q: %w", title, context.DeadlineExceeded)
 }
 
 var allMusicBracketSuffix = strings.NewReplacer(
