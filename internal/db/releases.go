@@ -411,14 +411,8 @@ func (d *DB) PendingEventCountsBySource(ctx context.Context, year, week int) (ma
 		if err := rows.Scan(&source, &mediaType, &n); err != nil {
 			return nil, fmt.Errorf("scan pending release event: %w", err)
 		}
-		for _, s := range strings.Split(source, ",") {
-			s = strings.TrimSpace(s)
-			if s == "" {
-				continue
-			}
-			label := pendingSourceLabel(s, model.MediaType(mediaType))
-			counts[label] += n
-		}
+		label := pendingSourceLabel(source, model.MediaType(mediaType))
+		counts[label] += n
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -439,14 +433,8 @@ func (d *DB) PendingEventCountsBySource(ctx context.Context, year, week int) (ma
 		if err := rows2.Scan(&source, &n); err != nil {
 			return nil, fmt.Errorf("scan pending album event: %w", err)
 		}
-		for _, s := range strings.Split(source, ",") {
-			s = strings.TrimSpace(s)
-			if s == "" {
-				continue
-			}
-			label := pendingSourceLabel(s, model.MediaTypeMusic)
-			counts[label] += n
-		}
+		label := pendingSourceLabel(source, model.MediaTypeMusic)
+		counts[label] += n
 	}
 	if err := rows2.Err(); err != nil {
 		return nil, err
@@ -467,14 +455,8 @@ func (d *DB) PendingEventCountsBySource(ctx context.Context, year, week int) (ma
 		if err := rows3.Scan(&source, &n); err != nil {
 			return nil, fmt.Errorf("scan pending book event: %w", err)
 		}
-		for _, s := range strings.Split(source, ",") {
-			s = strings.TrimSpace(s)
-			if s == "" {
-				continue
-			}
-			label := pendingSourceLabel(s, model.MediaTypeBook)
-			counts[label] += n
-		}
+		label := pendingSourceLabel(source, model.MediaTypeBook)
+		counts[label] += n
 	}
 	if err := rows3.Err(); err != nil {
 		return nil, err
