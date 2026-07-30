@@ -400,6 +400,14 @@ func (c *Config) Validate() error {
 		}
 	}
 
+	if c.Downloader.Type != "" {
+		switch c.Downloader.Type {
+		case "qbittorrent", "transmission", "deluge":
+		default:
+			errs = append(errs, "downloader.type must be one of: qbittorrent, transmission, deluge")
+		}
+	}
+
 	if needsDownloader {
 		switch c.Downloader.Type {
 		case "qbittorrent":

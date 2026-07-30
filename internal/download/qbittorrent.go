@@ -89,11 +89,10 @@ func (q *QbittorrentClient) login(ctx context.Context) error {
 
 func (q *QbittorrentClient) setAuth(req *http.Request) {
 	q.mu.Lock()
-	cookies := q.cookies
-	q.mu.Unlock()
-	for _, c := range cookies {
+	for _, c := range q.cookies {
 		req.AddCookie(c)
 	}
+	q.mu.Unlock()
 }
 
 func (q *QbittorrentClient) Ping(ctx context.Context) error {

@@ -580,7 +580,7 @@ func runProcessForWeek(ctx context.Context, database *db.DB, cfg *config.Config,
 					health = exec.HealthCheck(ctx, needsProwlarr, needsDownloader, needsLibrary)
 					if len(health.Critical) > 0 {
 						fmt.Fprintln(os.Stderr, "  Critical services also unreachable now.")
-						return nil
+						return fmt.Errorf("critical services unreachable")
 					}
 					if len(health.Warnings) > 0 {
 						continue
