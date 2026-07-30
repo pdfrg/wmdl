@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
@@ -38,6 +39,7 @@ type Searcher struct {
 	radarr *library.RadarrClient
 	sonarr *library.SonarrClient
 	lidarr *library.LidarrClient
+	mb     *discover.MBClient
 
 	auto      bool
 	noLibrary bool
@@ -91,6 +93,8 @@ func NewSearcher(ctx context.Context, cfg *config.Config, database *db.DB, opts 
 	if cfg.Library.Lidarr.URL != "" && cfg.Library.Lidarr.APIKey != "" {
 		s.lidarr = library.NewLidarrClient(cfg.Library.Lidarr.URL, cfg.Library.Lidarr.APIKey, cfg.Library.Lidarr.Timeout)
 	}
+
+	s.mb = discover.NewMBClient()
 
 	return s, nil
 }
@@ -307,20 +311,70 @@ func (s *Searcher) SearchMusic(ctx context.Context, query string) error {
 		return nil
 	}
 
+	// ── Determine Lidarr intent ──
+	trial := false
+	var artistMBID, artistName string
+
+	if !s.noLibrary && s.lidarr != nil {
+		mbCtx, mbCancel := context.WithTimeout(ctx, 15*time.Second)
+		defer mbCancel()
+
+		if parts := strings.SplitN(query, " - ", 2); len(parts) == 2 {
+			aName := strings.TrimSpace(parts[0])
+			albumTitle := strings.TrimSpace(parts[1])
+			rg, err := s.mb.SearchReleaseGroup(mbCtx, albumTitle, aName)
+			if err == nil && rg != nil && rg.ArtistMBID != "" {
+				artistMBID = rg.ArtistMBID
+				artistName = rg.ArtistName
+			}
+		} else {
+			rg, err := s.mb.SearchReleaseGroupByAlbum(mbCtx, query)
+			if err == nil && rg != nil && rg.ArtistMBID != "" {
+				artistMBID = rg.ArtistMBID
+				artistName = rg.ArtistName
+			}
+		}
+
+		if artistMBID != "" {
+			trial = !PromptYesNo(ctx, fmt.Sprintf("  Add %s to Lidarr?", artistName))
+		} else {
+			trial = true
+		}
+	}
+
 	category := s.cfg.Downloader.Categories.Music
 	if category == "" {
 		category = "Music"
 	}
+	if trial {
+		if cat := s.cfg.Downloader.Categories.MusicTrial; cat != "" {
+			category = cat
+		}
+	}
+
 	if err := s.downloadReleases(ctx, chosen, category); err != nil {
 		return err
 	}
 
+	// ── Library integration ──
 	if s.noLibrary || s.lidarr == nil {
-		fmt.Fprintf(os.Stderr, "  Downloaded. Skipping Lidarr add.\n")
 		return nil
 	}
 
-	fmt.Fprintf(os.Stderr, "  Lidarr add requires MusicBrainz ID. Use 'wmdl add music' to add to Lidarr.\n")
+	if artistMBID == "" {
+		fmt.Fprintf(os.Stderr, "  Could not find MusicBrainz ID. Use 'wmdl search music \"Artist - Album\"' or 'wmdl add music --mbid <id>' to add to Lidarr.\n")
+		return nil
+	}
+
+	if trial {
+		s.log.Debug().Str("artist", artistName).Msg("trial album, skipping Lidarr add")
+		return nil
+	}
+
+	if err := s.addToLidarr(ctx, artistMBID, artistName); err != nil {
+		s.log.Warn().Err(err).Msg("adding to Lidarr")
+	}
+
 	return nil
 }
 
@@ -742,6 +796,97 @@ func resolveRadarrProfileID(ctx context.Context, r *library.RadarrClient, name s
 
 func resolveSonarrProfileID(ctx context.Context, s *library.SonarrClient, name string) (int, error) {
 	profiles, err := s.GetQualityProfiles(ctx)
+	if err != nil {
+		return 0, err
+	}
+	for _, p := range profiles {
+		if p.Name == name {
+			return p.ID, nil
+		}
+	}
+	if len(profiles) > 0 {
+		return profiles[0].ID, nil
+	}
+	return 1, nil
+}
+
+// ─── Lidarr helpers ───────────────────────────────────────
+
+func (s *Searcher) addToLidarr(ctx context.Context, artistMBID, artistName string) error {
+	existing, err := s.lidarr.GetArtist(ctx, artistMBID)
+	if err != nil {
+		return fmt.Errorf("checking Lidarr: %w", err)
+	}
+	if existing != nil {
+		fmt.Fprintf(os.Stderr, "  Already in Lidarr: %s\n", existing.ArtistName)
+		return nil
+	}
+
+	if !s.auto && !PromptYesNo(ctx, fmt.Sprintf("  Add %s to Lidarr?", artistName)) {
+		fmt.Fprintf(os.Stderr, "  Skipped Lidarr add.\n")
+		return nil
+	}
+
+	profileID, err := resolveLidarrProfileID(ctx, s.lidarr, s.cfg.Library.Lidarr.QualityProfile)
+	if err != nil {
+		return fmt.Errorf("resolving quality profile: %w", err)
+	}
+
+	metaProfileID, err := resolveLidarrMetadataProfileID(ctx, s.lidarr, s.cfg.Library.Lidarr.MetadataProfile)
+	if err != nil {
+		return fmt.Errorf("resolving metadata profile: %w", err)
+	}
+
+	rootFolder := s.cfg.Library.Lidarr.RootFolder
+	if rootFolder == "" {
+		return fmt.Errorf("lidarr root folder not configured")
+	}
+
+	monitor := s.cfg.Library.Lidarr.Monitor
+	if monitor == "" {
+		monitor = "all"
+	}
+
+	_, err = s.lidarr.AddArtist(ctx, artistMBID, artistName, library.AddArtistOptions{
+		Monitored:         true,
+		MonitorNewAlbums:  s.cfg.Library.Lidarr.MonitorNewAlbums,
+		QualityProfileID:  profileID,
+		MetadataProfileID: metaProfileID,
+		RootFolderPath:    rootFolder,
+		Monitor:           monitor,
+		SearchNow:         false,
+	})
+	if err != nil {
+		return fmt.Errorf("adding to Lidarr: %w", err)
+	}
+	fmt.Fprintf(os.Stderr, "  ✓ Added to Lidarr: %s\n", artistName)
+	return nil
+}
+
+func resolveLidarrProfileID(ctx context.Context, l *library.LidarrClient, name string) (int, error) {
+	if name == "" {
+		return 1, nil
+	}
+	profiles, err := l.GetQualityProfiles(ctx)
+	if err != nil {
+		return 0, err
+	}
+	for _, p := range profiles {
+		if p.Name == name {
+			return p.ID, nil
+		}
+	}
+	if len(profiles) > 0 {
+		return profiles[0].ID, nil
+	}
+	return 1, nil
+}
+
+func resolveLidarrMetadataProfileID(ctx context.Context, l *library.LidarrClient, name string) (int, error) {
+	if name == "" {
+		return 1, nil
+	}
+	profiles, err := l.GetMetadataProfiles(ctx)
 	if err != nil {
 		return 0, err
 	}
