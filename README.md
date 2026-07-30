@@ -70,6 +70,7 @@ album and book covers.
 - Notifier — Gotify (recommended), Slack, Discord, or ntfy
 - Hardcover API key — book metadata. Strongly recommended, but not strictly required, OpenLibrary fallback available.
 Account sign-up [here](https://hardcover.app/login).  API key [here](https://hardcover.app/account/api).
+- OMDB API key — IMDb rating, Metacritic score, awards, box office, and cast/crew for movies and TV. Get a free key [here](https://www.omdbapi.com/apikey.aspx).
 
 ## Documentation
 
