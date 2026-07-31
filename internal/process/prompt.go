@@ -32,6 +32,39 @@ const (
 	RetryActionQuit
 )
 
+// PromptTwo presents a two-option choice. Matches on first letter (case-insensitive)
+// or the full option string. Returns optA/optB, or defaultOpt on empty/ctx cancel.
+func PromptTwo(ctx context.Context, prompt, optA, optB, defaultOpt string) string {
+	keyA := strings.ToLower(string(optA[0]))
+	keyB := strings.ToLower(string(optB[0]))
+	lowA := strings.ToLower(optA)
+	lowB := strings.ToLower(optB)
+	for {
+		fmt.Print(prompt, " ")
+		ch := make(chan string, 1)
+		go func() {
+			scanner := bufio.NewScanner(os.Stdin)
+			scanner.Scan()
+			ch <- scanner.Text()
+		}()
+		select {
+		case ans := <-ch:
+			ans = strings.ToLower(strings.TrimSpace(ans))
+			if ans == "" {
+				return defaultOpt
+			}
+			if ans == keyA || ans == lowA {
+				return optA
+			}
+			if ans == keyB || ans == lowB {
+				return optB
+			}
+		case <-ctx.Done():
+			return defaultOpt
+		}
+	}
+}
+
 func PromptRetry(ctx context.Context, label string, err error) RetryAction {
 	fmt.Fprintf(os.Stderr, "  %s error: %v\n", label, err)
 	for {
