@@ -433,7 +433,7 @@ func (e *Executor) processPhase3BatchItem(ctx context.Context, item *BatchItem) 
 		return
 	}
 
-	if sr.Event.Title.MediaType == model.MediaTypeMovie && sr.Event.Title.TmdbID > 0 {
+	if sr.Event.Title.MediaType == model.MediaTypeMovie && sr.Event.Title.TmdbID > 0 && !e.SkipRadarr() {
 		existing, err := e.radarr.Exists(ctx, sr.Event.Title.TmdbID)
 		if err == nil && existing == nil {
 			profileID, err := resolveRadarrProfileID(ctx, e.radarr, e.cfg.Library.Radarr.QualityProfile)
@@ -487,6 +487,9 @@ func (e *Executor) handleSkipLibrary(ctx context.Context, evt db.EventWithTitle,
 	}
 	switch evt.Title.MediaType {
 	case model.MediaTypeTV, model.MediaTypeAnime:
+		if e.SkipSonarr() {
+			return
+		}
 		if tvdbID := evt.Title.TvdbID; tvdbID > 0 {
 			existing, err := e.sonarr.Exists(ctx, tvdbID)
 			if err != nil {
@@ -515,6 +518,9 @@ func (e *Executor) handleSkipLibrary(ctx context.Context, evt db.EventWithTitle,
 			}
 		}
 	case model.MediaTypeMovie:
+		if e.SkipRadarr() {
+			return
+		}
 		if tmdbID := evt.Title.TmdbID; tmdbID > 0 {
 			existing, err := e.radarr.Exists(ctx, tmdbID)
 			if err != nil {

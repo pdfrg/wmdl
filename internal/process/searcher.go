@@ -819,5 +819,3 @@ func resolveSonarrProfileID(ctx context.Context, s *library.SonarrClient, name s
 	}
 	return 1, nil
 }
-
-

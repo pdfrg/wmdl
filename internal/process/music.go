@@ -229,7 +229,7 @@ func (e *Executor) PickMusicAlbum(ctx context.Context, sr *MusicSearchResult) *M
 	}
 
 	trial := false
-	if e.lidarr != nil {
+	if e.lidarr != nil && !e.SkipLidarr() {
 		mode := e.cfg.MediaTypeMode(model.MediaTypeMusic)
 		if mode == config.ProcessModeFull {
 			artistMBID := ae.Release.ArtistMBID
@@ -270,7 +270,7 @@ func (e *Executor) PickMusicAlbum(ctx context.Context, sr *MusicSearchResult) *M
 }
 
 func (e *Executor) ProcessMusicAlbumDecisions(ctx context.Context, results []MusicAlbumResult) {
-	if len(results) == 0 || e.lidarr == nil {
+	if len(results) == 0 || e.lidarr == nil || e.SkipLidarr() {
 		return
 	}
 
@@ -410,7 +410,7 @@ func formatOverview(text string, maxWidth int) []string {
 // handleSkipLibraryMusic is called when a music album is skipped during
 // interactive mode but the user may still want to add the artist to Lidarr.
 func (e *Executor) handleSkipLibraryMusic(ctx context.Context, ae db.EventWithAlbumRelease) {
-	if e.lidarr == nil {
+	if e.lidarr == nil || e.SkipLidarr() {
 		return
 	}
 	mode := e.cfg.MediaTypeMode(model.MediaTypeMusic)

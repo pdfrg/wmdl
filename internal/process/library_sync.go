@@ -12,6 +12,9 @@ import (
 )
 
 func (e *Executor) PreWarmRadarr(ctx context.Context) {
+	if e.SkipRadarr() {
+		return
+	}
 	if e.tryLoadRadarrCache(ctx) {
 		return
 	}
@@ -80,6 +83,9 @@ func (e *Executor) updateRadarrCache(ctx context.Context, movies []library.Radar
 }
 
 func (e *Executor) PreWarmSonarr(ctx context.Context) {
+	if e.SkipSonarr() {
+		return
+	}
 	if e.tryLoadSonarrCache(ctx) {
 		return
 	}
@@ -148,7 +154,7 @@ func (e *Executor) updateSonarrCache(ctx context.Context, series []library.Sonar
 }
 
 func (e *Executor) PreWarmLidarr(ctx context.Context) {
-	if e.lidarr == nil {
+	if e.lidarr == nil || e.SkipLidarr() {
 		return
 	}
 	if e.tryLoadLidarrCache(ctx) {
@@ -243,7 +249,7 @@ func (e *Executor) updateLidarrCache(ctx context.Context, artists []library.Lida
 }
 
 func (e *Executor) PreWarmBookClient(ctx context.Context) {
-	if e.bookClient == nil {
+	if e.bookClient == nil || e.SkipBook() {
 		return
 	}
 	if e.tryLoadBookClientCache(ctx) {

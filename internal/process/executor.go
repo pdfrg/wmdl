@@ -27,6 +27,37 @@ const (
 
 var ErrAbort = errors.New("pipeline aborted by user")
 
+// LibraryScope describes which library services are needed for the current run,
+// based on the approved items this week and each media type's processing mode.
+type LibraryScope struct {
+	Radarr bool
+	Sonarr bool
+	Lidarr bool
+	Book   bool
+}
+
+// LibrarySkips tracks which library services were disabled for this run.
+// A service is skipped when it is not needed at all or when it failed the
+// health check and the user chose to proceed without it.
+type LibrarySkips struct {
+	Radarr bool
+	Sonarr bool
+	Lidarr bool
+	Book   bool
+}
+
+// ComputeLibrarySkips returns which library services to skip given the services
+// actually needed for this run (scope) and the services that failed the health
+// check (down, keyed by "radarr"/"sonarr"/"lidarr"/"book").
+func ComputeLibrarySkips(scope LibraryScope, down map[string]bool) LibrarySkips {
+	return LibrarySkips{
+		Radarr: !scope.Radarr || down["radarr"],
+		Sonarr: !scope.Sonarr || down["sonarr"],
+		Lidarr: !scope.Lidarr || down["lidarr"],
+		Book:   !scope.Book || down["book"],
+	}
+}
+
 type Phase3Movie struct {
 	Title     string
 	Year      int
@@ -66,6 +97,7 @@ type Executor struct {
 	lidarr     *library.LidarrClient
 	bookClient library.BookClient
 	hc         *discover.HardcoverClient
+	skips      LibrarySkips
 
 	Unfound               []string
 	Skipped               []string
@@ -159,8 +191,9 @@ func createDownloadClient(logger zerolog.Logger, cfg *config.Config) download.Cl
 }
 
 type HealthCheckResult struct {
-	Critical []string
-	Warnings []string
+	Critical    []string
+	Warnings    []string
+	DownLibrary map[string]bool // library service keys: radarr, sonarr, lidarr, book
 }
 
 func (e *Executor) LidarrArtistExists(ctx context.Context, mbid string) bool {
@@ -171,8 +204,18 @@ func (e *Executor) LidarrArtistExists(ctx context.Context, mbid string) bool {
 	return err == nil && artist != nil
 }
 
-func (e *Executor) HealthCheck(ctx context.Context, checkProwlarr, checkDownloader, checkLibrary bool) HealthCheckResult {
+func (e *Executor) SetLibrarySkips(s LibrarySkips) {
+	e.skips = s
+}
+
+func (e *Executor) SkipRadarr() bool { return e.skips.Radarr }
+func (e *Executor) SkipSonarr() bool { return e.skips.Sonarr }
+func (e *Executor) SkipLidarr() bool { return e.skips.Lidarr }
+func (e *Executor) SkipBook() bool   { return e.skips.Book }
+
+func (e *Executor) HealthCheck(ctx context.Context, checkProwlarr, checkDownloader bool, scope LibraryScope) HealthCheckResult {
 	var result HealthCheckResult
+	result.DownLibrary = make(map[string]bool)
 
 	if checkProwlarr {
 		if err := e.prowl.Ping(ctx); err != nil {
@@ -184,26 +227,28 @@ func (e *Executor) HealthCheck(ctx context.Context, checkProwlarr, checkDownload
 			result.Critical = append(result.Critical, fmt.Sprintf("Downloader (%s): %v", e.cfg.Downloader.Type, err))
 		}
 	}
-	if checkLibrary {
-		if e.radarr != nil {
-			if err := e.radarr.Ping(ctx); err != nil {
-				result.Warnings = append(result.Warnings, fmt.Sprintf("Radarr: %v", err))
-			}
+	if scope.Radarr && e.radarr != nil {
+		if err := e.radarr.Ping(ctx); err != nil {
+			result.Warnings = append(result.Warnings, fmt.Sprintf("Radarr: %v", err))
+			result.DownLibrary["radarr"] = true
 		}
-		if e.sonarr != nil {
-			if err := e.sonarr.Ping(ctx); err != nil {
-				result.Warnings = append(result.Warnings, fmt.Sprintf("Sonarr: %v", err))
-			}
+	}
+	if scope.Sonarr && e.sonarr != nil {
+		if err := e.sonarr.Ping(ctx); err != nil {
+			result.Warnings = append(result.Warnings, fmt.Sprintf("Sonarr: %v", err))
+			result.DownLibrary["sonarr"] = true
 		}
-		if e.lidarr != nil {
-			if err := e.lidarr.Ping(ctx); err != nil {
-				result.Warnings = append(result.Warnings, fmt.Sprintf("Lidarr: %v", err))
-			}
+	}
+	if scope.Lidarr && e.lidarr != nil {
+		if err := e.lidarr.Ping(ctx); err != nil {
+			result.Warnings = append(result.Warnings, fmt.Sprintf("Lidarr: %v", err))
+			result.DownLibrary["lidarr"] = true
 		}
-		if e.bookClient != nil {
-			if err := e.bookClient.Ping(ctx); err != nil {
-				result.Warnings = append(result.Warnings, fmt.Sprintf("LazyLibrarian: %v", err))
-			}
+	}
+	if scope.Book && e.bookClient != nil {
+		if err := e.bookClient.Ping(ctx); err != nil {
+			result.Warnings = append(result.Warnings, fmt.Sprintf("LazyLibrarian: %v", err))
+			result.DownLibrary["book"] = true
 		}
 	}
 

@@ -283,13 +283,34 @@ func runBacklogBatch(ctx context.Context, database *db.DB, cfg *config.Config, t
 	modes := cfg.UsedModes()
 	needsProwlarr := modes[config.ProcessModeFull] || modes[config.ProcessModeProwlarrGrab]
 	needsDownloader := modes[config.ProcessModeFull]
-	needsLibrary := modes[config.ProcessModeFull] || modes[config.ProcessModeArr] || modes[config.ProcessModeAuto] || modes[config.ProcessModeYolo]
 	hasSearchable := len(allEvents) > 0
 	hasAlbums := len(allAlbumEvents) > 0
 	hasBooks := len(allBookEvents) > 0
 	hasAnimeAiring := len(allAnimeAiring) > 0
 
-	if !needsLibrary {
+	// Determine which library services are actually needed, based on the
+	// backlog items present and each media type's processing mode.
+	hasMovies := false
+	hasTVAnime := false
+	for _, ev := range allEvents {
+		switch ev.Title.MediaType {
+		case model.MediaTypeMovie:
+			hasMovies = true
+		case model.MediaTypeTV, model.MediaTypeAnime:
+			hasTVAnime = true
+		}
+	}
+	needsLibMode := func(m string) bool {
+		return m == config.ProcessModeFull || m == config.ProcessModeArr || m == config.ProcessModeAuto || m == config.ProcessModeYolo
+	}
+	scope := process.LibraryScope{
+		Radarr: hasMovies && needsLibMode(cfg.MediaTypeMode(model.MediaTypeMovie)),
+		Sonarr: (hasTVAnime || hasAnimeAiring) && (needsLibMode(cfg.MediaTypeMode(model.MediaTypeTV)) || needsLibMode(cfg.MediaTypeMode(model.MediaTypeAnime))),
+		Lidarr: hasAlbums && needsLibMode(cfg.MediaTypeMode(model.MediaTypeMusic)),
+		Book:   hasBooks && needsLibMode(cfg.MediaTypeMode(model.MediaTypeBook)),
+	}
+
+	if !scope.Sonarr {
 		allAnimeAiring = nil
 		hasAnimeAiring = false
 	}
@@ -325,8 +346,7 @@ func runBacklogBatch(ctx context.Context, database *db.DB, cfg *config.Config, t
 	}
 
 	// ─── Health check (single pass, shared across all weeks) ──
-	health := exec.HealthCheck(ctx, needsProwlarr, needsDownloader, needsLibrary)
-	skipLibrary := !needsLibrary
+	health := exec.HealthCheck(ctx, needsProwlarr, needsDownloader, scope)
 
 	if len(health.Critical) > 0 || len(health.Warnings) > 0 {
 		fmt.Fprintln(os.Stderr, "── Service health check ──")
@@ -357,7 +377,7 @@ func runBacklogBatch(ctx context.Context, database *db.DB, cfg *config.Config, t
 			case ans := <-ch:
 				switch strings.ToLower(strings.TrimSpace(ans)) {
 				case "r", "retry":
-					health = exec.HealthCheck(ctx, needsProwlarr, needsDownloader, needsLibrary)
+					health = exec.HealthCheck(ctx, needsProwlarr, needsDownloader, scope)
 					if len(health.Critical) == 0 && len(health.Warnings) == 0 {
 						fmt.Fprintln(os.Stderr, "  All services OK")
 						break
@@ -381,7 +401,7 @@ func runBacklogBatch(ctx context.Context, database *db.DB, cfg *config.Config, t
 			return fmt.Errorf("library services unreachable")
 		}
 		for {
-			fmt.Fprintf(os.Stderr, "  [r] retry  [p] proceed without library management  [q] quit\n")
+			fmt.Fprintf(os.Stderr, "  [r] retry  [p] proceed without unreachable services  [q] quit\n")
 			fmt.Fprintf(os.Stderr, "  Choose: ")
 			ch := make(chan string, 1)
 			go func() {
@@ -393,7 +413,7 @@ func runBacklogBatch(ctx context.Context, database *db.DB, cfg *config.Config, t
 			case ans := <-ch:
 				switch strings.ToLower(strings.TrimSpace(ans)) {
 				case "r", "retry":
-					health = exec.HealthCheck(ctx, needsProwlarr, needsDownloader, needsLibrary)
+					health = exec.HealthCheck(ctx, needsProwlarr, needsDownloader, scope)
 					if len(health.Critical) > 0 {
 						fmt.Fprintln(os.Stderr, "  Critical services also unreachable now.")
 						return nil
@@ -403,7 +423,7 @@ func runBacklogBatch(ctx context.Context, database *db.DB, cfg *config.Config, t
 					}
 					fmt.Fprintln(os.Stderr, "  All services OK")
 				case "p", "proceed":
-					skipLibrary = true
+					// Proceed even though some library services are unreachable.
 				case "q", "quit":
 					return nil
 				}
@@ -414,30 +434,43 @@ func runBacklogBatch(ctx context.Context, database *db.DB, cfg *config.Config, t
 		}
 	}
 
+	// Derive per-service skips from the final health state (retries may have
+	// recovered services). Only unreachable services are skipped.
+	skips := process.ComputeLibrarySkips(scope, health.DownLibrary)
+	exec.SetLibrarySkips(skips)
+
 	// ─── Pre-warm caches (shared across all weeks) ────────────
 	warmCtx, warmCancel := context.WithCancel(ctx)
 	defer warmCancel()
 
 	preWarmDone := make(chan struct{}, 4)
-	if !skipLibrary {
-		go func() { exec.PreWarmRadarr(warmCtx); preWarmDone <- struct{}{} }()
-		go func() { exec.PreWarmSonarr(warmCtx); preWarmDone <- struct{}{} }()
-		if hasAlbums {
-			go func() { exec.PreWarmLidarr(warmCtx); preWarmDone <- struct{}{} }()
-		} else {
-			preWarmDone <- struct{}{}
-		}
-		if hasBooks && exec.BookClientAvailable() {
-			go func() { defer func() { preWarmDone <- struct{}{} }(); exec.PreWarmBookClient(warmCtx) }()
-		} else {
-			preWarmDone <- struct{}{}
-		}
-		fmt.Fprintf(os.Stderr, "  Pre-warming library data in background...\n")
+	warmRadarr := !skips.Radarr
+	warmSonarr := !skips.Sonarr
+	warmLidarr := !skips.Lidarr && hasAlbums
+	warmBook := !skips.Book && hasBooks && exec.BookClientAvailable()
+
+	if warmRadarr {
+		go func() { defer func() { preWarmDone <- struct{}{} }(); exec.PreWarmRadarr(warmCtx) }()
 	} else {
 		preWarmDone <- struct{}{}
+	}
+	if warmSonarr {
+		go func() { defer func() { preWarmDone <- struct{}{} }(); exec.PreWarmSonarr(warmCtx) }()
+	} else {
 		preWarmDone <- struct{}{}
+	}
+	if warmLidarr {
+		go func() { defer func() { preWarmDone <- struct{}{} }(); exec.PreWarmLidarr(warmCtx) }()
+	} else {
 		preWarmDone <- struct{}{}
+	}
+	if warmBook {
+		go func() { defer func() { preWarmDone <- struct{}{} }(); exec.PreWarmBookClient(warmCtx) }()
+	} else {
 		preWarmDone <- struct{}{}
+	}
+	if warmRadarr || warmSonarr || warmLidarr || warmBook {
+		fmt.Fprintf(os.Stderr, "  Pre-warming library data in background...\n")
 	}
 
 	// ─── Batch search phase (all weeks at once) ───────────────
@@ -450,7 +483,7 @@ func runBacklogBatch(ctx context.Context, database *db.DB, cfg *config.Config, t
 	searched := 0
 	if cfg.ProcessMode == config.ProcessModeBatch || cfg.ProcessMode == "" {
 		var phase3Candidates []process.Phase3Candidate
-		if needsLibrary && (hasSearchable || hasAnimeAiring) {
+		if (scope.Radarr || scope.Sonarr) && (hasSearchable || hasAnimeAiring) {
 			var allForPhase3 []db.EventWithTitle
 			for _, ev := range allEvents {
 				m := cfg.MediaTypeMode(ev.Title.MediaType)
@@ -481,7 +514,7 @@ func runBacklogBatch(ctx context.Context, database *db.DB, cfg *config.Config, t
 		}
 
 		bookPhase3Count := 0
-		if hasBooks && exec.BookClientAvailable() && exec.HCClientAvailable() {
+		if hasBooks && exec.BookClientAvailable() && exec.HCClientAvailable() && !skips.Book {
 			bm := cfg.MediaTypeMode(model.MediaTypeBook)
 			if bm == config.ProcessModeFull || bm == config.ProcessModeProwlarrGrab {
 				fmt.Fprintf(os.Stderr, "  Checking book series for missing entries...\n")
@@ -629,7 +662,7 @@ func runBacklogBatch(ctx context.Context, database *db.DB, cfg *config.Config, t
 			}
 		}
 
-		if needsLibrary && (hasSearchable || hasAnimeAiring) && len(exec.Phase3SearchPhase) > 0 {
+		if (scope.Radarr || scope.Sonarr) && (hasSearchable || hasAnimeAiring) && len(exec.Phase3SearchPhase) > 0 {
 			var remaining []process.Phase3SearchEntry
 			for _, entry := range exec.Phase3SearchPhase {
 				c := entry.Candidate
@@ -662,7 +695,7 @@ func runBacklogBatch(ctx context.Context, database *db.DB, cfg *config.Config, t
 			exec.Phase3SearchPhase = remaining
 		}
 
-		if hasBooks && exec.BookClientAvailable() && exec.HCClientAvailable() {
+		if hasBooks && exec.BookClientAvailable() && exec.HCClientAvailable() && !skips.Book {
 			bm := cfg.MediaTypeMode(model.MediaTypeBook)
 			if bm == config.ProcessModeFull || bm == config.ProcessModeProwlarrGrab {
 				for _, sr := range exec.BookPhase3SearchPhase {
@@ -706,7 +739,7 @@ func runBacklogBatch(ctx context.Context, database *db.DB, cfg *config.Config, t
 	}
 
 	// ─── Library decisions (single pass) ──────────────────────
-	if !skipLibrary {
+	if warmRadarr || warmSonarr || warmLidarr || warmBook {
 		if hasSearchable || hasAnimeAiring || hasAlbums || (hasBooks && exec.BookClientAvailable()) {
 			fmt.Fprintf(os.Stderr, "  Waiting for library data...\n")
 			<-preWarmDone
@@ -714,53 +747,53 @@ func runBacklogBatch(ctx context.Context, database *db.DB, cfg *config.Config, t
 			<-preWarmDone
 			<-preWarmDone
 		}
+	}
 
-		if len(picked) > 0 {
-			exec.ProcessLibraryDecisions(ctx, picked)
+	if len(picked) > 0 {
+		exec.ProcessLibraryDecisions(ctx, picked)
+	}
+	if len(albumResults) > 0 {
+		exec.ProcessMusicAlbumDecisions(ctx, albumResults)
+	}
+	if hasBooks && exec.BookClientAvailable() && !skips.Book {
+		bm := cfg.MediaTypeMode(model.MediaTypeBook)
+		var be []db.EventWithBook
+		if bm == config.ProcessModeArr || bm == config.ProcessModeAuto || bm == config.ProcessModeYolo || bm == config.ProcessModeFull {
+			be = allBookEvents
+		} else if len(bookDownloadedInfo) > 0 {
+			be = allBookEvents
 		}
-		if len(albumResults) > 0 {
-			exec.ProcessMusicAlbumDecisions(ctx, albumResults)
-		}
-		if hasBooks && exec.BookClientAvailable() {
-			bm := cfg.MediaTypeMode(model.MediaTypeBook)
-			var be []db.EventWithBook
-			if bm == config.ProcessModeArr || bm == config.ProcessModeAuto || bm == config.ProcessModeYolo || bm == config.ProcessModeFull {
-				be = allBookEvents
-			} else if len(bookDownloadedInfo) > 0 {
-				be = allBookEvents
-			}
-			if len(be) > 0 {
-				exec.ProcessBookLibraryDecisions(ctx, be, bookDownloadedInfo)
-			}
+		if len(be) > 0 {
+			exec.ProcessBookLibraryDecisions(ctx, be, bookDownloadedInfo)
 		}
 	}
 
 	// ─── Phase 3 pickers ──────────────────────────────────────
-	if !skipLibrary {
-		exec.ProcessPhase3Pickers(ctx)
-	}
+	exec.ProcessPhase3Pickers(ctx)
 
 	// ─── Anime airing items ───────────────────────────────────
-	for _, ae := range allAnimeAiring {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
+	if !skips.Sonarr {
+		for _, ae := range allAnimeAiring {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			default:
+			}
+			m := cfg.MediaTypeMode(ae.Title.MediaType)
+			searchNow := m == config.ProcessModeArr || m == config.ProcessModeAuto || m == config.ProcessModeYolo
+			series, err := exec.AddAiringAnimeToSonarr(ctx, ae, searchNow)
+			if err != nil {
+				log.Warn().Err(err).Str("title", ae.Title.Title).Msg("error adding airing anime to Sonarr")
+				continue
+			}
+			if series == nil {
+				continue
+			}
+			if err := database.UpdateReleaseEventStatus(ctx, ae.Event.ID, model.StatusDownloaded); err != nil {
+				log.Warn().Err(err).Msg("updating anime event status")
+			}
+			exec.SearchAiringAnimeEarlierSeasons(ctx, ae, series)
 		}
-		m := cfg.MediaTypeMode(ae.Title.MediaType)
-		searchNow := m == config.ProcessModeArr || m == config.ProcessModeAuto || m == config.ProcessModeYolo
-		series, err := exec.AddAiringAnimeToSonarr(ctx, ae, searchNow)
-		if err != nil {
-			log.Warn().Err(err).Str("title", ae.Title.Title).Msg("error adding airing anime to Sonarr")
-			continue
-		}
-		if series == nil {
-			continue
-		}
-		if err := database.UpdateReleaseEventStatus(ctx, ae.Event.ID, model.StatusDownloaded); err != nil {
-			log.Warn().Err(err).Msg("updating anime event status")
-		}
-		exec.SearchAiringAnimeEarlierSeasons(ctx, ae, series)
 	}
 
 	// ─── Book interactive (non-batch mode) ────────────────────
@@ -768,7 +801,7 @@ func runBacklogBatch(ctx context.Context, database *db.DB, cfg *config.Config, t
 		bm := cfg.MediaTypeMode(model.MediaTypeBook)
 		if bm == config.ProcessModeFull {
 			interactiveInfo := exec.ProcessBooks(ctx, allBookEvents)
-			if exec.BookClientAvailable() {
+			if exec.BookClientAvailable() && !skips.Book {
 				var be []db.EventWithBook
 				if bm == config.ProcessModeArr || bm == config.ProcessModeAuto || bm == config.ProcessModeYolo || bm == config.ProcessModeFull {
 					be = allBookEvents

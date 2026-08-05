@@ -24,7 +24,7 @@ func (e *Executor) ProcessBookLibraryDecisions(ctx context.Context, events []db.
 	mode := e.cfg.MediaTypeMode(model.MediaTypeBook)
 	autoConfirm := mode == config.ProcessModeAuto || mode == config.ProcessModeYolo
 
-	if e.bookClient == nil {
+	if e.bookClient == nil || e.SkipBook() {
 		return
 	}
 
@@ -105,7 +105,7 @@ func (e *Executor) applyBookFormatDecisions(ctx context.Context, title, bookID s
 }
 
 func (e *Executor) ComputeBookPhase3Candidates(ctx context.Context, events []db.EventWithBook) {
-	if e.hc == nil || e.bookClient == nil {
+	if e.hc == nil || e.bookClient == nil || e.SkipBook() {
 		return
 	}
 	seenSeries := make(map[string]bool)
@@ -179,7 +179,7 @@ func (e *Executor) ComputeBookPhase3Candidates(ctx context.Context, events []db.
 
 func (e *Executor) processPhase3BookBatchItem(ctx context.Context, item *BatchItem) {
 	sr := item.BookResult
-	if sr == nil {
+	if sr == nil || e.SkipBook() {
 		return
 	}
 	ae := sr.Event

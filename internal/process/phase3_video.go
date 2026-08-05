@@ -22,7 +22,7 @@ func (e *Executor) ComputePhase3Candidates(ctx context.Context, events []db.Even
 	var candidates []Phase3Candidate
 
 	var radarrCollections []library.RadarrCollection
-	if e.cfg.CheckCollections && e.radarr != nil {
+	if !e.SkipRadarr() && e.cfg.CheckCollections && e.radarr != nil {
 		var err error
 		radarrCollections, err = e.radarr.GetCollections(ctx)
 		if err != nil {
@@ -30,7 +30,7 @@ func (e *Executor) ComputePhase3Candidates(ctx context.Context, events []db.Even
 		}
 	}
 	var movieByTMDB map[int]library.RadarrMovie
-	if e.radarr != nil {
+	if !e.SkipRadarr() && e.radarr != nil {
 		allRadarrMovies, err := e.radarr.GetAllMovies(ctx)
 		if err != nil {
 			e.log.Warn().Err(err).Msg("failed to fetch all Radarr movies for Phase 3")
@@ -43,7 +43,7 @@ func (e *Executor) ComputePhase3Candidates(ctx context.Context, events []db.Even
 	}
 
 	for _, ev := range events {
-		if ev.Title.MediaType == model.MediaTypeMovie {
+		if ev.Title.MediaType == model.MediaTypeMovie && !e.SkipRadarr() {
 			if !e.cfg.CheckCollections || e.radarr == nil {
 				continue
 			}
@@ -114,6 +114,9 @@ func (e *Executor) ComputePhase3Candidates(ctx context.Context, events []db.Even
 		}
 
 		if ev.Title.MediaType == model.MediaTypeTV || ev.Title.MediaType == model.MediaTypeAnime {
+			if e.SkipSonarr() {
+				continue
+			}
 			season := quality.ParseSeasonNumber(ev.Title.Title)
 			if season <= 1 {
 				continue
@@ -247,6 +250,13 @@ func (e *Executor) ProcessPhase3Pickers(ctx context.Context) {
 		c := entry.Candidate
 		mode := e.cfg.MediaTypeMode(c.MediaType)
 
+		if c.MediaType == model.MediaTypeMovie && e.SkipRadarr() {
+			continue
+		}
+		if (c.MediaType == model.MediaTypeTV || c.MediaType == model.MediaTypeAnime) && e.SkipSonarr() {
+			continue
+		}
+
 		if c.TvdbID > 0 {
 			if _, rejected := e.skipRejectedTvdbIDs[c.TvdbID]; rejected {
 				existing, err := e.sonarr.Exists(ctx, c.TvdbID)
@@ -360,7 +370,7 @@ func (e *Executor) ProcessPhase3Pickers(ctx context.Context) {
 		e.log.Info().Str("title", c.Title).Msg("phase 3 item downloaded")
 	}
 
-	if len(e.phase3Movies) > 0 {
+	if len(e.phase3Movies) > 0 && !e.SkipRadarr() {
 		mode := e.cfg.MediaTypeMode(model.MediaTypeMovie)
 
 		if mode == config.ProcessModeArr || mode == config.ProcessModeAuto || mode == config.ProcessModeYolo {
@@ -426,7 +436,7 @@ func (e *Executor) ProcessPhase3Pickers(ctx context.Context) {
 		e.phase3Movies = nil
 	}
 
-	if len(e.phase3Seasons) > 0 {
+	if len(e.phase3Seasons) > 0 && !e.SkipSonarr() {
 		seasonMode := e.cfg.MediaTypeMode(e.phase3Seasons[0].MediaType)
 
 		if seasonMode == config.ProcessModeArr || seasonMode == config.ProcessModeAuto || seasonMode == config.ProcessModeYolo {
@@ -530,18 +540,22 @@ func (e *Executor) ProcessLibraryDecisions(ctx context.Context, picked []PickedI
 
 	fmt.Fprintln(os.Stderr, "\n── Library decisions ──")
 
-	fmt.Fprintf(os.Stderr, "  Loading Radarr library...")
-	if movies, err := e.radarr.GetAllMovies(ctx); err != nil {
-		fmt.Fprintf(os.Stderr, " error: %v\n", err)
-	} else {
-		fmt.Fprintf(os.Stderr, " %d movies loaded\n", len(movies))
+	if !e.SkipRadarr() {
+		fmt.Fprintf(os.Stderr, "  Loading Radarr library...")
+		if movies, err := e.radarr.GetAllMovies(ctx); err != nil {
+			fmt.Fprintf(os.Stderr, " error: %v\n", err)
+		} else {
+			fmt.Fprintf(os.Stderr, " %d movies loaded\n", len(movies))
+		}
 	}
 
-	fmt.Fprintf(os.Stderr, "  Loading Sonarr library...")
-	if series, err := e.sonarr.GetAllSeries(ctx); err != nil {
-		fmt.Fprintf(os.Stderr, " error: %v\n", err)
-	} else {
-		fmt.Fprintf(os.Stderr, " %d series loaded\n", len(series))
+	if !e.SkipSonarr() {
+		fmt.Fprintf(os.Stderr, "  Loading Sonarr library...")
+		if series, err := e.sonarr.GetAllSeries(ctx); err != nil {
+			fmt.Fprintf(os.Stderr, " error: %v\n", err)
+		} else {
+			fmt.Fprintf(os.Stderr, " %d series loaded\n", len(series))
+		}
 	}
 
 	type addAction struct {
@@ -560,6 +574,10 @@ processPicked:
 		searchNow := mode == config.ProcessModeArr || mode == config.ProcessModeAuto || mode == config.ProcessModeYolo
 		autoConfirm := mode == config.ProcessModeAuto || mode == config.ProcessModeYolo
 		if item.Event.Title.MediaType == model.MediaTypeMovie {
+			if e.SkipRadarr() {
+				e.log.Info().Str("title", item.Event.Title.Title).Msg("skipping Radarr decision (service skipped)")
+				goto nextPicked
+			}
 			tmdbID := item.Event.Title.TmdbID
 			if tmdbID == 0 {
 				e.log.Warn().Str("title", item.Event.Title.Title).Msg("no TMDB ID, trying title lookup in Radarr")
@@ -638,6 +656,10 @@ processPicked:
 				})
 			}
 		} else {
+			if e.SkipSonarr() {
+				e.log.Info().Str("title", item.Event.Title.Title).Msg("skipping Sonarr decision (service skipped)")
+				goto nextPicked
+			}
 			tvdbID := item.Event.Title.TvdbID
 			if tvdbID == 0 {
 				if item.Event.Title.MediaType == model.MediaTypeAnime {
