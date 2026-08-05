@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"html"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -190,6 +192,8 @@ func (r *Runner) processBookItem(ctx context.Context, item ScrapedItem, progYear
 			isbn10 = notesISBN
 		}
 	}
+
+	description = cleanBookDescription(description)
 
 	if releaseDate == "" && (item.Source == "bookshop" || strings.Contains(item.Source, "bookshop")) {
 		if item.ReleaseDate != "" {
@@ -532,6 +536,29 @@ func (r *Runner) bookTargetWeekFrom(year, week int) (int, int) {
 		timeshiftWeeks = 1
 	}
 	return addISOWeekOffset(year, week, timeshiftWeeks)
+}
+
+var (
+	htmlBlockEndRe = regexp.MustCompile(`(?i)</(?:p|div|li|h[1-6]|blockquote|ul|ol|section)>`)
+	htmlBrRe       = regexp.MustCompile(`(?i)<br\s*/?>`)
+	htmlTagRe      = regexp.MustCompile(`<[^>]*>`)
+	htmlInlineRe   = regexp.MustCompile("[ \t\u00a0]+")
+	htmlLineSpace  = regexp.MustCompile("[ \t\u00a0]*\n[ \t\u00a0]*")
+	htmlBlankRe    = regexp.MustCompile(`\n{3,}`)
+)
+
+// cleanBookDescription normalizes a book description for display: block and
+// break tags become paragraph breaks, remaining HTML tags are stripped,
+// entities are decoded, and whitespace is collapsed.
+func cleanBookDescription(s string) string {
+	s = htmlBlockEndRe.ReplaceAllString(s, "\n\n")
+	s = htmlBrRe.ReplaceAllString(s, "\n")
+	s = htmlTagRe.ReplaceAllString(s, "")
+	s = html.UnescapeString(s)
+	s = htmlInlineRe.ReplaceAllString(s, " ")
+	s = htmlLineSpace.ReplaceAllString(s, "\n")
+	s = htmlBlankRe.ReplaceAllString(s, "\n\n")
+	return strings.TrimSpace(s)
 }
 
 func normalizeBookKey(s string) string {

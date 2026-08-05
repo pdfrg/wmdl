@@ -190,20 +190,17 @@ func (p *BookshopProvider) Scrape() ([]ScrapedItem, error) {
 	// Extract descriptions. The annotations are now embedded in Astro component
 	// props as JSON. Try the old selector first; if the page structure has changed,
 	// descriptions gracefully fall back to empty (Hardcover enrichment fills them in).
-	annRe := regexp.MustCompile(`<div class="bulleted-lists list-rich-text text-sm lg:text-base"><p>(.*?)</p></div>`)
-	annMatches := annRe.FindAllStringSubmatch(html, -1)
-	stripTagsRe := regexp.MustCompile(`<[^>]*>`)
-	for i, m := range annMatches {
+	annMatches := parseBookshopAnnotations(html)
+	for i, desc := range annMatches {
 		if i >= len(books) {
 			break
 		}
-		desc := stripTagsRe.ReplaceAllString(m[1], "")
-		desc = htmlUnescape(strings.TrimSpace(desc))
-		if desc != "" {
-			if e, ok := bookMap[books[i].Title]; ok {
-				e.Desc = desc
-				bookMap[books[i].Title] = e
-			}
+		if desc == "" {
+			continue
+		}
+		if e, ok := bookMap[books[i].Title]; ok {
+			e.Desc = desc
+			bookMap[books[i].Title] = e
 		}
 	}
 
@@ -232,6 +229,20 @@ func (p *BookshopProvider) Scrape() ([]ScrapedItem, error) {
 
 	log.Info().Int("count", len(result)).Str("release_date", releaseDateStrFormatted).Msg("bookshop: found books")
 	return result, nil
+}
+
+var bookshopAnnoRe = regexp.MustCompile(`(?s)<div class="bulleted-lists list-rich-text text-sm lg:text-base">(.*?)</div>`)
+
+// parseBookshopAnnotations extracts the cleaned publisher blurb from each
+// annotation div. Descriptions can span multiple <p> paragraphs, so the full
+// div content is captured and normalized by cleanBookDescription.
+func parseBookshopAnnotations(html string) []string {
+	matches := bookshopAnnoRe.FindAllStringSubmatch(html, -1)
+	descs := make([]string, 0, len(matches))
+	for _, m := range matches {
+		descs = append(descs, cleanBookDescription(m[1]))
+	}
+	return descs
 }
 
 func (p *BookshopProvider) fetchPage(url string) (string, error) {
