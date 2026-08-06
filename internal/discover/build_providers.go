@@ -187,6 +187,7 @@ func (r *Runner) buildProviders(wantMovie, wantTV, wantAnime, wantMusic, wantBoo
 			cfgVal = 1
 		}
 		lo, hi := r.lookbackRange("music", cfgVal)
+		rpChartsAdded := false
 		for wk := lo; wk <= hi; wk++ {
 			musicYear, musicWeek := addISOWeekOffset(r.targetYear, r.targetWeek, wk)
 			for _, name := range r.cfg.MediaTypes.Music.Scrapers {
@@ -208,6 +209,12 @@ func (r *Runner) buildProviders(wantMovie, wantTV, wantAnime, wantMusic, wantBoo
 						allmusic.SetWeekRange(musicYear, musicWeek)
 					}
 					providers = append(providers, allmusic)
+
+				case "rpcharts":
+					if !rpChartsAdded {
+						providers = append(providers, NewRPChartsProvider(r.cfg.MediaTypes.Music.RPChartsStations))
+						rpChartsAdded = true
+					}
 
 				default:
 					r.log.Warn().Str("scraper", name).Msg("unknown music scraper configured")

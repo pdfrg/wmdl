@@ -40,6 +40,7 @@ of lookback weeks and files everything under the current target week.
 After this run, normal config values resume.
 Notes:
   • bookshop always scrapes the current real week, unaffected by --lookback.
+  • rpcharts also ignores --lookback music (no historical data) and needs no browser.
   • allmusic participates in --lookback music; its month-boundary logic applies.
   • allmusic (and some other scrapers) require a real browser session and will
     not function in --headless mode due to Cloudflare challenges.`,

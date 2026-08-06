@@ -234,11 +234,12 @@ type ContentFilter struct {
 }
 
 type MusicConfig struct {
-	Enabled       bool              `mapstructure:"enabled"`
-	Mode          string            `mapstructure:"mode"`
-	Scrapers      []string          `mapstructure:"scrapers"`
-	LookbackWeeks int               `mapstructure:"lookback_weeks"`
-	Filter        MusicFilterConfig `mapstructure:"filter"`
+	Enabled          bool              `mapstructure:"enabled"`
+	Mode             string            `mapstructure:"mode"`
+	Scrapers         []string          `mapstructure:"scrapers"`
+	LookbackWeeks    int               `mapstructure:"lookback_weeks"`
+	RPChartsStations []string          `mapstructure:"rpcharts_stations"`
+	Filter           MusicFilterConfig `mapstructure:"filter"`
 }
 
 type MusicFilterConfig struct {
@@ -602,6 +603,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("media_types.music.mode", "full")
 	v.SetDefault("media_types.music.scrapers", []string{"albumoftheyear", "allmusic"})
 	v.SetDefault("media_types.music.lookback_weeks", 1)
+	v.SetDefault("media_types.music.rpcharts_stations", []string{"all"})
 	v.SetDefault("media_types.music.filter.min_critic_score", 75)
 	v.SetDefault("media_types.music.filter.min_critic_reviews", 5)
 	v.SetDefault("media_types.music.filter.min_user_score", 75)

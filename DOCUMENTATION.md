@@ -649,6 +649,13 @@ After adding an item to the library, wmdl checks for gaps:
   Editors Choice pages provide release months only (not specific days), so results
   appear when the WMDL atomic week crosses a calendar month boundary (roughly once
   per month).
+- **RP Charts** (`rpcharts`) — plain HTTP scraper for Radio Paradise's machine-readable
+  chart export. Pulls albums that were **new to RP last week** (`weekly.new_albums`),
+  with the "on RP since" date used as the release date. Has no historical data, so it
+  ignores `lookback_weeks` and needs no browser. Select stations via
+  `media_types.music.rpcharts_stations` (`"all"` = All Stations aggregate, the default;
+  otherwise station slugs: `main`, `mellow`, `rockit`, `globe`, `beyond`, `serenity`,
+  `kfat`). Provides no score data, so it is exempt from the critic/user score filter.
 
 ### Enrichment
 

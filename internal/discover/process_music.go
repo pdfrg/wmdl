@@ -16,7 +16,7 @@ func (r *Runner) processMusicItem(ctx context.Context, item ScrapedItem, progYea
 	apiCtx, apiCancel := context.WithTimeout(ctx, 30*time.Second)
 	defer apiCancel()
 
-	if item.Source != "allmusic" {
+	if item.Source != "allmusic" && item.Source != "rpcharts" {
 		if HasOverrideGenre(&r.cfg.MediaTypes.Music.Filter.ContentFilter, item.Genres) {
 			r.log.Info().Str("artist", item.ArtistName).Str("album", item.Title).
 				Msg("override genre matched, skipping score filter")
@@ -183,6 +183,7 @@ func (r *Runner) processMusicItem(ctx context.Context, item ScrapedItem, progYea
 		ReleaseID:   releaseID,
 		Source:      item.Source,
 		ReleaseDate: item.ReleaseDate,
+		Notes:       item.Notes,
 		Status:      model.StatusPending,
 		ISOYear:     progYear,
 		ISOWeek:     progWeek,

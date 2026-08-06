@@ -227,12 +227,18 @@ media_types:
   music:
     enabled: true
     mode: "full"
-    scrapers: ["albumoftheyear", "allmusic"]
+    scrapers: ["albumoftheyear", "allmusic", "rpcharts"]
     # How many weeks before the target to look back for new music.
     # After the first run, music advances 1 wmdl week per run sequentially,
     # just like movies/TV. Changing this value later has NO effect unless
     # you delete the database to restart discovery.
     lookback_weeks: 1
+    # rpcharts: which Radio Paradise chart stations to pull "new albums" from.
+    # "all" (default) = the All Stations aggregate (avoids Serenity ambient
+    # tracks dominating single-station lists). Otherwise list station slugs:
+    # main, mellow, rockit, globe, beyond, serenity, kfat.
+    # rpcharts ignores lookback_weeks (no historical data).
+    rpcharts_stations: ["all"]
     filter:
       # Blocked/origin filters (same keys as movies/tv)
       # blocked_languages: []
