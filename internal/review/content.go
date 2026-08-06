@@ -176,6 +176,19 @@ func (t *TUI) buildReviewContent() string {
 	return b.String()
 }
 
+// albumNotesURL returns the event notes when the source stores a direct URL
+// there (e.g. rpcharts' Radio Paradise album page), else "".
+func albumNotesURL(ev *model.AlbumReleaseEvent) string {
+	if ev == nil {
+		return ""
+	}
+	n := strings.TrimSpace(ev.Notes)
+	if strings.HasPrefix(n, "http://") || strings.HasPrefix(n, "https://") {
+		return n
+	}
+	return ""
+}
+
 func (t *TUI) buildMusicContent(ae *db.EventWithAlbumRelease, rw int, maxLines int) string {
 	var b strings.Builder
 
@@ -298,6 +311,11 @@ func (t *TUI) buildMusicContent(ae *db.EventWithAlbumRelease, rw int, maxLines i
 			b.WriteString("\n\n")
 			b.WriteString(strings.Join(lines, "\n"))
 		}
+	}
+
+	if u := albumNotesURL(ev); u != "" {
+		b.WriteString("\n")
+		b.WriteString(rtStyle.Render(u))
 	}
 
 	if rls.ArtistMBID != "" && !strings.HasPrefix(rls.ArtistMBID, "_nm_") {

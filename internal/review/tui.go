@@ -596,6 +596,9 @@ func (t *TUI) updateReview(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		} else if it.albumEvent != nil {
 			u := it.albumEvent.Release.AOTYURL
 			if u == "" {
+				u = albumNotesURL(it.albumEvent.Event)
+			}
+			if u == "" {
 				u = "https://www.albumoftheyear.org/search/?q=" + url.QueryEscape(it.albumEvent.Release.Title)
 			}
 			if err := exec.Command("xdg-open", u).Start(); err != nil {

@@ -5,6 +5,8 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+
+	"github.com/pdfrg/wmdl/internal/model"
 )
 
 func TestParsePosterMode(t *testing.T) {
@@ -118,5 +120,30 @@ func TestLanguageName(t *testing.T) {
 			assert.NotEmpty(t, name, "code %q should have a name", code)
 			assert.NotEqual(t, strings.ToUpper(code), name, "code %q should not be fallback", code)
 		}
+	})
+}
+
+func TestAlbumNotesURL(t *testing.T) {
+	tests := []struct {
+		name  string
+		notes string
+		want  string
+	}{
+		{"rpcharts https url", "https://radioparadise.com/music/album/26434", "https://radioparadise.com/music/album/26434"},
+		{"http url", "http://example.com/album/1", "http://example.com/album/1"},
+		{"url with surrounding space", "  https://radioparadise.com/music/album/26434  ", "https://radioparadise.com/music/album/26434"},
+		{"plain text", "AllMusic Editor's Choice", ""},
+		{"key=value notes", "url=https://x.example|ean=123", ""},
+		{"empty", "", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ev := &model.AlbumReleaseEvent{Notes: tt.notes}
+			assert.Equal(t, tt.want, albumNotesURL(ev))
+		})
+	}
+
+	t.Run("nil_event_returns_empty", func(t *testing.T) {
+		assert.Empty(t, albumNotesURL(nil))
 	})
 }
