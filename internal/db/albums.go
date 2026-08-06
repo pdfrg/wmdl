@@ -14,6 +14,65 @@ type EventWithAlbumRelease struct {
 	Release *model.AlbumRelease
 }
 
+// mergeAlbumRelease fills gaps in `incoming` from `existing` so that a
+// less-complete source (e.g. rpcharts, which carries no AOTY/AllMusic scores
+// or URLs) never wipes data already stored by another source. Rule: the
+// incoming value wins only when it carries a real value (non-empty string or
+// non-zero number); otherwise the existing value is kept. Both albums are
+// assumed to identify the same release.
+func mergeAlbumRelease(existing, incoming *model.AlbumRelease) *model.AlbumRelease {
+	if existing == nil {
+		return incoming
+	}
+	merged := *existing
+
+	merged.ArtistName = firstNonEmpty(incoming.ArtistName, existing.ArtistName)
+	merged.Title = firstNonEmpty(incoming.Title, existing.Title)
+	if incoming.Year != 0 {
+		merged.Year = incoming.Year
+	}
+	merged.MBID = firstNonEmpty(incoming.MBID, existing.MBID)
+	merged.ArtistMBID = firstNonEmpty(incoming.ArtistMBID, existing.ArtistMBID)
+	merged.AlbumType = model.AlbumType(firstNonEmpty(string(incoming.AlbumType), string(existing.AlbumType)))
+	merged.ReleaseDate = firstNonEmpty(incoming.ReleaseDate, existing.ReleaseDate)
+	merged.Genres = firstNonEmpty(incoming.Genres, existing.Genres)
+	merged.Overview = firstNonEmpty(incoming.Overview, existing.Overview)
+	merged.PosterPath = firstNonEmpty(incoming.PosterPath, existing.PosterPath)
+	merged.AOTYURL = firstNonEmpty(incoming.AOTYURL, existing.AOTYURL)
+	merged.AllMusicURL = firstNonEmpty(incoming.AllMusicURL, existing.AllMusicURL)
+
+	if incoming.AOTYCriticScore != 0 {
+		merged.AOTYCriticScore = incoming.AOTYCriticScore
+	}
+	if incoming.AOTYCriticCount != 0 {
+		merged.AOTYCriticCount = incoming.AOTYCriticCount
+	}
+	if incoming.AOTYUserScore != 0 {
+		merged.AOTYUserScore = incoming.AOTYUserScore
+	}
+	if incoming.AOTYUserCount != 0 {
+		merged.AOTYUserCount = incoming.AOTYUserCount
+	}
+	if incoming.AOTYMustHear {
+		merged.AOTYMustHear = true
+	}
+	if incoming.AllMusicRating != 0 {
+		merged.AllMusicRating = incoming.AllMusicRating
+	}
+	if incoming.MBRating != 0 {
+		merged.MBRating = incoming.MBRating
+	}
+
+	return &merged
+}
+
+func firstNonEmpty(newVal, oldVal string) string {
+	if newVal != "" {
+		return newVal
+	}
+	return oldVal
+}
+
 func (d *DB) CountAlbumReleaseEventsByWeek(ctx context.Context, year, week int) (int, error) {
 	var count int
 	err := d.db.QueryRowContext(ctx, `
@@ -33,6 +92,7 @@ func (d *DB) UpsertAlbumRelease(ctx context.Context, r *model.AlbumRelease) (int
 			return 0, fmt.Errorf("checking existing release by mbid: %w", err)
 		}
 		if existing != nil {
+			merged := mergeAlbumRelease(existing, r)
 			_, err := d.db.ExecContext(ctx, `
 				UPDATE album_releases SET
 					artist_name = ?, title = ?, year = ?, artist_mbid = ?,
@@ -42,12 +102,12 @@ func (d *DB) UpsertAlbumRelease(ctx context.Context, r *model.AlbumRelease) (int
 					aoty_user_score = ?, aoty_user_count = ?,
 					aoty_must_hear = ?, allmusic_rating = ?, mb_rating = ?
 				WHERE id = ?
-			`, r.ArtistName, r.Title, r.Year, r.ArtistMBID,
-				string(r.AlbumType), r.ReleaseDate, r.Genres, r.Overview, r.PosterPath,
-				r.AOTYURL, r.AllMusicURL,
-				r.AOTYCriticScore, r.AOTYCriticCount,
-				r.AOTYUserScore, r.AOTYUserCount,
-				boolToInt(r.AOTYMustHear), r.AllMusicRating, r.MBRating,
+			`, merged.ArtistName, merged.Title, merged.Year, merged.ArtistMBID,
+				string(merged.AlbumType), merged.ReleaseDate, merged.Genres, merged.Overview, merged.PosterPath,
+				merged.AOTYURL, merged.AllMusicURL,
+				merged.AOTYCriticScore, merged.AOTYCriticCount,
+				merged.AOTYUserScore, merged.AOTYUserCount,
+				boolToInt(merged.AOTYMustHear), merged.AllMusicRating, merged.MBRating,
 				existing.ID)
 			if err != nil {
 				return 0, fmt.Errorf("updating existing release by mbid: %w", err)
@@ -62,6 +122,7 @@ func (d *DB) UpsertAlbumRelease(ctx context.Context, r *model.AlbumRelease) (int
 			return 0, fmt.Errorf("checking existing release by aoty_url: %w", err)
 		}
 		if existing != nil {
+			merged := mergeAlbumRelease(existing, r)
 			_, err := d.db.ExecContext(ctx, `
 				UPDATE album_releases SET
 					artist_name = ?, title = ?, year = ?, mbid = ?, artist_mbid = ?,
@@ -71,12 +132,12 @@ func (d *DB) UpsertAlbumRelease(ctx context.Context, r *model.AlbumRelease) (int
 					aoty_user_score = ?, aoty_user_count = ?,
 					aoty_must_hear = ?, allmusic_rating = ?, mb_rating = ?
 				WHERE id = ?
-			`, r.ArtistName, r.Title, r.Year, r.MBID, r.ArtistMBID,
-				string(r.AlbumType), r.ReleaseDate, r.Genres, r.Overview, r.PosterPath,
-				r.AllMusicURL,
-				r.AOTYCriticScore, r.AOTYCriticCount,
-				r.AOTYUserScore, r.AOTYUserCount,
-				boolToInt(r.AOTYMustHear), r.AllMusicRating, r.MBRating,
+			`, merged.ArtistName, merged.Title, merged.Year, merged.MBID, merged.ArtistMBID,
+				string(merged.AlbumType), merged.ReleaseDate, merged.Genres, merged.Overview, merged.PosterPath,
+				merged.AllMusicURL,
+				merged.AOTYCriticScore, merged.AOTYCriticCount,
+				merged.AOTYUserScore, merged.AOTYUserCount,
+				boolToInt(merged.AOTYMustHear), merged.AllMusicRating, merged.MBRating,
 				existing.ID)
 			if err != nil {
 				return 0, fmt.Errorf("updating existing release by aoty_url: %w", err)
@@ -91,6 +152,7 @@ func (d *DB) UpsertAlbumRelease(ctx context.Context, r *model.AlbumRelease) (int
 			return 0, fmt.Errorf("checking existing release by allmusic_url: %w", err)
 		}
 		if existing != nil {
+			merged := mergeAlbumRelease(existing, r)
 			_, err := d.db.ExecContext(ctx, `
 				UPDATE album_releases SET
 					artist_name = ?, title = ?, year = ?, mbid = ?, artist_mbid = ?,
@@ -100,12 +162,12 @@ func (d *DB) UpsertAlbumRelease(ctx context.Context, r *model.AlbumRelease) (int
 					aoty_user_score = ?, aoty_user_count = ?,
 					aoty_must_hear = ?, allmusic_rating = ?, mb_rating = ?
 				WHERE id = ?
-			`, r.ArtistName, r.Title, r.Year, r.MBID, r.ArtistMBID,
-				string(r.AlbumType), r.ReleaseDate, r.Genres, r.Overview, r.PosterPath,
-				r.AOTYURL,
-				r.AOTYCriticScore, r.AOTYCriticCount,
-				r.AOTYUserScore, r.AOTYUserCount,
-				boolToInt(r.AOTYMustHear), r.AllMusicRating, r.MBRating,
+			`, merged.ArtistName, merged.Title, merged.Year, merged.MBID, merged.ArtistMBID,
+				string(merged.AlbumType), merged.ReleaseDate, merged.Genres, merged.Overview, merged.PosterPath,
+				merged.AOTYURL,
+				merged.AOTYCriticScore, merged.AOTYCriticCount,
+				merged.AOTYUserScore, merged.AOTYUserCount,
+				boolToInt(merged.AOTYMustHear), merged.AllMusicRating, merged.MBRating,
 				existing.ID)
 			if err != nil {
 				return 0, fmt.Errorf("updating existing release by allmusic_url: %w", err)
@@ -123,22 +185,22 @@ func (d *DB) UpsertAlbumRelease(ctx context.Context, r *model.AlbumRelease) (int
 		                            aoty_must_hear, allmusic_rating, mb_rating, created_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
 		ON CONFLICT(artist_name, title, year) DO UPDATE SET
-			mbid              = excluded.mbid,
-			artist_mbid       = excluded.artist_mbid,
-			album_type        = excluded.album_type,
-			release_date      = excluded.release_date,
-			genres            = excluded.genres,
-			overview          = excluded.overview,
-			poster_path       = excluded.poster_path,
-			aoty_url          = excluded.aoty_url,
-			allmusic_url      = excluded.allmusic_url,
-			aoty_critic_score = excluded.aoty_critic_score,
-			aoty_critic_count = excluded.aoty_critic_count,
-			aoty_user_score   = excluded.aoty_user_score,
-			aoty_user_count   = excluded.aoty_user_count,
-			aoty_must_hear    = excluded.aoty_must_hear,
-			allmusic_rating   = excluded.allmusic_rating,
-			mb_rating         = excluded.mb_rating
+			mbid              = CASE WHEN excluded.mbid != '' THEN excluded.mbid ELSE album_releases.mbid END,
+			artist_mbid       = CASE WHEN excluded.artist_mbid != '' THEN excluded.artist_mbid ELSE album_releases.artist_mbid END,
+			album_type        = CASE WHEN excluded.album_type != '' THEN excluded.album_type ELSE album_releases.album_type END,
+			release_date      = CASE WHEN excluded.release_date != '' THEN excluded.release_date ELSE album_releases.release_date END,
+			genres            = CASE WHEN excluded.genres != '' THEN excluded.genres ELSE album_releases.genres END,
+			overview          = CASE WHEN excluded.overview != '' THEN excluded.overview ELSE album_releases.overview END,
+			poster_path       = CASE WHEN excluded.poster_path != '' THEN excluded.poster_path ELSE album_releases.poster_path END,
+			aoty_url          = CASE WHEN excluded.aoty_url != '' THEN excluded.aoty_url ELSE album_releases.aoty_url END,
+			allmusic_url      = CASE WHEN excluded.allmusic_url != '' THEN excluded.allmusic_url ELSE album_releases.allmusic_url END,
+			aoty_critic_score = CASE WHEN excluded.aoty_critic_score != 0 THEN excluded.aoty_critic_score ELSE album_releases.aoty_critic_score END,
+			aoty_critic_count = CASE WHEN excluded.aoty_critic_count != 0 THEN excluded.aoty_critic_count ELSE album_releases.aoty_critic_count END,
+			aoty_user_score   = CASE WHEN excluded.aoty_user_score != 0 THEN excluded.aoty_user_score ELSE album_releases.aoty_user_score END,
+			aoty_user_count   = CASE WHEN excluded.aoty_user_count != 0 THEN excluded.aoty_user_count ELSE album_releases.aoty_user_count END,
+			aoty_must_hear    = CASE WHEN excluded.aoty_must_hear != 0 THEN 1 ELSE album_releases.aoty_must_hear END,
+			allmusic_rating   = CASE WHEN excluded.allmusic_rating != 0 THEN excluded.allmusic_rating ELSE album_releases.allmusic_rating END,
+			mb_rating         = CASE WHEN excluded.mb_rating != 0 THEN excluded.mb_rating ELSE album_releases.mb_rating END
 	`, r.ArtistName, r.Title, r.Year, r.MBID, r.ArtistMBID, string(r.AlbumType),
 		r.ReleaseDate, r.Genres, r.Overview, r.PosterPath,
 		r.AOTYURL, r.AllMusicURL,
