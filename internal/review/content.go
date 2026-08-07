@@ -189,6 +189,25 @@ func albumNotesURL(ev *model.AlbumReleaseEvent) string {
 	return ""
 }
 
+// musicDateLabel formats the release date for an album's review detail.
+// rpcharts dates are the tracker's first-seen date (not the commercial
+// release date), so they get an explicit label; AllMusic only has a release
+// month. All other sources show the raw date.
+func musicDateLabel(source, date string) string {
+	if date == "" {
+		return ""
+	}
+	if source == "allmusic" {
+		if t, err := time.Parse("2006-01-02", date); err == nil {
+			return t.Format("January 2006")
+		}
+	}
+	if source == "rpcharts" {
+		return "first seen by rpcharts: " + date
+	}
+	return date
+}
+
 func (t *TUI) buildMusicContent(ae *db.EventWithAlbumRelease, rw int, maxLines int) string {
 	var b strings.Builder
 
@@ -234,28 +253,16 @@ func (t *TUI) buildMusicContent(ae *db.EventWithAlbumRelease, rw int, maxLines i
 	} else if ev.Source != "" {
 		tagParts = append(tagParts, ev.Source)
 	}
-	if isAllMusic && rls.ReleaseDate != "" {
-		if t, err := time.Parse("2006-01-02", rls.ReleaseDate); err == nil {
-			tagParts = append(tagParts, t.Format("January 2006"))
-		} else {
-			tagParts = append(tagParts, rls.ReleaseDate)
-		}
-	} else if rls.ReleaseDate != "" {
-		tagParts = append(tagParts, rls.ReleaseDate)
+	if label := musicDateLabel(ev.Source, rls.ReleaseDate); label != "" {
+		tagParts = append(tagParts, label)
 	}
 	b.WriteString(tagStyle.Render(strings.Join(tagParts, " · ")))
 
 	if rls.MBID != "" {
 		b.WriteString("\n")
 		infoParts := []string{string(rls.AlbumType)}
-		if isAllMusic && rls.ReleaseDate != "" {
-			if t, err := time.Parse("2006-01-02", rls.ReleaseDate); err == nil {
-				infoParts = append(infoParts, t.Format("January 2006"))
-			} else {
-				infoParts = append(infoParts, rls.ReleaseDate)
-			}
-		} else {
-			infoParts = append(infoParts, rls.ReleaseDate)
+		if label := musicDateLabel(ev.Source, rls.ReleaseDate); label != "" {
+			infoParts = append(infoParts, label)
 		}
 		b.WriteString(rtStyle.Render(strings.Join(infoParts, " · ")))
 	}

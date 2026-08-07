@@ -650,12 +650,13 @@ After adding an item to the library, wmdl checks for gaps:
   appear when the WMDL atomic week crosses a calendar month boundary (roughly once
   per month).
 - **RP Charts** (`rpcharts`) — plain HTTP scraper for Radio Paradise's machine-readable
-  chart export. Pulls albums that were **new to RP last week** (`weekly.new_albums`),
-  with the "on RP since" date used as the release date. Has no historical data, so it
-  ignores `lookback_weeks` and needs no browser. Select stations via
-  `media_types.music.rpcharts_stations` (`"all"` = All Stations aggregate, the default;
-  otherwise station slugs: `main`, `mellow`, `rockit`, `globe`, `beyond`, `serenity`,
-  `kfat`). Provides no score data, so it is exempt from the critic/user score filter.
+  chart export. Pulls albums that were **new to RP's rotation last week** (`weekly.new_albums`).
+  "New" here means **first observed by RP's chart tracker since it began tracking in May 2026**,
+  so these can be back-catalog albums with old release years; the tracker's first-seen date is
+  used as the release date. Has no historical data, so it ignores `lookback_weeks` and needs no
+  browser. Select stations via `media_types.music.rpcharts_stations` (`"all"` = All Stations
+  aggregate, the default; otherwise station slugs: `main`, `mellow`, `rockit`, `globe`, `beyond`,
+  `serenity`, `kfat`). Provides no score data, so it is exempt from the critic/user score filter.
 
 ### Enrichment
 

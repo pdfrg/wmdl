@@ -88,6 +88,9 @@ func (p *RPChartsProvider) Scrape() ([]ScrapedItem, error) {
 
 	var items []ScrapedItem
 	for _, entry := range p.selectedAlbums(payload) {
+		// created_at is the date RP's chart tracker first observed the album
+		// (tracking began May 2026) — not its commercial release date. It may
+		// be a back-catalog album with an old Year.
 		item := ScrapedItem{
 			Title:       entry.Name,
 			ArtistName:  entry.Sub,

@@ -147,3 +147,26 @@ func TestAlbumNotesURL(t *testing.T) {
 		assert.Empty(t, albumNotesURL(nil))
 	})
 }
+
+func TestMusicDateLabel(t *testing.T) {
+	tests := []struct {
+		name   string
+		source string
+		date   string
+		want   string
+	}{
+		{"rpcharts labeled", "rpcharts", "2026-07-31", "first seen by rpcharts: 2026-07-31"},
+		{"rpcharts empty date", "rpcharts", "", ""},
+		{"allmusic month", "allmusic", "2026-06-01", "June 2026"},
+		{"allmusic unparseable date", "allmusic", "not-a-date", "not-a-date"},
+		{"plain date", "albumoftheyear", "2026-06-05", "2026-06-05"},
+		{"unknown source", "tmdb", "2026-06-05", "2026-06-05"},
+		{"empty source", "", "2026-06-05", "2026-06-05"},
+		{"empty date", "albumoftheyear", "", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, musicDateLabel(tt.source, tt.date))
+		})
+	}
+}

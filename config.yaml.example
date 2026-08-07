@@ -237,6 +237,8 @@ media_types:
     # "all" (default) = the All Stations aggregate (avoids Serenity ambient
     # tracks dominating single-station lists). Otherwise list station slugs:
     # main, mellow, rockit, globe, beyond, serenity, kfat.
+    # "new albums" = first observed by RP's chart tracker (tracking began
+    # May 2026), so release years may be old.
     # rpcharts ignores lookback_weeks (no historical data).
     rpcharts_stations: ["all"]
     filter:
