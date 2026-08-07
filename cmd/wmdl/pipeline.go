@@ -120,56 +120,9 @@ func runReviewForWeek(ctx context.Context, database *db.DB, cfg *config.Config, 
 		prevAnimeWeek = fmt.Sprintf("%d-W%02d", prevYear, prevWeek)
 	}
 
-	// Count total approved (including yolo auto-approvals) and check for pending
-	approved = 0
-	hasPending := false
-	for _, ev := range events {
-		switch ev.Event.Status {
-		case model.StatusApproved:
-			approved++
-		case model.StatusPending:
-			hasPending = true
-		}
-	}
-	if !hasPending {
-		for _, ev := range albumEvents {
-			switch ev.Event.Status {
-			case model.StatusApproved:
-				approved++
-			case model.StatusPending:
-				hasPending = true
-			}
-		}
-	}
-	if !hasPending {
-		for _, ev := range bookEvents {
-			switch ev.Event.Status {
-			case model.StatusApproved:
-				approved++
-			case model.StatusPending:
-				hasPending = true
-			}
-		}
-	}
-
-	decided := approved
-	for _, ev := range events {
-		if ev.Event.Status != model.StatusPending && ev.Event.Status != model.StatusApproved {
-			decided++
-		}
-	}
-	if !hasPending {
-		for _, ev := range albumEvents {
-			if ev.Event.Status != model.StatusPending {
-				decided++
-			}
-		}
-		for _, ev := range bookEvents {
-			if ev.Event.Status != model.StatusPending {
-				decided++
-			}
-		}
-	}
+	// Count total approved (including yolo auto-approvals), total decided,
+	// and check for pending across all media types.
+	approved, decided, hasPending := countReviewStatus(events, albumEvents, bookEvents)
 
 	if !hasPending {
 		if !target.Reviewed {
@@ -188,7 +141,7 @@ func runReviewForWeek(ctx context.Context, database *db.DB, cfg *config.Config, 
 		// session (manually or by yolo). Fall through to re-review menu.
 	}
 
-	if target.Reviewed {
+	if reviewReReviewPrompt(target.Reviewed, hasPending) {
 		fmt.Fprintf(os.Stderr, "All releases for %d-W%02d have already been reviewed.\n", year, week)
 		for {
 			fmt.Fprintf(os.Stderr, "[r] review again  [e] export choices  [q] quit\n")
@@ -317,6 +270,54 @@ func runReviewForWeek(ctx context.Context, database *db.DB, cfg *config.Config, 
 		return 0, nil
 	}
 	return approved, nil
+}
+
+// countReviewStatus tallies approved, decided (non-pending), and whether any
+// events are still pending across video, album, and book release events.
+func countReviewStatus(events []db.EventWithTitle, albumEvents []db.EventWithAlbumRelease, bookEvents []db.EventWithBook) (approved, decided int, hasPending bool) {
+	for _, ev := range events {
+		switch ev.Event.Status {
+		case model.StatusApproved:
+			approved++
+			decided++
+		case model.StatusPending:
+			hasPending = true
+		default:
+			decided++
+		}
+	}
+	for _, ev := range albumEvents {
+		switch ev.Event.Status {
+		case model.StatusApproved:
+			approved++
+			decided++
+		case model.StatusPending:
+			hasPending = true
+		default:
+			decided++
+		}
+	}
+	for _, ev := range bookEvents {
+		switch ev.Event.Status {
+		case model.StatusApproved:
+			approved++
+			decided++
+		case model.StatusPending:
+			hasPending = true
+		default:
+			decided++
+		}
+	}
+	return approved, decided, hasPending
+}
+
+// reviewReReviewPrompt reports whether the week was fully reviewed and no new
+// pending items have appeared since — the "[r] review again" menu applies.
+// When new pending items exist after the week was marked reviewed (e.g. a
+// later discover --type music run), the review-all / review-pending prompt
+// should be offered instead.
+func reviewReReviewPrompt(reviewed, hasPending bool) bool {
+	return reviewed && !hasPending
 }
 
 func runProcessForWeek(ctx context.Context, database *db.DB, cfg *config.Config, year, week int, typeFilter model.MediaType) error {
