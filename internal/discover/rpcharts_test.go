@@ -5,6 +5,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -16,6 +17,11 @@ import (
 func loadRPChartsFixture(t *testing.T) []byte {
 	t.Helper()
 	return testutil.LoadFixture(t, "testdata", "rpcharts.json")
+}
+
+func loadRPChartsLiveFixture(t *testing.T) []byte {
+	t.Helper()
+	return testutil.LoadFixture(t, "testdata", "rpcharts_live.json")
 }
 
 func testRPChartsServer(t *testing.T, status int, body []byte) *httptest.Server {
@@ -157,4 +163,36 @@ func TestRPMapItemNoAlbumID(t *testing.T) {
 	for _, item := range items {
 		assert.True(t, strings.HasPrefix(item.Notes, "https://radioparadise.com/music/album/"))
 	}
+}
+
+func TestRPChartsScrapeLiveFixture(t *testing.T) {
+	srv := testRPChartsServer(t, http.StatusOK, loadRPChartsLiveFixture(t))
+	defer srv.Close()
+
+	p := NewRPChartsProvider([]string{"all"})
+	p.endpoint = srv.URL
+
+	items, err := p.Scrape()
+	require.NoError(t, err)
+	require.Len(t, items, 20)
+
+	for _, item := range items {
+		assert.NotEmpty(t, item.Title)
+		assert.NotEmpty(t, item.ArtistName)
+		assert.Greater(t, item.Year, 0)
+		assert.Equal(t, model.MediaTypeMusic, item.MediaType)
+		assert.Equal(t, "rpcharts", item.Source)
+		assert.Contains(t, item.ReleaseDate, "-")
+		_, err := time.Parse("2006-01-02", item.ReleaseDate)
+		assert.NoError(t, err, "ReleaseDate %q should be YYYY-MM-DD", item.ReleaseDate)
+		assert.True(t, strings.HasPrefix(item.Notes, "https://radioparadise.com/music/album/"), "Notes %q", item.Notes)
+		assert.NotEmpty(t, item.ImageURL)
+	}
+
+	first := items[0]
+	assert.Equal(t, "Dirt", first.Title)
+	assert.Equal(t, "Alice In Chains", first.ArtistName)
+	assert.Equal(t, 1993, first.Year)
+	assert.Equal(t, "2026-07-31", first.ReleaseDate)
+	assert.Equal(t, "https://radioparadise.com/music/album/30592", first.Notes)
 }

@@ -1,0 +1,495 @@
+{
+  "version": 1,
+  "generated_at": "2026-08-07T01:33:18Z",
+  "stations": [
+    {
+      "channel": -1,
+      "slug": "",
+      "name": "All Stations",
+      "weekly": {
+        "period": "Week of July 26, 2026",
+        "songs": [],
+        "artists": [],
+        "albums": [],
+        "new_songs": [],
+        "new_artists": [],
+        "new_albums": [
+          {
+            "rank": 1,
+            "name": "Dirt",
+            "sub": "Alice In Chains",
+            "plays": 3,
+            "cover": "https://img.radioparadise.com/covers/l/30592.jpg",
+            "year": 1993,
+            "album_id": "30592",
+            "created_at": "2026-07-31"
+          },
+          {
+            "rank": 2,
+            "name": "Lucky to Be",
+            "sub": "Lily Meola",
+            "plays": 3,
+            "cover": "https://img.radioparadise.com/covers/l/29993.jpg",
+            "year": 2026,
+            "album_id": "29993",
+            "created_at": "2026-07-26"
+          },
+          {
+            "rank": 3,
+            "name": "A Mile South of Heaven",
+            "sub": "Jess Williamson",
+            "plays": 2,
+            "cover": "https://img.radioparadise.com/covers/l/31160.jpg",
+            "year": 2026,
+            "album_id": "31160",
+            "created_at": "2026-07-27"
+          },
+          {
+            "rank": 4,
+            "name": "Abacab",
+            "sub": "Genesis",
+            "plays": 2,
+            "cover": "https://img.radioparadise.com/covers/l/11427.jpg",
+            "year": 1980,
+            "album_id": "11427",
+            "created_at": "2026-07-31"
+          },
+          {
+            "rank": 5,
+            "name": "Country Desire",
+            "sub": "Alicia Blue",
+            "plays": 2,
+            "cover": "https://img.radioparadise.com/covers/l/31157.jpg",
+            "year": 2026,
+            "album_id": "31157",
+            "created_at": "2026-07-27"
+          },
+          {
+            "rank": 6,
+            "name": "Drive & Cry",
+            "sub": "Emily Nenni",
+            "plays": 2,
+            "cover": "https://img.radioparadise.com/covers/l/20273.jpg",
+            "year": 2024,
+            "album_id": "20273",
+            "created_at": "2026-07-28"
+          },
+          {
+            "rank": 7,
+            "name": "Fair & Square",
+            "sub": "Jimmie Dale Gilmore",
+            "plays": 2,
+            "cover": "https://img.radioparadise.com/covers/l/30631.jpg",
+            "year": 1988,
+            "album_id": "30631",
+            "created_at": "2026-07-28"
+          },
+          {
+            "rank": 8,
+            "name": "GP",
+            "sub": "Gram Parsons",
+            "plays": 2,
+            "cover": "https://img.radioparadise.com/covers/l/25819.jpg",
+            "year": 1973,
+            "album_id": "25819",
+            "created_at": "2026-07-27"
+          },
+          {
+            "rank": 9,
+            "name": "Great Television",
+            "sub": "Elizabeth Cook",
+            "plays": 2,
+            "cover": "https://img.radioparadise.com/covers/l/31161.jpg",
+            "year": 2026,
+            "album_id": "31161",
+            "created_at": "2026-07-28"
+          },
+          {
+            "rank": 10,
+            "name": "High Hat",
+            "sub": "6 String Drag",
+            "plays": 2,
+            "cover": "https://img.radioparadise.com/covers/l/30622.jpg",
+            "year": 2019,
+            "album_id": "30622",
+            "created_at": "2026-07-28"
+          },
+          {
+            "rank": 11,
+            "name": "Move It On Over",
+            "sub": "George Thorogood & the Destroyers",
+            "plays": 2,
+            "cover": "https://img.radioparadise.com/covers/l/17583.jpg",
+            "year": 1978,
+            "album_id": "17583",
+            "created_at": "2026-07-27"
+          },
+          {
+            "rank": 12,
+            "name": "Play Boy",
+            "sub": "Jason Scott & The High Heat",
+            "plays": 2,
+            "cover": "https://img.radioparadise.com/covers/l/31153.jpg",
+            "year": 2026,
+            "album_id": "31153",
+            "created_at": "2026-07-27"
+          },
+          {
+            "rank": 13,
+            "name": "Rattlin' Bones",
+            "sub": "Bronwyn",
+            "plays": 2,
+            "cover": "https://img.radioparadise.com/covers/l/31159.jpg",
+            "year": 2026,
+            "album_id": "31159",
+            "created_at": "2026-07-28"
+          },
+          {
+            "rank": 14,
+            "name": "Swampwater",
+            "sub": "Paige Plaisance",
+            "plays": 2,
+            "cover": "https://img.radioparadise.com/covers/l/31174.jpg",
+            "year": 2026,
+            "album_id": "31174",
+            "created_at": "2026-07-27"
+          },
+          {
+            "rank": 15,
+            "name": "The Outlaw Cherie Lee & Other Western Tales",
+            "sub": "Shaboozey",
+            "plays": 2,
+            "cover": "https://img.radioparadise.com/covers/l/30678.jpg",
+            "year": 2026,
+            "album_id": "30678",
+            "created_at": "2026-07-28"
+          },
+          {
+            "rank": 16,
+            "name": "The Truckin' Sessions",
+            "sub": "Dale Watson and His Lonestars",
+            "plays": 2,
+            "cover": "https://img.radioparadise.com/covers/l/23594.jpg",
+            "year": 2008,
+            "album_id": "23594",
+            "created_at": "2026-07-28"
+          },
+          {
+            "rank": 17,
+            "name": "Tiles & Moss",
+            "sub": "Pebbledash",
+            "plays": 2,
+            "cover": "https://img.radioparadise.com/covers/l/30057.jpg",
+            "year": 2025,
+            "album_id": "30057",
+            "created_at": "2026-07-31"
+          },
+          {
+            "rank": 18,
+            "name": "Trees",
+            "sub": "Laurie Lewis",
+            "plays": 2,
+            "cover": "https://img.radioparadise.com/covers/l/20286.jpg",
+            "year": 2024,
+            "album_id": "20286",
+            "created_at": "2026-07-26"
+          },
+          {
+            "rank": 19,
+            "name": "A Dollar A Day",
+            "sub": "Charley Crockett",
+            "plays": 1,
+            "cover": "https://img.radioparadise.com/covers/l/23986.jpg",
+            "year": 2025,
+            "album_id": "23986",
+            "created_at": "2026-07-29"
+          },
+          {
+            "rank": 20,
+            "name": "A Night of Reckoning",
+            "sub": "Dead  Reckoners",
+            "plays": 1,
+            "cover": "https://img.radioparadise.com/covers/l/23167.jpg",
+            "year": 1997,
+            "album_id": "23167",
+            "created_at": "2026-07-29"
+          }
+        ]
+      },
+      "monthly": {
+        "period": "Past 30 Days (since July 8, 2026)",
+        "songs": [],
+        "artists": [],
+        "albums": [],
+        "new_songs": [],
+        "new_artists": [],
+        "new_albums": []
+      },
+      "yearly": {
+        "period": "Past 365 Days (since August 7, 2025)",
+        "songs": [],
+        "artists": [],
+        "albums": [],
+        "new_songs": [],
+        "new_artists": [],
+        "new_albums": []
+      }
+    },
+    {
+      "channel": 0,
+      "slug": "main",
+      "name": "Main Mix",
+      "weekly": {
+        "period": "Week of July 26, 2026",
+        "songs": [],
+        "artists": [],
+        "albums": [],
+        "new_songs": [],
+        "new_artists": [],
+        "new_albums": [
+          {
+            "rank": 1,
+            "name": "After the Snow",
+            "sub": "Modern English",
+            "plays": 1,
+            "cover": "https://img.radioparadise.com/covers/l/16183.jpg",
+            "year": 1982,
+            "album_id": "16183",
+            "created_at": "2026-07-27"
+          },
+          {
+            "rank": 2,
+            "name": "Argybargy",
+            "sub": "Squeeze",
+            "plays": 1,
+            "cover": "https://img.radioparadise.com/covers/l/17430.jpg",
+            "year": 1980,
+            "album_id": "17430",
+            "created_at": "2026-07-31"
+          },
+          {
+            "rank": 3,
+            "name": "Ceremonials",
+            "sub": "Florence + The Machine",
+            "plays": 1,
+            "cover": "https://img.radioparadise.com/covers/l/13513.jpg",
+            "year": 2011,
+            "album_id": "13513",
+            "created_at": "2026-07-29"
+          },
+          {
+            "rank": 4,
+            "name": "Doublespeak",
+            "sub": "Doublespeak",
+            "plays": 1,
+            "cover": "https://img.radioparadise.com/covers/l/31171.jpg",
+            "year": 2026,
+            "album_id": "31171",
+            "created_at": "2026-07-29"
+          },
+          {
+            "rank": 5,
+            "name": "Greatish Hits: I Followed My Dreams and My Dreams Said to Crawl",
+            "sub": "Father John Misty",
+            "plays": 1,
+            "cover": "https://img.radioparadise.com/covers/l/26894.jpg",
+            "year": 2018,
+            "album_id": "26894",
+            "created_at": "2026-08-05"
+          },
+          {
+            "rank": 6,
+            "name": "Love Bombs",
+            "sub": "Bloc Party",
+            "plays": 1,
+            "cover": "https://img.radioparadise.com/covers/l/29988.jpg",
+            "year": 2026,
+            "album_id": "29988",
+            "created_at": "2026-07-27"
+          },
+          {
+            "rank": 7,
+            "name": "Mixtape No.2",
+            "sub": "Karate Boogaloo",
+            "plays": 1,
+            "cover": "https://img.radioparadise.com/covers/l/26488.jpg",
+            "year": 2019,
+            "album_id": "26488",
+            "created_at": "2026-07-29"
+          },
+          {
+            "rank": 8,
+            "name": "Nightclubbing",
+            "sub": "Grace Jones",
+            "plays": 1,
+            "cover": "https://img.radioparadise.com/covers/l/13103.jpg",
+            "year": 1981,
+            "album_id": "13103",
+            "created_at": "2026-07-27"
+          },
+          {
+            "rank": 9,
+            "name": "Paradises",
+            "sub": "Ladytron",
+            "plays": 1,
+            "cover": "https://img.radioparadise.com/covers/l/30606.jpg",
+            "year": 2026,
+            "album_id": "30606",
+            "created_at": "2026-07-31"
+          },
+          {
+            "rank": 10,
+            "name": "Renascent",
+            "sub": "The Durutti Column",
+            "plays": 1,
+            "cover": "https://img.radioparadise.com/covers/l/31584.jpg",
+            "year": 2026,
+            "album_id": "31584",
+            "created_at": "2026-08-04"
+          },
+          {
+            "rank": 11,
+            "name": "Sailing to Philadelphia",
+            "sub": "Mark Knopfler",
+            "plays": 1,
+            "cover": "https://img.radioparadise.com/covers/l/7555.jpg",
+            "year": 2000,
+            "album_id": "7555",
+            "created_at": "2026-08-04"
+          },
+          {
+            "rank": 12,
+            "name": "Strange Disciple",
+            "sub": "Nation of Language",
+            "plays": 1,
+            "cover": "https://img.radioparadise.com/covers/l/30607.jpg",
+            "year": 2023,
+            "album_id": "30607",
+            "created_at": "2026-07-27"
+          },
+          {
+            "rank": 13,
+            "name": "The Complete Atlantic Albums",
+            "sub": "The Drifters",
+            "plays": 1,
+            "cover": "https://img.radioparadise.com/covers/l/28938.jpg",
+            "year": 1964,
+            "album_id": "28938",
+            "created_at": "2026-07-28"
+          },
+          {
+            "rank": 14,
+            "name": "Vicious Delicious",
+            "sub": "Luvcat",
+            "plays": 1,
+            "cover": "https://img.radioparadise.com/covers/l/30070.jpg",
+            "year": 2025,
+            "album_id": "30070",
+            "created_at": "2026-07-27"
+          }
+        ]
+      },
+      "monthly": {
+        "period": "Past 30 Days (since July 8, 2026)",
+        "songs": [],
+        "artists": [],
+        "albums": [],
+        "new_songs": [],
+        "new_artists": [],
+        "new_albums": []
+      },
+      "yearly": {
+        "period": "Past 365 Days (since August 7, 2025)",
+        "songs": [],
+        "artists": [],
+        "albums": [],
+        "new_songs": [],
+        "new_artists": [],
+        "new_albums": []
+      }
+    },
+    {
+      "channel": 2,
+      "slug": "rockit",
+      "name": "RockIt!",
+      "weekly": {
+        "period": "Week of July 26, 2026",
+        "songs": [],
+        "artists": [],
+        "albums": [],
+        "new_songs": [],
+        "new_artists": [],
+        "new_albums": [
+          {
+            "rank": 1,
+            "name": "Dirt",
+            "sub": "Alice In Chains",
+            "plays": 3,
+            "cover": "https://img.radioparadise.com/covers/l/30592.jpg",
+            "year": 1993,
+            "album_id": "30592",
+            "created_at": "2026-07-31"
+          },
+          {
+            "rank": 2,
+            "name": "Abacab",
+            "sub": "Genesis",
+            "plays": 2,
+            "cover": "https://img.radioparadise.com/covers/l/11427.jpg",
+            "year": 1980,
+            "album_id": "11427",
+            "created_at": "2026-07-31"
+          },
+          {
+            "rank": 3,
+            "name": "Tiles & Moss",
+            "sub": "Pebbledash",
+            "plays": 2,
+            "cover": "https://img.radioparadise.com/covers/l/30057.jpg",
+            "year": 2025,
+            "album_id": "30057",
+            "created_at": "2026-07-31"
+          },
+          {
+            "rank": 4,
+            "name": "Burn the Deck",
+            "sub": "Slothrust",
+            "plays": 1,
+            "cover": "https://img.radioparadise.com/covers/l/31574.jpg",
+            "year": 2026,
+            "album_id": "31574",
+            "created_at": "2026-08-04"
+          },
+          {
+            "rank": 5,
+            "name": "Cowboys from Hell",
+            "sub": "Pantera",
+            "plays": 1,
+            "cover": "https://img.radioparadise.com/covers/l/30576.jpg",
+            "year": 2012,
+            "album_id": "30576",
+            "created_at": "2026-08-04"
+          }
+        ]
+      },
+      "monthly": {
+        "period": "Past 30 Days (since July 8, 2026)",
+        "songs": [],
+        "artists": [],
+        "albums": [],
+        "new_songs": [],
+        "new_artists": [],
+        "new_albums": []
+      },
+      "yearly": {
+        "period": "Past 365 Days (since August 7, 2025)",
+        "songs": [],
+        "artists": [],
+        "albums": [],
+        "new_songs": [],
+        "new_artists": [],
+        "new_albums": []
+      }
+    }
+  ]
+}
