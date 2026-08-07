@@ -143,7 +143,9 @@ func (r *Runner) cacheLibraryData(ctx context.Context) error {
 		}
 	}
 
-	if r.bookClient != nil {
+	wantBooks := r.mediaTypeFilter == "" || r.mediaTypeFilter == model.MediaTypeBook
+
+	if r.bookClient != nil && wantBooks {
 		books, err := r.bookClient.GetAllBooks(ctx)
 		if err != nil {
 			r.log.Warn().Err(err).Msg("failed to fetch LazyLibrarian library")

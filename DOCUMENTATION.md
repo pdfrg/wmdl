@@ -387,6 +387,10 @@ Flags:
 - `--lookback` — one-shot lookback override, format: `type:range[,type:range...]`
   (e.g. `movie:4-8` looks back 4-8 weeks for movie streaming)
 
+When `--type` is set, library preloading is scoped to the matching libraries
+(Sonarr for tv/anime, Radarr for movie, Lidarr for music, LazyLibrarian for
+book). With no `--type`, all configured libraries are preloaded.
+
 ### `wmdl review`
 
 Opens a Bubble Tea TUI showing all pending releases. Approve or reject each one.

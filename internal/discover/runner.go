@@ -186,21 +186,22 @@ func (r *Runner) Run(ctx context.Context) error {
 	}
 
 	// Kick off *arr library fetches in background so they run during scraping.
-	if r.sonarr != nil {
+	// Only fetch libraries for the media types being discovered.
+	if r.sonarr != nil && (wantTV || wantAnime) {
 		r.sonarrRes = newAsyncResult[[]library.SonarrSeries]()
 		go func() {
 			series, err := r.sonarr.GetAllSeries(ctx)
 			r.sonarrRes.done(series, err)
 		}()
 	}
-	if r.radarr != nil {
+	if r.radarr != nil && wantMovie {
 		r.radarrRes = newAsyncResult[[]library.RadarrMovie]()
 		go func() {
 			movies, err := r.radarr.GetAllMovies(ctx)
 			r.radarrRes.done(movies, err)
 		}()
 	}
-	if r.lidarr != nil {
+	if r.lidarr != nil && wantMusic {
 		r.lidarrRes = newAsyncResult[struct {
 			artists []library.LidarrArtist
 			albums  []library.LidarrAlbum
