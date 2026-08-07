@@ -258,14 +258,6 @@ func (t *TUI) buildMusicContent(ae *db.EventWithAlbumRelease, rw int, maxLines i
 	}
 	b.WriteString(tagStyle.Render(strings.Join(tagParts, " · ")))
 
-	if rls.MBID != "" {
-		b.WriteString("\n")
-		infoParts := []string{string(rls.AlbumType)}
-		if label := musicDateLabel(ev.Source, rls.ReleaseDate); label != "" {
-			infoParts = append(infoParts, label)
-		}
-		b.WriteString(rtStyle.Render(strings.Join(infoParts, " · ")))
-	}
 	if rls.MBID == "" {
 		b.WriteString("\n")
 		b.WriteString(rejectedStyle.Render("⚠ No MusicBrainz match — may not add to Lidarr"))
@@ -320,15 +312,13 @@ func (t *TUI) buildMusicContent(ae *db.EventWithAlbumRelease, rw int, maxLines i
 		}
 	}
 
+	b.WriteString("\n")
+	b.WriteString(ratingsLine.Render(fmt.Sprintf("MB artist rating: %s", fmtRating(rls.MBRating))))
+
 	if u := albumNotesURL(ev); u != "" {
 		b.WriteString("\n")
 		b.WriteString(rtStyle.Render(u))
 	}
-
-	if rls.ArtistMBID != "" && !strings.HasPrefix(rls.ArtistMBID, "_nm_") {
-		b.WriteString("\n")
-	}
-	b.WriteString(ratingsLine.Render(fmt.Sprintf("MB artist rating: %s", fmtRating(rls.MBRating))))
 
 	it = t.currentItem()
 	if it != nil && it.albumEvent != nil {
