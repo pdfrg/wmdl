@@ -112,17 +112,17 @@ func TestProwlarrSearchMusic(t *testing.T) {
 	assert.Empty(t, results)
 }
 
-func TestProwlarrSearchWithIndexerID(t *testing.T) {
+func TestProwlarrSearchWithIndexerIDs(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, "1", r.URL.Query().Get("indexerIds"))
+		assert.Equal(t, "1,9,12", r.URL.Query().Get("indexerIds"))
 		w.Write([]byte("[]"))
 	}))
 	defer srv.Close()
 
 	c := NewProwlarrClient(srv.URL, "key", 10, nil)
 	results, err := c.Search(context.Background(), SearchParams{
-		Query:     "test",
-		IndexerID: 1,
+		Query:      "test",
+		IndexerIDs: []int{1, 9, 12},
 	})
 	require.NoError(t, err)
 	assert.Empty(t, results)
@@ -230,25 +230,25 @@ func TestProwlarrGetIndexerName(t *testing.T) {
 	})
 }
 
-func TestProwlarrPreferredIndexerID(t *testing.T) {
+func TestProwlarrPreferredIndexerIDs(t *testing.T) {
 	t.Run("nil map", func(t *testing.T) {
 		c := NewProwlarrClient("http://example.com", "key", 10, nil)
-		assert.Equal(t, 0, c.PreferredIndexerID(CatMovie))
+		assert.Empty(t, c.PreferredIndexerIDs(CatMovie))
 	})
 
 	t.Run("found", func(t *testing.T) {
-		c := NewProwlarrClient("http://example.com", "key", 10, map[string]int{
-			"videos": 5,
+		c := NewProwlarrClient("http://example.com", "key", 10, map[string][]int{
+			"videos": {5, 9, 12},
 		})
-		assert.Equal(t, 5, c.PreferredIndexerID(CatMovie))
-		assert.Equal(t, 5, c.PreferredIndexerID(CatTV))
+		assert.Equal(t, []int{5, 9, 12}, c.PreferredIndexerIDs(CatMovie))
+		assert.Equal(t, []int{5, 9, 12}, c.PreferredIndexerIDs(CatTV))
 	})
 
 	t.Run("category not mapped", func(t *testing.T) {
-		c := NewProwlarrClient("http://example.com", "key", 10, map[string]int{
-			"videos": 5,
+		c := NewProwlarrClient("http://example.com", "key", 10, map[string][]int{
+			"videos": {5},
 		})
-		assert.Equal(t, 0, c.PreferredIndexerID(CatMusic))
+		assert.Empty(t, c.PreferredIndexerIDs(CatMusic))
 	})
 }
 

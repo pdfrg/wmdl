@@ -66,11 +66,20 @@ func NewSelector(title string, releases []quality.ParsedRelease) *Selector {
 		if len(r.ReleaseGroup) > s.colWidths.releaseGroup {
 			s.colWidths.releaseGroup = len(r.ReleaseGroup)
 		}
-		if len(r.IndexerName) > s.colWidths.indexerName {
-			s.colWidths.indexerName = len(r.IndexerName)
+		if w := len(indexerLabel(r)); w > s.colWidths.indexerName {
+			s.colWidths.indexerName = w
 		}
 	}
 	return s
+}
+
+// indexerLabel renders the indexer column for a release, appending a "+N"
+// badge when the same release is also on additional preferred trackers.
+func indexerLabel(r quality.ParsedRelease) string {
+	if r.ExtraTrackerCount > 0 {
+		return fmt.Sprintf("%s +%d", r.IndexerName, r.ExtraTrackerCount)
+	}
+	return r.IndexerName
 }
 
 func (s *Selector) Run() ([]quality.ParsedRelease, error) {
@@ -187,7 +196,7 @@ func (s *Selector) View() tea.View {
 			s.colWidths.source, r.Source,
 			s.colWidths.codec, r.Codec,
 			s.colWidths.releaseGroup, r.ReleaseGroup,
-			s.colWidths.indexerName, r.IndexerName,
+			s.colWidths.indexerName, indexerLabel(r),
 		)
 
 		line := fmt.Sprintf("%s[%s] %-4s %s\n     %s  S: %*d  %-*s",

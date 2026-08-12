@@ -38,7 +38,7 @@ func (e *Executor) searchRelease(ctx context.Context, title *model.Title, stripp
 		queries = movieSearchQueries(stripped, title.Year, resKeyword)
 	}
 
-	preferredID := e.prowl.PreferredIndexerID(searchCats[0])
+	preferredIDs := e.prowl.PreferredIndexerIDs(searchCats[0])
 	numTiers := len(queries)
 	var exactPool, fuzzyPool []quality.ParsedRelease
 
@@ -51,9 +51,12 @@ func (e *Executor) searchRelease(ctx context.Context, title *model.Title, stripp
 		allCatSets = [][]int{{search.CatTV}}
 	}
 
-	if preferredID > 0 {
-		name := e.prowl.GetIndexerName(ctx, preferredID)
-		e.log.Info().Str("name", name).Int("id", preferredID).Msg("preferred indexer")
+	if len(preferredIDs) > 0 {
+		names := make([]string, 0, len(preferredIDs))
+		for _, id := range preferredIDs {
+			names = append(names, e.prowl.GetIndexerName(ctx, id))
+		}
+		e.log.Info().Ints("ids", preferredIDs).Strs("names", names).Msg("preferred indexers")
 
 		for _, cats := range animeCatSets {
 			for i, q := range queries {
@@ -61,7 +64,7 @@ func (e *Executor) searchRelease(ctx context.Context, title *model.Title, stripp
 				results, err := e.prowl.Search(ctx, search.SearchParams{
 					Query:      q,
 					Type:       searchType,
-					IndexerID:  preferredID,
+					IndexerIDs: preferredIDs,
 					Limit:      50,
 					Categories: cats,
 				})
@@ -70,8 +73,8 @@ func (e *Executor) searchRelease(ctx context.Context, title *model.Title, stripp
 					break
 				}
 				exact, fuzzy := quality.PartitionReleases(results, sanitized, title.Year, season, string(title.MediaType))
-				exactPool = mergeReleases(exactPool, exact)
-				fuzzyPool = mergeReleases(fuzzyPool, fuzzy)
+				exactPool = mergeReleases(exactPool, exact, preferredIDs)
+				fuzzyPool = mergeReleases(fuzzyPool, fuzzy, preferredIDs)
 				e.log.Debug().Msgf("→ %d exact, %d fuzzy (exact total: %d)", len(exact), len(fuzzy), len(exactPool))
 				if len(exactPool) >= 10 {
 					return exactPool, nil
@@ -96,8 +99,8 @@ func (e *Executor) searchRelease(ctx context.Context, title *model.Title, stripp
 				continue
 			}
 			exact, fuzzy := quality.PartitionReleases(results, sanitized, title.Year, season, string(title.MediaType))
-			exactPool = mergeReleases(exactPool, exact)
-			fuzzyPool = mergeReleases(fuzzyPool, fuzzy)
+			exactPool = mergeReleases(exactPool, exact, preferredIDs)
+			fuzzyPool = mergeReleases(fuzzyPool, fuzzy, preferredIDs)
 			e.log.Debug().Msgf("→ %d exact, %d fuzzy (exact total: %d)", len(exact), len(fuzzy), len(exactPool))
 			if len(exactPool) >= 10 {
 				return exactPool, nil

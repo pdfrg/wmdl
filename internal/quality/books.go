@@ -10,7 +10,7 @@ type BookQualityPrefs struct {
 	AudiobookFormatPriority []string
 	MinSeeders              int
 	PreferredGroups         []string
-	PreferredIndexerID      int
+	PreferredIndexerIDs     []int // ordered by preference (earlier = more preferred)
 }
 
 type ParsedBookRelease struct {
@@ -100,7 +100,7 @@ func ScoreBook(r ParsedBookRelease, prefs BookQualityPrefs) int {
 
 	score += groupBonus(r.ReleaseGroup, prefs.PreferredGroups)
 	score += seederScore(r.Seeders, prefs.MinSeeders)
-	score += preferredIndexerBonus(r.IndexerID, prefs.PreferredIndexerID)
+	score += preferredIndexerBonus(r.IndexerID, prefs.PreferredIndexerIDs)
 
 	return score
 }

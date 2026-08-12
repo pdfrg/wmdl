@@ -141,7 +141,7 @@ func NewExecutor(logger zerolog.Logger, cfg *config.Config, database *db.DB) *Ex
 	if cfg.Hardcover.APIKey != "" {
 		hc = discover.NewHardcoverClient(cfg.Hardcover.APIKey)
 	}
-	catMap := map[string]int{
+	catMap := map[string][]int{
 		"videos":     cfg.Prowlarr.IndexerIDs.Videos,
 		"music":      cfg.Prowlarr.IndexerIDs.Music,
 		"anime":      cfg.Prowlarr.IndexerIDs.Anime,

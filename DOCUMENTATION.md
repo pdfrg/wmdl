@@ -79,15 +79,30 @@ prowlarr:
   api_key: ""
   timeout: 120
   indexer_id:
-    videos: 0       # movies + TV (0 = all indexers)
-    music: 0        # music
-    anime: 0        # anime
-    ebooks: 0       # ebooks
-    audiobooks: 0   # audiobooks
+    videos: []      # movies + TV (empty = all indexers)
+    music: []       # music
+    anime: []       # anime
+    ebooks: []      # ebooks
+    audiobooks: []  # audiobooks
 ```
 
-If `indexer_id` is configured (not 0), wmdl searches preferred indexer first.  If < `show_top_n` (default 10)
-results are obtained from preferred indexer, fallback searches using all indexers will be performed.
+Each `indexer_id.<category>` accepts a single ID or a list of IDs in descending order of preference
+(`0` or an empty list means search all indexers):
+
+```yaml
+  indexer_id:
+    videos: [12, 5, 9]   # TorrentLeech most preferred, then IPT, then AR
+    music: 3             # single ID also works
+```
+
+If any preferred indexer is configured, wmdl searches those trackers first (in one Prowlarr call via the
+comma-joined `indexerIds` param). If fewer than `show_top_n` (default 10) results are obtained from the
+preferred trackers, a fallback search using all indexers is performed.
+
+Releases found on multiple trackers are deduplicated in the release picker: the copy from the
+highest-ranked preferred tracker is kept, and the tracker column shows a `+N` badge (e.g. `TL +2`) when the
+same release is also hosted on additional preferred trackers. Ranking rewards preferred trackers by order:
+250/240/230/... points for the 1st/2nd/3rd/... entry.
 
 ### TMDB
 

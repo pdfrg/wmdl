@@ -4,8 +4,11 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
+	"strconv"
 	"strings"
 
+	"github.com/go-viper/mapstructure/v2"
 	"github.com/spf13/viper"
 
 	"github.com/pdfrg/wmdl/internal/model"
@@ -64,12 +67,15 @@ type ProwlarrConfig struct {
 	IndexerIDs IndexerPerCategory `mapstructure:"indexer_id"`
 }
 
+// IndexerPerCategory holds the preferred Prowlarr indexer IDs per media
+// category, in descending order of preference. Each entry may be configured
+// as a single integer or a list, e.g. `videos: 5` or `videos: [5, 9, 12]`.
 type IndexerPerCategory struct {
-	Videos     int `mapstructure:"videos"`
-	Music      int `mapstructure:"music"`
-	Anime      int `mapstructure:"anime"`
-	Ebooks     int `mapstructure:"ebooks"`
-	Audiobooks int `mapstructure:"audiobooks"`
+	Videos     []int `mapstructure:"videos"`
+	Music      []int `mapstructure:"music"`
+	Anime      []int `mapstructure:"anime"`
+	Ebooks     []int `mapstructure:"ebooks"`
+	Audiobooks []int `mapstructure:"audiobooks"`
 }
 
 type TMDBConfig struct {
@@ -301,11 +307,82 @@ func Load() (*Config, error) {
 	}
 
 	var cfg Config
-	if err := v.Unmarshal(&cfg); err != nil {
+	if err := v.Unmarshal(&cfg, func(c *mapstructure.DecoderConfig) {
+		c.DecodeHook = mapstructure.ComposeDecodeHookFunc(
+			mapstructure.StringToTimeDurationHookFunc(),
+			mapstructure.StringToSliceHookFunc(","),
+			intToIntSliceHookFunc(),
+		)
+	}); err != nil {
 		return nil, fmt.Errorf("unmarshaling config: %w", err)
 	}
 
 	return &cfg, nil
+}
+
+// intToIntSliceHookFunc coerces a scalar integer (or comma-separated string)
+// into an int slice, so `prowlarr.indexer_id.videos: 5` and
+// `prowlarr.indexer_id.videos: [5, 9, 12]` both decode. Scalar 0 (the legacy
+// "search all indexers" sentinel) decodes to an empty slice.
+func intToIntSliceHookFunc() mapstructure.DecodeHookFunc {
+	return func(from, to reflect.Type, data any) (any, error) {
+		if to != reflect.TypeOf([]int{}) {
+			return data, nil
+		}
+		switch v := data.(type) {
+		case int:
+			if v == 0 {
+				return []int{}, nil
+			}
+			return []int{v}, nil
+		case int64:
+			if v == 0 {
+				return []int{}, nil
+			}
+			return []int{int(v)}, nil
+		case float64:
+			if v == 0 {
+				return []int{}, nil
+			}
+			return []int{int(v)}, nil
+		case string:
+			var out []int
+			for _, part := range strings.Split(v, ",") {
+				part = strings.TrimSpace(part)
+				if part == "" {
+					continue
+				}
+				n, err := strconv.Atoi(part)
+				if err != nil {
+					return nil, fmt.Errorf("invalid indexer id %q: %w", part, err)
+				}
+				if n > 0 {
+					out = append(out, n)
+				}
+			}
+			return out, nil
+		case []any:
+			out := make([]int, 0, len(v))
+			for _, e := range v {
+				switch n := e.(type) {
+				case int:
+					if n > 0 {
+						out = append(out, n)
+					}
+				case int64:
+					if n > 0 {
+						out = append(out, int(n))
+					}
+				case float64:
+					if n > 0 {
+						out = append(out, int(n))
+					}
+				}
+			}
+			return out, nil
+		}
+		return data, nil
+	}
 }
 
 const (
@@ -569,11 +646,11 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("quality.tv.source_priority", []string{"bluray", "web-dl", "webrip"})
 	v.SetDefault("quality.tv.codec_priority", []string{"h265", "h264", "av1"})
 	v.SetDefault("prowlarr.timeout", 120)
-	v.SetDefault("prowlarr.indexer_id.videos", 0)
-	v.SetDefault("prowlarr.indexer_id.music", 0)
-	v.SetDefault("prowlarr.indexer_id.anime", 0)
-	v.SetDefault("prowlarr.indexer_id.ebooks", 0)
-	v.SetDefault("prowlarr.indexer_id.audiobooks", 0)
+	v.SetDefault("prowlarr.indexer_id.videos", []int{})
+	v.SetDefault("prowlarr.indexer_id.music", []int{})
+	v.SetDefault("prowlarr.indexer_id.anime", []int{})
+	v.SetDefault("prowlarr.indexer_id.ebooks", []int{})
+	v.SetDefault("prowlarr.indexer_id.audiobooks", []int{})
 	v.SetDefault("library.radarr.monitor", false)
 	v.SetDefault("library.radarr.timeout", 300)
 	v.SetDefault("library.sonarr.monitor_new_episodes", true)

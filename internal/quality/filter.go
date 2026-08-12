@@ -26,16 +26,20 @@ type ParsedRelease struct {
 	DownloadURL string
 	MagnetURL   string
 	InfoHash    string
+
+	// ExtraTrackerCount is the number of additional (preferred) trackers that
+	// host the same release (same InfoHash). Populated during dedup merge.
+	ExtraTrackerCount int
 }
 
 type QualityPrefs struct {
-	TargetResolution   int
-	PreferHDR          bool
-	SourcePriority     []string
-	CodecPriority      []string
-	PreferredGroups    []string
-	MinSeeders         int
-	PreferredIndexerID int
+	TargetResolution    int
+	PreferHDR           bool
+	SourcePriority      []string
+	CodecPriority       []string
+	PreferredGroups     []string
+	MinSeeders          int
+	PreferredIndexerIDs []int // ordered by preference (earlier = more preferred)
 }
 
 var (
@@ -173,16 +177,24 @@ func Score(r ParsedRelease, prefs QualityPrefs) int {
 	score += codecScore(r.Codec, prefs.CodecPriority)
 	score += groupBonus(r.ReleaseGroup, prefs.PreferredGroups)
 	score += seederScore(r.Seeders, prefs.MinSeeders)
-	score += preferredIndexerBonus(r.IndexerID, prefs.PreferredIndexerID)
+	score += preferredIndexerBonus(r.IndexerID, prefs.PreferredIndexerIDs)
 	if r.ExtraWords {
 		score -= 100000
 	}
 	return score
 }
 
-func preferredIndexerBonus(releaseIndexerID, preferredIndexerID int) int {
-	if preferredIndexerID > 0 && releaseIndexerID == preferredIndexerID {
-		return 250
+// preferredIndexerBonus rewards releases found on a preferred indexer, scaled
+// by the indexer's position in the preferred list (earlier = higher bonus).
+func preferredIndexerBonus(releaseIndexerID int, preferredIDs []int) int {
+	for rank, id := range preferredIDs {
+		if releaseIndexerID == id {
+			b := 250 - rank*10
+			if b < 0 {
+				return 0
+			}
+			return b
+		}
 	}
 	return 0
 }

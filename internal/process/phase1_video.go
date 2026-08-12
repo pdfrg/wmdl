@@ -55,7 +55,7 @@ func (e *Executor) SearchEvent(ctx context.Context, evt db.EventWithTitle) *Sear
 	case model.MediaTypeAnime:
 		cat = search.CatAnime
 	}
-	prefs := buildQualityPrefs(e.cfg, title.MediaType, e.prowl.PreferredIndexerID(cat))
+	prefs := buildQualityPrefs(e.cfg, title.MediaType, e.prowl.PreferredIndexerIDs(cat))
 	top := quality.SortAndTop(releases, prefs, e.cfg.ShowTopN)
 
 	return &SearchResult{

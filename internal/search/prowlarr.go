@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -21,7 +22,7 @@ type ProwlarrClient struct {
 	http              *http.Client
 	mu                sync.Mutex
 	indexerNames      map[int]string
-	indexerByCategory map[string]int
+	indexerByCategory map[string][]int
 }
 
 type indexerInfo struct {
@@ -29,7 +30,7 @@ type indexerInfo struct {
 	Name string `json:"name"`
 }
 
-func NewProwlarrClient(baseURL, apiKey string, timeoutSec int, indexerByCategory map[string]int) *ProwlarrClient {
+func NewProwlarrClient(baseURL, apiKey string, timeoutSec int, indexerByCategory map[string][]int) *ProwlarrClient {
 	if timeoutSec <= 0 {
 		timeoutSec = 120
 	}
@@ -89,9 +90,12 @@ func categoryKey(cat int) string {
 	return ""
 }
 
-func (p *ProwlarrClient) PreferredIndexerID(category int) int {
+// PreferredIndexerIDs returns the configured preferred Prowlarr indexer IDs
+// for a given category, in descending order of preference. An empty list
+// means "search all indexers".
+func (p *ProwlarrClient) PreferredIndexerIDs(category int) []int {
 	if p.indexerByCategory == nil {
-		return 0
+		return nil
 	}
 	return p.indexerByCategory[categoryKey(category)]
 }
@@ -108,7 +112,7 @@ func (p *ProwlarrClient) SearchAnime(ctx context.Context, query string) ([]quali
 type SearchParams struct {
 	Query      string
 	Type       string // "search", "movie", "tvsearch"
-	IndexerID  int
+	IndexerIDs []int  // preferred indexer IDs to restrict the search to (empty = all)
 	Limit      int
 	Categories []int // Newznab category IDs to restrict search to
 }
@@ -123,8 +127,12 @@ func (p *ProwlarrClient) Search(ctx context.Context, params SearchParams) ([]qua
 	if params.Type != "" {
 		q.Set("type", params.Type)
 	}
-	if params.IndexerID > 0 {
-		q.Set("indexerIds", fmt.Sprintf("%d", params.IndexerID))
+	if len(params.IndexerIDs) > 0 {
+		idStrs := make([]string, len(params.IndexerIDs))
+		for i, id := range params.IndexerIDs {
+			idStrs[i] = strconv.Itoa(id)
+		}
+		q.Set("indexerIds", strings.Join(idStrs, ","))
 	}
 	if params.Limit > 0 {
 		q.Set("limit", fmt.Sprintf("%d", params.Limit))

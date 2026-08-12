@@ -27,22 +27,22 @@ func TestBuildQualityPrefs(t *testing.T) {
 	}
 
 	t.Run("movies", func(t *testing.T) {
-		prefs := buildQualityPrefs(cfg, model.MediaTypeMovie, 5)
+		prefs := buildQualityPrefs(cfg, model.MediaTypeMovie, []int{5, 9})
 		assert.Equal(t, 2160, prefs.TargetResolution)
 		assert.True(t, prefs.PreferHDR)
 		assert.Equal(t, []string{"BluRay", "WEB-DL"}, prefs.SourcePriority)
 		assert.Equal(t, 10, prefs.MinSeeders)
-		assert.Equal(t, 5, prefs.PreferredIndexerID)
+		assert.Equal(t, []int{5, 9}, prefs.PreferredIndexerIDs)
 	})
 
 	t.Run("tv", func(t *testing.T) {
-		prefs := buildQualityPrefs(cfg, model.MediaTypeTV, 0)
+		prefs := buildQualityPrefs(cfg, model.MediaTypeTV, nil)
 		assert.Equal(t, 1080, prefs.TargetResolution)
 		assert.False(t, prefs.PreferHDR)
 	})
 
 	t.Run("anime falls to movie config (else branch)", func(t *testing.T) {
-		prefs := buildQualityPrefs(cfg, model.MediaTypeAnime, 0)
+		prefs := buildQualityPrefs(cfg, model.MediaTypeAnime, nil)
 		assert.Equal(t, 2160, prefs.TargetResolution)
 	})
 }
@@ -59,10 +59,10 @@ func TestBuildBookQualityPrefs(t *testing.T) {
 		PreferredGroups: []string{"BOOKGRP"},
 	}
 
-	prefs := buildBookQualityPrefs(cfg, 3)
+	prefs := buildBookQualityPrefs(cfg, []int{3, 7})
 	assert.Equal(t, []string{"EPUB", "MOBI"}, prefs.EbookFormatPriority)
 	assert.Equal(t, []string{"M4B", "MP3"}, prefs.AudiobookFormatPriority)
 	assert.Equal(t, 5, prefs.MinSeeders)
 	assert.Equal(t, []string{"BOOKGRP"}, prefs.PreferredGroups)
-	assert.Equal(t, 3, prefs.PreferredIndexerID)
+	assert.Equal(t, []int{3, 7}, prefs.PreferredIndexerIDs)
 }

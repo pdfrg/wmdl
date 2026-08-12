@@ -164,19 +164,27 @@ func TestSeederScore(t *testing.T) {
 }
 
 func TestPreferredIndexerBonus(t *testing.T) {
+	deep := make([]int, 27)
+	for i := range deep {
+		deep[i] = i + 1
+	}
 	tests := []struct {
-		name        string
-		releaseID   int
-		preferredID int
-		want        int
+		name         string
+		releaseID    int
+		preferredIDs []int
+		want         int
 	}{
-		{"no preferred", 1, 0, 0},
-		{"match", 1, 1, 250},
-		{"no match", 2, 1, 0},
+		{"no preferred", 1, nil, 0},
+		{"empty list", 1, []int{}, 0},
+		{"first rank", 1, []int{1, 2, 3}, 250},
+		{"second rank", 2, []int{1, 2, 3}, 240},
+		{"third rank", 3, []int{1, 2, 3}, 230},
+		{"deep rank floors at zero", 26, deep, 0},
+		{"not in list", 9, []int{1, 2, 3}, 0},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := preferredIndexerBonus(tt.releaseID, tt.preferredID)
+			got := preferredIndexerBonus(tt.releaseID, tt.preferredIDs)
 			assert.Equal(t, tt.want, got)
 		})
 	}
@@ -184,13 +192,13 @@ func TestPreferredIndexerBonus(t *testing.T) {
 
 func TestScore(t *testing.T) {
 	prefs := QualityPrefs{
-		TargetResolution:   1080,
-		PreferHDR:          true,
-		SourcePriority:     []string{"bluray", "web-dl", "hdtv"},
-		CodecPriority:      []string{"h265", "h264"},
-		PreferredGroups:    []string{"GRP"},
-		MinSeeders:         0,
-		PreferredIndexerID: 0,
+		TargetResolution:    1080,
+		PreferHDR:           true,
+		SourcePriority:      []string{"bluray", "web-dl", "hdtv"},
+		CodecPriority:       []string{"h265", "h264"},
+		PreferredGroups:     []string{"GRP"},
+		MinSeeders:          0,
+		PreferredIndexerIDs: nil,
 	}
 
 	tests := []struct {

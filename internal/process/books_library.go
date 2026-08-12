@@ -231,17 +231,17 @@ func (e *Executor) processPhase3BookBatchItem(ctx context.Context, item *BatchIt
 	e.log.Info().Str("book", ae.Book.Title).Msg("book phase 3 item downloaded")
 }
 
-func buildBookQualityPrefs(cfg *config.Config, preferredID int) quality.BookQualityPrefs {
+func buildBookQualityPrefs(cfg *config.Config, preferredIDs []int) quality.BookQualityPrefs {
 	return quality.BookQualityPrefs{
 		EbookFormatPriority:     cfg.Quality.Books.Ebooks.FormatPriority,
 		AudiobookFormatPriority: cfg.Quality.Books.Audiobooks.FormatPriority,
 		MinSeeders:              cfg.MinSeeders,
 		PreferredGroups:         cfg.PreferredGroups,
-		PreferredIndexerID:      preferredID,
+		PreferredIndexerIDs:     preferredIDs,
 	}
 }
 
-func buildQualityPrefs(cfg *config.Config, mediaType model.MediaType, preferredID int) quality.QualityPrefs {
+func buildQualityPrefs(cfg *config.Config, mediaType model.MediaType, preferredIDs []int) quality.QualityPrefs {
 	var qc config.MediaQualityConfig
 	if mediaType == model.MediaTypeTV {
 		qc = cfg.Quality.TV
@@ -260,12 +260,12 @@ func buildQualityPrefs(cfg *config.Config, mediaType model.MediaType, preferredI
 	}
 
 	return quality.QualityPrefs{
-		TargetResolution:   res,
-		PreferHDR:          qc.PreferHDR,
-		SourcePriority:     qc.SourcePriority,
-		CodecPriority:      qc.CodecPriority,
-		PreferredGroups:    cfg.PreferredGroups,
-		MinSeeders:         cfg.MinSeeders,
-		PreferredIndexerID: preferredID,
+		TargetResolution:    res,
+		PreferHDR:           qc.PreferHDR,
+		SourcePriority:      qc.SourcePriority,
+		CodecPriority:       qc.CodecPriority,
+		PreferredGroups:     cfg.PreferredGroups,
+		MinSeeders:          cfg.MinSeeders,
+		PreferredIndexerIDs: preferredIDs,
 	}
 }

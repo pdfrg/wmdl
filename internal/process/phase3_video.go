@@ -215,7 +215,7 @@ func (e *Executor) SearchAllCandidates(ctx context.Context, candidates []Phase3C
 		case model.MediaTypeAnime:
 			cat = search.CatAnime
 		}
-		prefs := buildQualityPrefs(e.cfg, c.MediaType, e.prowl.PreferredIndexerID(cat))
+		prefs := buildQualityPrefs(e.cfg, c.MediaType, e.prowl.PreferredIndexerIDs(cat))
 		top := quality.SortAndTop(releases, prefs, e.cfg.ShowTopN)
 
 		entry := Phase3SearchEntry{Candidate: c, Top: top}
@@ -410,7 +410,7 @@ func (e *Executor) ProcessPhase3Pickers(ctx context.Context) {
 					continue
 				}
 
-				prefs := buildQualityPrefs(e.cfg, model.MediaTypeMovie, e.prowl.PreferredIndexerID(search.CatMovie))
+				prefs := buildQualityPrefs(e.cfg, model.MediaTypeMovie, e.prowl.PreferredIndexerIDs(search.CatMovie))
 				top := quality.SortAndTop(releases, prefs, e.cfg.ShowTopN)
 				if len(top) == 0 {
 					continue
@@ -474,7 +474,7 @@ func (e *Executor) ProcessPhase3Pickers(ctx context.Context) {
 				case model.MediaTypeAnime:
 					cat = search.CatAnime
 				}
-				prefs := buildQualityPrefs(e.cfg, p3s.MediaType, e.prowl.PreferredIndexerID(cat))
+				prefs := buildQualityPrefs(e.cfg, p3s.MediaType, e.prowl.PreferredIndexerIDs(cat))
 				top := quality.SortAndTop(releases, prefs, e.cfg.ShowTopN)
 				if len(top) == 0 {
 					continue
@@ -839,7 +839,7 @@ func (e *Executor) searchPhase3Season(ctx context.Context, s struct {
 	case model.MediaTypeAnime:
 		cat = search.CatAnime
 	}
-	prefs := buildQualityPrefs(e.cfg, s.MediaType, e.prowl.PreferredIndexerID(cat))
+	prefs := buildQualityPrefs(e.cfg, s.MediaType, e.prowl.PreferredIndexerIDs(cat))
 	top := quality.SortAndTop(releases, prefs, e.cfg.ShowTopN)
 	if len(top) == 0 {
 		e.log.Info().Str("title", s.SeriesTitle).Int("season", s.SeasonNumber).Msg("no results for earlier season")

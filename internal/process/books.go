@@ -71,13 +71,16 @@ func (e *Executor) SearchBook(ctx context.Context, evt db.EventWithBook, format 
 	}
 	bookCatSets := [][]int{{cat}, {search.CatBook}}
 
-	preferredID := e.prowl.PreferredIndexerID(cat)
+	preferredIDs := e.prowl.PreferredIndexerIDs(cat)
 	numTiers := len(queries)
 	var exactPool, fuzzyPool []quality.ParsedRelease
 
-	if preferredID > 0 {
-		name := e.prowl.GetIndexerName(ctx, preferredID)
-		e.log.Info().Str("name", name).Int("id", preferredID).Msg("preferred indexer (books)")
+	if len(preferredIDs) > 0 {
+		names := make([]string, 0, len(preferredIDs))
+		for _, id := range preferredIDs {
+			names = append(names, e.prowl.GetIndexerName(ctx, id))
+		}
+		e.log.Info().Ints("ids", preferredIDs).Strs("names", names).Msg("preferred indexers (books)")
 
 		for _, cats := range bookCatSets {
 			for i, q := range queries {
@@ -85,7 +88,7 @@ func (e *Executor) SearchBook(ctx context.Context, evt db.EventWithBook, format 
 				results, err := e.prowl.Search(ctx, search.SearchParams{
 					Query:      q,
 					Type:       "search",
-					IndexerID:  preferredID,
+					IndexerIDs: preferredIDs,
 					Limit:      50,
 					Categories: cats,
 				})
@@ -94,14 +97,14 @@ func (e *Executor) SearchBook(ctx context.Context, evt db.EventWithBook, format 
 					continue
 				}
 				exact, fuzzy := quality.PartitionBookReleasesRaw(results, evt.Author.Name, evt.Book.Title)
-				exactPool = mergeReleases(exactPool, exact)
-				fuzzyPool = mergeReleases(fuzzyPool, fuzzy)
+				exactPool = mergeReleases(exactPool, exact, preferredIDs)
+				fuzzyPool = mergeReleases(fuzzyPool, fuzzy, preferredIDs)
 				e.log.Debug().Msgf("→ %d exact, %d fuzzy (exact total: %d)", len(exact), len(fuzzy), len(exactPool))
 				if len(exact) > 0 {
 					break
 				}
 				if len(exactPool) >= e.cfg.ShowTopN {
-					return e.buildBookSearchResult(evt, exactPool, fuzzyPool, format, preferredID)
+					return e.buildBookSearchResult(evt, exactPool, fuzzyPool, format, preferredIDs)
 				}
 			}
 		}
@@ -123,22 +126,22 @@ func (e *Executor) SearchBook(ctx context.Context, evt db.EventWithBook, format 
 				continue
 			}
 			exact, fuzzy := quality.PartitionBookReleasesRaw(results, evt.Author.Name, evt.Book.Title)
-			exactPool = mergeReleases(exactPool, exact)
-			fuzzyPool = mergeReleases(fuzzyPool, fuzzy)
+			exactPool = mergeReleases(exactPool, exact, preferredIDs)
+			fuzzyPool = mergeReleases(fuzzyPool, fuzzy, preferredIDs)
 			e.log.Debug().Msgf("→ %d exact, %d fuzzy (exact total: %d)", len(exact), len(fuzzy), len(exactPool))
 			if len(exact) > 0 {
 				break
 			}
 			if len(exactPool) >= e.cfg.ShowTopN {
-				return e.buildBookSearchResult(evt, exactPool, fuzzyPool, format, preferredID)
+				return e.buildBookSearchResult(evt, exactPool, fuzzyPool, format, preferredIDs)
 			}
 		}
 	}
 
-	return e.buildBookSearchResult(evt, exactPool, fuzzyPool, format, preferredID)
+	return e.buildBookSearchResult(evt, exactPool, fuzzyPool, format, preferredIDs)
 }
 
-func (e *Executor) buildBookSearchResult(evt db.EventWithBook, exactPool, fuzzyPool []quality.ParsedRelease, format model.BookFormat, preferredID int) *BookSearchResult {
+func (e *Executor) buildBookSearchResult(evt db.EventWithBook, exactPool, fuzzyPool []quality.ParsedRelease, format model.BookFormat, preferredIDs []int) *BookSearchResult {
 	label := string(format)
 	if len(exactPool) == 0 && len(fuzzyPool) == 0 {
 		e.Unfound = append(e.Unfound, fmt.Sprintf("%s by %s [%s]", evt.Book.Title, evt.Author.Name, label))
@@ -173,7 +176,7 @@ func (e *Executor) buildBookSearchResult(evt db.EventWithBook, exactPool, fuzzyP
 		return &BookSearchResult{Event: evt, Format: format}
 	}
 
-	prefs := buildBookQualityPrefs(e.cfg, preferredID)
+	prefs := buildBookQualityPrefs(e.cfg, preferredIDs)
 	showTopN := e.cfg.ShowTopN
 
 	var top []quality.ParsedBookRelease

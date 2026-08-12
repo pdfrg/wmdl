@@ -29,24 +29,25 @@ func TestQualityPrefs(t *testing.T) {
 	}
 
 	t.Run("movies", func(t *testing.T) {
-		prefs := qualityPrefs(cfg, "movie", 1)
+		prefs := qualityPrefs(cfg, "movie", []int{1, 2})
 		assert.Equal(t, 2160, prefs.TargetResolution)
 		assert.True(t, prefs.PreferHDR)
 		assert.Equal(t, 5, prefs.MinSeeders)
+		assert.Equal(t, []int{1, 2}, prefs.PreferredIndexerIDs)
 	})
 
 	t.Run("tv", func(t *testing.T) {
-		prefs := qualityPrefs(cfg, "tv", 2)
+		prefs := qualityPrefs(cfg, "tv", []int{2})
 		assert.Equal(t, 1080, prefs.TargetResolution)
 	})
 
 	t.Run("anime", func(t *testing.T) {
-		prefs := qualityPrefs(cfg, "anime", 3)
+		prefs := qualityPrefs(cfg, "anime", []int{3})
 		assert.Equal(t, 720, prefs.TargetResolution)
 	})
 
 	t.Run("unknown defaults to movies", func(t *testing.T) {
-		prefs := qualityPrefs(cfg, "unknown", 0)
+		prefs := qualityPrefs(cfg, "unknown", nil)
 		assert.Equal(t, 2160, prefs.TargetResolution)
 	})
 }

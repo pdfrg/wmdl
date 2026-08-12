@@ -496,3 +496,63 @@ tmdb:
 		assert.ErrorContains(t, err, "reading config")
 	})
 }
+
+func TestLoadIndexerIDs(t *testing.T) {
+	writeConfig := func(t *testing.T, body string) {
+		t.Helper()
+		dir := t.TempDir()
+		cfgDir := filepath.Join(dir, "wmdl")
+		require.NoError(t, os.MkdirAll(cfgDir, 0755))
+		require.NoError(t, os.WriteFile(filepath.Join(cfgDir, "config.yaml"), []byte(body), 0644))
+		t.Setenv("XDG_CONFIG_HOME", dir)
+	}
+
+	t.Run("scalar ints decode to single-element lists", func(t *testing.T) {
+		writeConfig(t, `
+tmdb:
+  api_key: test-key
+prowlarr:
+  url: "http://prowlarr:9696"
+  api_key: prowlarr-key
+  indexer_id:
+    videos: 5
+    music: 0
+`)
+		cfg, err := Load()
+		require.NoError(t, err)
+		assert.Equal(t, []int{5}, cfg.Prowlarr.IndexerIDs.Videos)
+		assert.Empty(t, cfg.Prowlarr.IndexerIDs.Music)
+	})
+
+	t.Run("lists decode in config order", func(t *testing.T) {
+		writeConfig(t, `
+tmdb:
+  api_key: test-key
+prowlarr:
+  url: "http://prowlarr:9696"
+  api_key: prowlarr-key
+  indexer_id:
+    videos: [5, 9, 12]
+    anime:
+      - 3
+      - 8
+    ebooks: 7
+`)
+		cfg, err := Load()
+		require.NoError(t, err)
+		assert.Equal(t, []int{5, 9, 12}, cfg.Prowlarr.IndexerIDs.Videos)
+		assert.Equal(t, []int{3, 8}, cfg.Prowlarr.IndexerIDs.Anime)
+		assert.Equal(t, []int{7}, cfg.Prowlarr.IndexerIDs.Ebooks)
+	})
+
+	t.Run("omitted categories default to empty", func(t *testing.T) {
+		writeConfig(t, `
+tmdb:
+  api_key: test-key
+`)
+		cfg, err := Load()
+		require.NoError(t, err)
+		assert.Empty(t, cfg.Prowlarr.IndexerIDs.Videos)
+		assert.Empty(t, cfg.Prowlarr.IndexerIDs.Audiobooks)
+	})
+}

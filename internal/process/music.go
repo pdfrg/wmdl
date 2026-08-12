@@ -58,20 +58,23 @@ func musicSearchQueries(artist, album string, year int) []string {
 
 func (e *Executor) searchMusicRelease(ctx context.Context, artist, album string, year int) ([]quality.ParsedRelease, error) {
 	queries := musicSearchQueries(artist, album, year)
-	preferredID := e.prowl.PreferredIndexerID(search.CatMusic)
+	preferredIDs := e.prowl.PreferredIndexerIDs(search.CatMusic)
 	numTiers := len(queries)
 	var exactPool, fuzzyPool []quality.ParsedRelease
 
-	if preferredID > 0 {
-		name := e.prowl.GetIndexerName(ctx, preferredID)
-		e.log.Info().Str("name", name).Int("id", preferredID).Msg("preferred indexer (music)")
+	if len(preferredIDs) > 0 {
+		names := make([]string, 0, len(preferredIDs))
+		for _, id := range preferredIDs {
+			names = append(names, e.prowl.GetIndexerName(ctx, id))
+		}
+		e.log.Info().Ints("ids", preferredIDs).Strs("names", names).Msg("preferred indexers (music)")
 
 		for i, q := range queries {
 			e.log.Info().Msgf("[%d/%d] preferred: %s", i+1, numTiers, q)
 			results, err := e.prowl.Search(ctx, search.SearchParams{
 				Query:      q,
 				Type:       "music",
-				IndexerID:  preferredID,
+				IndexerIDs: preferredIDs,
 				Limit:      50,
 				Categories: []int{search.CatMusic},
 			})
@@ -80,8 +83,8 @@ func (e *Executor) searchMusicRelease(ctx context.Context, artist, album string,
 				break
 			}
 			exact, fuzzy := quality.PartitionMusicReleases(results, artist, album)
-			exactPool = mergeReleases(exactPool, exact)
-			fuzzyPool = mergeReleases(fuzzyPool, fuzzy)
+			exactPool = mergeReleases(exactPool, exact, preferredIDs)
+			fuzzyPool = mergeReleases(fuzzyPool, fuzzy, preferredIDs)
 			e.log.Debug().Msgf("→ %d exact, %d fuzzy (exact total: %d)", len(exact), len(fuzzy), len(exactPool))
 			if len(exactPool) >= e.cfg.ShowTopN {
 				return exactPool, nil
@@ -99,8 +102,8 @@ func (e *Executor) searchMusicRelease(ctx context.Context, artist, album string,
 			continue
 		}
 		exact, fuzzy := quality.PartitionMusicReleases(results, artist, album)
-		exactPool = mergeReleases(exactPool, exact)
-		fuzzyPool = mergeReleases(fuzzyPool, fuzzy)
+		exactPool = mergeReleases(exactPool, exact, preferredIDs)
+		fuzzyPool = mergeReleases(fuzzyPool, fuzzy, preferredIDs)
 		e.log.Debug().Msgf("→ %d exact, %d fuzzy (exact total: %d)", len(exact), len(fuzzy), len(exactPool))
 		if len(exactPool) >= e.cfg.ShowTopN {
 			return exactPool, nil
@@ -140,11 +143,11 @@ func (e *Executor) SearchMusicRelease(ctx context.Context, ae db.EventWithAlbumR
 	}
 
 	prefs := quality.MusicQualityPrefs{
-		FormatPriority:     e.cfg.Quality.Music.FormatPriority,
-		BitratePriority:    e.cfg.Quality.Music.BitratePriority,
-		MinSeeders:         e.cfg.MinSeeders,
-		PreferredGroups:    e.cfg.PreferredGroups,
-		PreferredIndexerID: e.prowl.PreferredIndexerID(search.CatMusic),
+		FormatPriority:      e.cfg.Quality.Music.FormatPriority,
+		BitratePriority:     e.cfg.Quality.Music.BitratePriority,
+		MinSeeders:          e.cfg.MinSeeders,
+		PreferredGroups:     e.cfg.PreferredGroups,
+		PreferredIndexerIDs: e.prowl.PreferredIndexerIDs(search.CatMusic),
 	}
 	top := quality.SortMusicTop(releases, prefs, e.cfg.ShowTopN)
 

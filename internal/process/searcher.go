@@ -62,7 +62,7 @@ func NewSearcher(ctx context.Context, cfg *config.Config, database *db.DB, opts 
 		bookFmt:   opts.BookFmt,
 	}
 
-	catMap := map[string]int{
+	catMap := map[string][]int{
 		"videos":     cfg.Prowlarr.IndexerIDs.Videos,
 		"music":      cfg.Prowlarr.IndexerIDs.Music,
 		"anime":      cfg.Prowlarr.IndexerIDs.Anime,
@@ -113,7 +113,7 @@ func (s *Searcher) SearchMovie(ctx context.Context, query string) error {
 	}
 
 	exact, _ := quality.PartitionReleases(releases, query, s.year, 0, "movie")
-	prefs := qualityPrefs(s.cfg, "movie", s.prowl.PreferredIndexerID(search.CatMovie))
+	prefs := qualityPrefs(s.cfg, "movie", s.prowl.PreferredIndexerIDs(search.CatMovie))
 	top := quality.SortAndTop(exact, prefs, s.cfg.ShowTopN)
 	if len(top) == 0 {
 		fmt.Fprintf(os.Stderr, "  No matching releases found.\n")
@@ -212,7 +212,7 @@ func (s *Searcher) SearchTV(ctx context.Context, query string, isAnime bool) err
 		if isAnime {
 			cat = search.CatAnime
 		}
-		prefs := qualityPrefs(s.cfg, "tv", s.prowl.PreferredIndexerID(cat))
+		prefs := qualityPrefs(s.cfg, "tv", s.prowl.PreferredIndexerIDs(cat))
 		exact, _ := quality.PartitionReleases(prowlReleases, seasonLabel, s.year, season, "tv")
 		top := quality.SortAndTop(exact, prefs, s.cfg.ShowTopN)
 		if len(top) == 0 {
@@ -724,7 +724,7 @@ func (s *Searcher) checkCollectionGaps(ctx context.Context, tmdbID int) error {
 		}
 
 		exact, _ := quality.PartitionReleases(releases, mTitle, enrich.Year, 0, "movie")
-		prefs := qualityPrefs(s.cfg, "movie", s.prowl.PreferredIndexerID(search.CatMovie))
+		prefs := qualityPrefs(s.cfg, "movie", s.prowl.PreferredIndexerIDs(search.CatMovie))
 		top := quality.SortAndTop(exact, prefs, s.cfg.ShowTopN)
 		if len(top) == 0 {
 			fmt.Fprintf(os.Stderr, "  No matching releases.\n")
@@ -756,7 +756,7 @@ func (s *Searcher) checkCollectionGaps(ctx context.Context, tmdbID int) error {
 
 // ─── Quality helpers ──────────────────────────────────────
 
-func qualityPrefs(cfg *config.Config, mt string, preferredID int) quality.QualityPrefs {
+func qualityPrefs(cfg *config.Config, mt string, preferredIDs []int) quality.QualityPrefs {
 	var qc config.MediaQualityConfig
 	switch mt {
 	case "tv":
@@ -778,13 +778,13 @@ func qualityPrefs(cfg *config.Config, mt string, preferredID int) quality.Qualit
 	}
 
 	return quality.QualityPrefs{
-		TargetResolution:   res,
-		PreferHDR:          qc.PreferHDR,
-		SourcePriority:     qc.SourcePriority,
-		CodecPriority:      qc.CodecPriority,
-		PreferredGroups:    cfg.PreferredGroups,
-		MinSeeders:         cfg.MinSeeders,
-		PreferredIndexerID: preferredID,
+		TargetResolution:    res,
+		PreferHDR:           qc.PreferHDR,
+		SourcePriority:      qc.SourcePriority,
+		CodecPriority:       qc.CodecPriority,
+		PreferredGroups:     cfg.PreferredGroups,
+		MinSeeders:          cfg.MinSeeders,
+		PreferredIndexerIDs: preferredIDs,
 	}
 }
 
