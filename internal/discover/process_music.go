@@ -60,17 +60,13 @@ func (r *Runner) processMusicItem(ctx context.Context, item ScrapedItem, progYea
 	} else if rgResult == nil {
 		blindResult, blindErr := r.mb.SearchReleaseGroupByAlbum(apiCtx, item.Title, item.Year)
 		if blindErr == nil && blindResult != nil {
-			match := false
-			for _, a := range artists {
-				if artistNamesMatch(a, blindResult.ArtistName) {
-					match = true
-					break
-				}
-			}
-			if match {
+			if releaseGroupArtistMatches(blindResult.ArtistName, artists, item.Title) {
 				mbAlbumID = blindResult.MBID
 				mbArtistID = blindResult.ArtistMBID
 				r.log.Info().Str("album", item.Title).Msg("found via blind MB search")
+			} else if strings.EqualFold(blindResult.ArtistName, "Various Artists") {
+				r.log.Info().Str("album", item.Title).Str("mb_artist", blindResult.ArtistName).
+					Msg("found on MusicBrainz under Various Artists, manual review advised")
 			} else {
 				r.log.Warn().Str("scraped_artist", item.ArtistName).
 					Str("mb_artist", blindResult.ArtistName).
@@ -82,14 +78,7 @@ func (r *Runner) processMusicItem(ctx context.Context, item ScrapedItem, progYea
 			r.log.Info().Str("album", item.Title).Msg("not found in MusicBrainz, storing without MB data")
 		}
 	} else {
-		match := false
-		for _, a := range artists {
-			if artistNamesMatch(a, rgResult.ArtistName) {
-				match = true
-				break
-			}
-		}
-		if !match {
+		if !releaseGroupArtistMatches(rgResult.ArtistName, artists, item.Title) {
 			r.log.Warn().Str("scraped_artist", item.ArtistName).
 				Str("mb_artist", rgResult.ArtistName).
 				Str("album", item.Title).
@@ -97,6 +86,15 @@ func (r *Runner) processMusicItem(ctx context.Context, item ScrapedItem, progYea
 		} else {
 			mbAlbumID = rgResult.MBID
 			mbArtistID = rgResult.ArtistMBID
+			// Composer-credited classical releases: resolve the performer's
+			// MBID so downstream Lidarr lookups find the actual artist.
+			if !artistNamesMatchVariants(item.ArtistName, rgResult.ArtistName) {
+				if res, err := r.mb.SearchArtist(apiCtx, item.ArtistName); err == nil && res != nil {
+					mbArtistID = res.MBID
+					r.log.Info().Str("artist", item.ArtistName).Str("mbid", res.MBID).
+						Msg("musicbrainz: resolved performer artist MBID")
+				}
+			}
 			r.log.Info().Str("album", item.Title).Msg("found in MusicBrainz")
 		}
 

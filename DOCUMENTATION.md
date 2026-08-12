@@ -681,6 +681,33 @@ After adding an item to the library, wmdl checks for gaps:
 
 MusicBrainz provides release group IDs, artist details, ratings, and genre tags.
 
+Release matching is layered to handle the quirks of scraped titles vs. the
+MusicBrainz database:
+
+- **Title cleaning** — trailing parentheticals, bracketed edition markers
+  (`[30th Anniversary] [Expanded Edition]`, `[Blue]`), and trailing dates
+  (`(7/3/66)` or `, 7/3/66`) are stripped; slashes are padded with spaces so
+  `Same Sun/Same Sky` finds MB's `Same Sun / Same Sky`.
+- **Artist variants** — fallback probes cover names after a conjunction
+  (`Charlie Musselwhite & GA-20` → `GA-20`), bands indexed without a leading
+  `The`, and word-joined names (`The Trash Can Sinatras` → `Trashcan Sinatras`,
+  probed via the last token).
+- **Classical `Composer: Work` titles** — MB credits these release groups to the
+  composer rather than the performer, so the search also tries the work title
+  alone under both the performer and the composer, and treats `;` and `/` as
+  equivalent separators. When a composer-credited match is accepted, the
+  performer's artist MBID is resolved separately so Lidarr lookups still find
+  the actual artist.
+- **Quotes** — embedded `"` in titles are sanitized before building the Lucene
+  query so they cannot corrupt the phrase and surface unrelated releases.
+- **No auto-match for compilations** — releases credited to `Various Artists`
+  (e.g. a specific-artist scraped compilation) are not auto-matched; a distinct
+  log line notes when one is found so it can be reviewed manually.
+
+Releases that genuinely do not exist in MusicBrainz (new releases MB hasn't
+indexed yet, or back-catalog albums MB lacks) stay unmatched and are flagged
+`No MusicBrainz match` in review until MB editors add them.
+
 ### Quality
 
 Music releases are scored by format priority (`flac > mp3 > aac`) and bitrate

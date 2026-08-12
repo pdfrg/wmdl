@@ -195,8 +195,8 @@ func TestSearchReleaseGroup_EmptyResults(t *testing.T) {
 	if got != nil {
 		t.Errorf("expected nil result, got %+v", got)
 	}
-	if len(calls) != 4 {
-		t.Errorf("expected all 4 query variants to run when no hits, got %d: %v", len(calls), calls)
+	if len(calls) != 2 {
+		t.Errorf("expected both query fields (release-group + release) to run when no hits, got %d: %v", len(calls), calls)
 	}
 }
 
@@ -249,5 +249,336 @@ func TestMBResponseShape(t *testing.T) {
 	}
 	if len(rg.ArtistCredit) == 0 || rg.ArtistCredit[0].Name != "The All‐American Rejects" {
 		t.Errorf("artist credit not parsed: %+v", rg.ArtistCredit)
+	}
+}
+
+func TestCleanQueryTitle(t *testing.T) {
+	tests := []struct {
+		in, want string
+	}{
+		{"12 Golden Country Greats [30th Anniversary] [Expanded Edition]", "12 Golden Country Greats"},
+		{"Shiverstruck [Blue]", "Shiverstruck"},
+		{"Fillmore Auditorium, San Francisco, CA, 7/3/66", "Fillmore Auditorium, San Francisco, CA"},
+		{"Fillmore Auditorium, San Francisco, CA (7/3/66)", "Fillmore Auditorium, San Francisco, CA"},
+		{"Something (The Piano Versions)", "Something"},
+		{"Plain Title", "Plain Title"},
+	}
+	for _, tt := range tests {
+		if got := cleanQueryTitle(tt.in); got != tt.want {
+			t.Errorf("cleanQueryTitle(%q) = %q, want %q", tt.in, got, tt.want)
+		}
+	}
+}
+
+func TestComposerWork(t *testing.T) {
+	tests := []struct {
+		in, composer, work string
+		ok                 bool
+	}{
+		{"Steve Reich: The Sextets", "Steve Reich", "The Sextets", true},
+		{"Carl Vine: Child's Play", "Carl Vine", "Child's Play", true},
+		{"Archipel: Claude Debussy - La Mer; John Ireland - Sarnia", "Archipel", "Claude Debussy - La Mer; John Ireland - Sarnia", true},
+		{"Ever the Optimist", "", "", false},
+		{"20 All Time Greats of the 50’s", "", "", false},
+	}
+	for _, tt := range tests {
+		composer, work, ok := composerWork(tt.in)
+		if ok != tt.ok || composer != tt.composer || work != tt.work {
+			t.Errorf("composerWork(%q) = (%q, %q, %v), want (%q, %q, %v)", tt.in, composer, work, ok, tt.composer, tt.work, tt.ok)
+		}
+	}
+}
+
+func TestArtistQueryVariants(t *testing.T) {
+	tests := []struct {
+		in   string
+		want []string
+	}{
+		{"The Trash Can Sinatras", []string{"The Trash Can Sinatras", "Trash Can Sinatras", "Sinatras"}},
+		{"Charlie Musselwhite & GA-20", []string{"Charlie Musselwhite & GA-20", "Charlie Musselwhite", "GA-20"}},
+		{"The Revivalists", []string{"The Revivalists", "Revivalists"}},
+		{"Ween", []string{"Ween"}},
+	}
+	for _, tt := range tests {
+		got := artistQueryVariants(tt.in)
+		if len(got) != len(tt.want) {
+			t.Errorf("artistQueryVariants(%q) = %v, want %v", tt.in, got, tt.want)
+			continue
+		}
+		for i := range got {
+			if got[i] != tt.want[i] {
+				t.Errorf("artistQueryVariants(%q)[%d] = %q, want %q", tt.in, i, got[i], tt.want[i])
+			}
+		}
+	}
+}
+
+func TestArtistNamesMatchVariants(t *testing.T) {
+	tests := []struct {
+		a, b string
+		want bool
+	}{
+		{"The Trash Can Sinatras", "Trashcan Sinatras", true},
+		{"Charlie Musselwhite & GA-20", "GA-20", true},
+		{"The Revivalists", "Revivalists", true},
+		{"The All-American Rejects", "The All‐American Rejects", true},
+		{"Marty Robbins", "Various Artists", false},
+		{"The Trash Can Sinatras", "Foo Fighters", false},
+	}
+	for _, tt := range tests {
+		if got := artistNamesMatchVariants(tt.a, tt.b); got != tt.want {
+			t.Errorf("artistNamesMatchVariants(%q, %q) = %v, want %v", tt.a, tt.b, got, tt.want)
+		}
+	}
+}
+
+func TestReleaseGroupArtistMatches(t *testing.T) {
+	// Composer-credited classical release matches via the "Composer: Work" title.
+	if !releaseGroupArtistMatches("Steve Reich", []string{"Colin Currie"}, "Steve Reich: The Sextets") {
+		t.Error("expected composer-credited release to match classical title")
+	}
+	// Various Artists compilation must NOT match a specific artist.
+	if releaseGroupArtistMatches("Various Artists", []string{"Marty Robbins"}, "20 All Time Greats of the 50’s") {
+		t.Error("expected Various Artists compilation to NOT match a specific artist")
+	}
+	// Performer credit matches directly.
+	if !releaseGroupArtistMatches("Aline Piboule", []string{"Aline Piboule"}, "Archipel: Claude Debussy - La Mer; John Ireland - Sarnia") {
+		t.Error("expected performer credit to match")
+	}
+}
+
+func TestNormalizeTitleForCompare(t *testing.T) {
+	tests := [][2]string{
+		{"Holst: The Planets; Bax: Tintagel", "Holst: The Planets / Bax: Tintagel"},
+		{"Same Sun/Same Sky", "Same Sun / Same Sky"},
+	}
+	for _, tt := range tests {
+		if normalizeTitleForCompare(tt[0]) != normalizeTitleForCompare(tt[1]) {
+			t.Errorf("normalizeTitleForCompare(%q) != normalizeTitleForCompare(%q)", tt[0], tt[1])
+		}
+	}
+}
+
+func TestPickBestReleaseGroup_ClassicalComposerCredit(t *testing.T) {
+	mb := NewMBClient()
+	candidates := []*MBReleaseGroupResult{
+		cand("col-1", "The Sextets", "Album", "2026-04-10", "Steve Reich", "sr", 100),
+	}
+	got := mb.pickBestReleaseGroup(candidates, "Steve Reich: The Sextets", "Colin Currie", 2026, "")
+	if got == nil || got.MBID != "col-1" {
+		t.Errorf("expected composer-credited classical match, got %+v", got)
+	}
+}
+
+func TestPickBestReleaseGroup_SlashSemicolonTitle(t *testing.T) {
+	mb := NewMBClient()
+	candidates := []*MBReleaseGroupResult{
+		cand("pap-1", "Holst: The Planets / Bax: Tintagel", "Album", "2026-03-20", "Holst", "h", 100),
+	}
+	got := mb.pickBestReleaseGroup(candidates, "Holst: The Planets; Bax: Tintagel", "Antonio Pappano", 2026, "")
+	if got == nil || got.MBID != "pap-1" {
+		t.Errorf("expected semicolon/slash title equivalence, got %+v", got)
+	}
+}
+
+func TestPickBestReleaseGroup_ClassicalWeakTitleMatch(t *testing.T) {
+	mb := NewMBClient()
+	candidates := []*MBReleaseGroupResult{
+		cand("pib-1", "Archipel (Debussy: La Mer - Ireland: Sarnia)", "Album", "2026-03-27", "Aline Piboule", "ap", 100),
+	}
+	got := mb.pickBestReleaseGroup(candidates, "Archipel: Claude Debussy - La Mer; John Ireland - Sarnia", "Aline Piboule", 2026, "")
+	if got == nil || got.MBID != "pib-1" {
+		t.Errorf("expected weak classical token-overlap match, got %+v", got)
+	}
+}
+
+func TestPickBestReleaseGroup_WordSquashedArtist(t *testing.T) {
+	mb := NewMBClient()
+	candidates := []*MBReleaseGroupResult{
+		cand("tcs-1", "Ever The Optimist", "Album", "2026-07-31", "Trashcan Sinatras", "ts", 100),
+	}
+	got := mb.pickBestReleaseGroup(candidates, "Ever the Optimist", "The Trash Can Sinatras", 2026, "")
+	if got == nil || got.MBID != "tcs-1" {
+		t.Errorf("expected word-squashed artist variant match, got %+v", got)
+	}
+}
+
+func TestPickBestReleaseGroup_ConjunctionArtist(t *testing.T) {
+	mb := NewMBClient()
+	candidates := []*MBReleaseGroupResult{
+		cand("ga-1", "BLUES NOW", "Album", "2026-07-31", "GA-20", "ga", 100),
+	}
+	got := mb.pickBestReleaseGroup(candidates, "BLUES NOW", "Charlie Musselwhite & GA-20", 2026, "")
+	if got == nil || got.MBID != "ga-1" {
+		t.Errorf("expected after-conjunction artist variant match, got %+v", got)
+	}
+}
+
+func TestSearchReleaseGroup_BracketSuffixUsesCleanedTitle(t *testing.T) {
+	var calls []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls = append(calls, r.URL.Query().Get("query"))
+		w.Header().Set("Content-Type", "application/json")
+		if strings.Contains(r.URL.Query().Get("query"), `releasegroup:"12 Golden Country Greats"`) {
+			w.Write([]byte(`{
+				"release-groups": [
+					{"id":"d6d2ee0d-791d-3270-a7d1-a49d7b3e8ebc","title":"12 Golden Country Greats","score":100,"primary-type":"Album","first-release-date":"1996-07-16","artist-credit":[{"name":"Ween","artist":{"id":"w"}}]}
+				]
+			}`))
+			return
+		}
+		w.Write([]byte(`{"release-groups":[]}`))
+	}))
+	defer srv.Close()
+
+	mb := NewMBClient()
+	mb.baseURL = srv.URL
+
+	got, err := mb.SearchReleaseGroup(context.Background(), "12 Golden Country Greats [30th Anniversary] [Expanded Edition]", "Ween", 2026, "")
+	if err != nil {
+		t.Fatalf("SearchReleaseGroup: %v", err)
+	}
+	if got == nil || got.MBID != "d6d2ee0d-791d-3270-a7d1-a49d7b3e8ebc" {
+		t.Fatalf("expected bracket-stripped match, got %+v", got)
+	}
+	if len(calls) != 2 {
+		t.Fatalf("expected primary + cleaned-title query, got %d: %v", len(calls), calls)
+	}
+}
+
+func TestSearchReleaseGroup_ClassicalFallbackQueries(t *testing.T) {
+	var calls []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query().Get("query")
+		calls = append(calls, q)
+		w.Header().Set("Content-Type", "application/json")
+		if strings.Contains(q, `releasegroup:"The Sextets" AND artist:"Colin Currie"`) {
+			w.Write([]byte(`{
+				"release-groups": [
+					{"id":"45454175-f1f6-4646-a471-9b7fe4601058","title":"The Sextets","score":100,"primary-type":"Album","first-release-date":"2026-04-10","artist-credit":[{"name":"Steve Reich","artist":{"id":"sr"}}]}
+				]
+			}`))
+			return
+		}
+		w.Write([]byte(`{"release-groups":[]}`))
+	}))
+	defer srv.Close()
+
+	mb := NewMBClient()
+	mb.baseURL = srv.URL
+
+	got, err := mb.SearchReleaseGroup(context.Background(), "Steve Reich: The Sextets", "Colin Currie", 2026, "")
+	if err != nil {
+		t.Fatalf("SearchReleaseGroup: %v", err)
+	}
+	if got == nil || got.MBID != "45454175-f1f6-4646-a471-9b7fe4601058" {
+		t.Fatalf("expected classical composer-credit match, got %+v", got)
+	}
+	found := false
+	for _, q := range calls {
+		if strings.Contains(q, `releasegroup:"The Sextets"`) {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected work-only fallback query to be issued, calls: %v", calls)
+	}
+}
+
+func TestSearchReleaseGroup_SpacedSlashVariant(t *testing.T) {
+	var calls []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query().Get("query")
+		calls = append(calls, q)
+		w.Header().Set("Content-Type", "application/json")
+		if strings.Contains(q, `releasegroup:"Same Sun / Same Sky"`) {
+			w.Write([]byte(`{
+				"release-groups": [
+					{"id":"ec099900-9b98-4efe-91eb-d575eccbbfeb","title":"Same Sun / Same Sky","score":100,"primary-type":"Album","first-release-date":"2026-07-31","artist-credit":[{"name":"The Darling Buds","artist":{"id":"db"}}]}
+				]
+			}`))
+			return
+		}
+		w.Write([]byte(`{"release-groups":[]}`))
+	}))
+	defer srv.Close()
+
+	mb := NewMBClient()
+	mb.baseURL = srv.URL
+
+	got, err := mb.SearchReleaseGroup(context.Background(), "Same Sun/Same Sky", "The Darling Buds", 2026, "")
+	if err != nil {
+		t.Fatalf("SearchReleaseGroup: %v", err)
+	}
+	if got == nil || got.MBID != "ec099900-9b98-4efe-91eb-d575eccbbfeb" {
+		t.Fatalf("expected spaced-slash match, got %+v", got)
+	}
+}
+
+func TestSearchReleaseGroup_ComposerAsArtistFallback(t *testing.T) {
+	var calls []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query().Get("query")
+		calls = append(calls, q)
+		w.Header().Set("Content-Type", "application/json")
+		if strings.Contains(q, `releasegroup:"Child's Play" AND artist:"Carl Vine"`) {
+			w.Write([]byte(`{
+				"release-groups": [
+					{"id":"46ae4f72-36b5-4fc9-bad0-5bd90a0c9eea","title":"Child's Play","score":100,"primary-type":"Album","first-release-date":"2026-04","artist-credit":[{"name":"Carl Vine","artist":{"id":"cv"}}]}
+				]
+			}`))
+			return
+		}
+		w.Write([]byte(`{"release-groups":[]}`))
+	}))
+	defer srv.Close()
+
+	mb := NewMBClient()
+	mb.baseURL = srv.URL
+
+	got, err := mb.SearchReleaseGroup(context.Background(), "Carl Vine: Child's Play", "Umberto Clerici", 2026, "")
+	if err != nil {
+		t.Fatalf("SearchReleaseGroup: %v", err)
+	}
+	if got == nil || got.MBID != "46ae4f72-36b5-4fc9-bad0-5bd90a0c9eea" {
+		t.Fatalf("expected composer-as-artist fallback match, got %+v", got)
+	}
+	found := false
+	for _, q := range calls {
+		if strings.Contains(q, `artist:"Carl Vine"`) {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected composer-as-artist query to be issued, calls: %v", calls)
+	}
+}
+
+func TestSearchReleaseGroup_QuotesAreSanitized(t *testing.T) {
+	var calls []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls = append(calls, r.URL.Query().Get("query"))
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"release-groups":[]}`))
+	}))
+	defer srv.Close()
+
+	mb := NewMBClient()
+	mb.baseURL = srv.URL
+
+	got, err := mb.SearchReleaseGroup(context.Background(), `Shostakovich: Symphonies Nos. 2 "To October" & 5`, "John Storgårds", 2026, "")
+	if err != nil {
+		t.Fatalf("SearchReleaseGroup: %v", err)
+	}
+	if got != nil {
+		t.Fatalf("expected no match, got %+v", got)
+	}
+	for _, q := range calls {
+		if strings.Contains(q, `"To October"`) {
+			t.Errorf("query contains unsanitized double quotes: %q", q)
+		}
+	}
+	if len(calls) == 0 || !strings.Contains(calls[0], `releasegroup:"Shostakovich: Symphonies Nos. 2 'To October' & 5"`) {
+		t.Errorf("expected sanitized primary query, first call: %v", calls)
 	}
 }

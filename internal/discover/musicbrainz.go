@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -138,7 +139,7 @@ type MBArtistDetail struct {
 func (c *MBClient) SearchArtist(ctx context.Context, artistName string) (*MBArtistResult, error) {
 	c.rateLimit()
 
-	query := url.QueryEscape(fmt.Sprintf(`artist:"%s"`, artistName))
+	query := url.QueryEscape(fmt.Sprintf(`artist:"%s"`, sanitizeLucene(artistName)))
 	u := fmt.Sprintf("%s/artist/?query=%s&fmt=json&limit=5", c.baseURL, query)
 
 	req, err := http.NewRequestWithContext(ctx, "GET", u, nil)
@@ -271,34 +272,100 @@ func (c *MBClient) GetArtist(ctx context.Context, mbid string) (*MBArtistDetail,
 // Tries multiple query strategies, gathers candidate results, and returns the
 // best-ranked match. year and albumType are optional hints (0/"" when unknown)
 // used to prefer the correct release among same-title variants.
+//
+// Query generation is layered:
+//   - primary: the raw title/artist, plus punctuation-cleaned title variants
+//     (parenthetical/bracket suffixes and trailing dates stripped, slashes
+//     spaced out) and the artist name before a conjunction (e.g. "&");
+//   - fallback: only reached when the primary pass finds no plausible match.
+//     Adds artist variants (leading "The" dropped, internal spaces joined for
+//     word-squashed MB names like "Trashcan Sinatras", the name after a
+//     conjunction like "GA-20"), and for titles shaped "Composer: Work" also
+//     searches the work title alone under both the performer and the composer.
 func (c *MBClient) SearchReleaseGroup(ctx context.Context, albumTitle, artistName string, year int, albumType string) (*MBReleaseGroupResult, error) {
-	cleanTitle := stripTitleParens(albumTitle)
+	cleanTitle := cleanQueryTitle(albumTitle)
 	firstArtist := firstArtistName(artistName)
 
-	var queries []string
-	queries = append(queries, releaseGroupQueries(albumTitle, artistName)...)
-	queries = append(queries, releaseGroupQueries(albumTitle, firstArtist)...)
-	if cleanTitle != albumTitle {
-		queries = append(queries, releaseGroupQueries(cleanTitle, artistName)...)
-		queries = append(queries, releaseGroupQueries(cleanTitle, firstArtist)...)
+	var titles []string
+	addTitle := func(t string) {
+		if t != "" && !slices.Contains(titles, t) {
+			titles = append(titles, t)
+		}
+	}
+	addTitle(albumTitle)
+	addTitle(cleanTitle)
+	if spaced := spaceSlashes(cleanTitle); spaced != cleanTitle {
+		addTitle(spaced)
 	}
 
-	candidates := c.searchAllCandidates(ctx, queries, albumTitle, artistName, year, albumType)
+	var artists []string
+	addArtist := func(a string) {
+		if a != "" && !slices.Contains(artists, a) {
+			artists = append(artists, a)
+		}
+	}
+	addArtist(artistName)
+	addArtist(firstArtist)
+
+	// Fallback title/artist variants, tried only if the primary pass misses.
+	var fbTitles []string
+	var fbArtists []string
+	if composer, work, ok := composerWork(cleanTitle); ok {
+		if !slices.Contains(titles, work) {
+			fbTitles = append(fbTitles, work)
+		}
+		if !slices.Contains(titles, composer) {
+			fbTitles = append(fbTitles, composer)
+		}
+		if !slices.Contains(artists, composer) {
+			fbArtists = append(fbArtists, composer)
+		}
+	}
+	for _, v := range artistQueryVariants(artistName) {
+		if !slices.Contains(artists, v) && !slices.Contains(fbArtists, v) {
+			fbArtists = append(fbArtists, v)
+		}
+	}
+
+	candidates := c.searchReleaseGroups(ctx, releaseGroupQueries, titles, artists, fbTitles, fbArtists, albumTitle, artistName, year, albumType)
 	if best := c.pickBestReleaseGroup(candidates, albumTitle, artistName, year, albumType); best != nil {
 		return best, nil
 	}
 
 	// Fall back to the release field, which can surface release-group titles
 	// that index slightly differently than their releases.
-	var relQueries []string
-	relQueries = append(relQueries, releaseFieldQueries(albumTitle, artistName)...)
-	relQueries = append(relQueries, releaseFieldQueries(albumTitle, firstArtist)...)
-	if cleanTitle != albumTitle {
-		relQueries = append(relQueries, releaseFieldQueries(cleanTitle, artistName)...)
-		relQueries = append(relQueries, releaseFieldQueries(cleanTitle, firstArtist)...)
-	}
-	candidates = c.searchAllCandidates(ctx, relQueries, albumTitle, artistName, year, albumType)
+	candidates = c.searchReleaseGroups(ctx, releaseFieldQueries, titles, artists, fbTitles, fbArtists, albumTitle, artistName, year, albumType)
 	return c.pickBestReleaseGroup(candidates, albumTitle, artistName, year, albumType), nil
+}
+
+type queryBuilder func(title, artist string) []string
+
+// searchReleaseGroups builds the ordered query list (primary pairs first,
+// fallback variants after) and accumulates candidates until a plausible match
+// is found, so the common case makes a single rate-limited API call.
+func (c *MBClient) searchReleaseGroups(ctx context.Context, build queryBuilder, titles, artists, fbTitles, fbArtists []string, albumTitle, artistName string, year int, albumType string) []*MBReleaseGroupResult {
+	var queries []string
+	for _, t := range titles {
+		for _, a := range artists {
+			queries = append(queries, build(t, a)...)
+		}
+	}
+	for _, t := range fbTitles {
+		for _, a := range artists {
+			queries = append(queries, build(t, a)...)
+		}
+	}
+	for _, t := range fbTitles {
+		for _, a := range fbArtists {
+			queries = append(queries, build(t, a)...)
+		}
+	}
+	for _, t := range titles {
+		for _, a := range fbArtists {
+			queries = append(queries, build(t, a)...)
+		}
+	}
+	return c.searchAllCandidates(ctx, queries, albumTitle, artistName, year, albumType)
 }
 
 // SearchReleaseGroupByAlbum searches for a release group by album title only
@@ -310,9 +377,9 @@ func (c *MBClient) SearchReleaseGroupByAlbum(ctx context.Context, albumTitle str
 	cleanTitle := stripTitleParens(albumTitle)
 
 	var queries []string
-	queries = append(queries, fmt.Sprintf(`releasegroup:"%s"`, albumTitle))
+	queries = append(queries, fmt.Sprintf(`releasegroup:"%s"`, sanitizeLucene(albumTitle)))
 	if cleanTitle != albumTitle {
-		queries = append(queries, fmt.Sprintf(`releasegroup:"%s"`, cleanTitle))
+		queries = append(queries, fmt.Sprintf(`releasegroup:"%s"`, sanitizeLucene(cleanTitle)))
 	}
 
 	candidates := c.searchAllCandidates(ctx, queries, albumTitle, "", year, "")
@@ -321,20 +388,20 @@ func (c *MBClient) SearchReleaseGroupByAlbum(ctx context.Context, albumTitle str
 	}
 
 	var relQueries []string
-	relQueries = append(relQueries, fmt.Sprintf(`release:"%s"`, albumTitle))
+	relQueries = append(relQueries, fmt.Sprintf(`release:"%s"`, sanitizeLucene(albumTitle)))
 	if cleanTitle != albumTitle {
-		relQueries = append(relQueries, fmt.Sprintf(`release:"%s"`, cleanTitle))
+		relQueries = append(relQueries, fmt.Sprintf(`release:"%s"`, sanitizeLucene(cleanTitle)))
 	}
 	candidates = c.searchAllCandidates(ctx, relQueries, albumTitle, "", year, "")
 	return c.pickBestReleaseGroup(candidates, albumTitle, "", year, ""), nil
 }
 
 func releaseGroupQueries(albumTitle, artistName string) []string {
-	return []string{fmt.Sprintf(`releasegroup:"%s" AND artist:"%s"`, albumTitle, artistName)}
+	return []string{fmt.Sprintf(`releasegroup:"%s" AND artist:"%s"`, sanitizeLucene(albumTitle), sanitizeLucene(artistName))}
 }
 
 func releaseFieldQueries(albumTitle, artistName string) []string {
-	return []string{fmt.Sprintf(`release:"%s" AND artist:"%s"`, albumTitle, artistName)}
+	return []string{fmt.Sprintf(`release:"%s" AND artist:"%s"`, sanitizeLucene(albumTitle), sanitizeLucene(artistName))}
 }
 
 // searchAllCandidates runs query strategies in order, accumulating candidates.
@@ -428,27 +495,54 @@ func (c *MBClient) pickBestReleaseGroup(candidates []*MBReleaseGroupResult, albu
 }
 
 func scoreReleaseGroupCandidate(cand *MBReleaseGroupResult, albumTitle, artistName string, year int, albumType string) int {
-	score := 0
-
 	if cand.Title == "" || albumTitle == "" {
 		return -1
 	}
-	nt := normalizeText(cand.Title)
-	ntarg := normalizeText(albumTitle)
-	if nt == ntarg {
-		score += 60
-	} else if strings.HasPrefix(nt, ntarg) || strings.HasPrefix(ntarg, nt) {
-		score += 30
-	} else {
-		return -1
+	score := 0
+
+	nt := normalizeTitleForCompare(cand.Title)
+	titleOK := false
+	for _, t := range titleCompareForms(albumTitle) {
+		if t == "" {
+			continue
+		}
+		if nt == t {
+			titleOK = true
+			score += 60
+			break
+		}
+		if strings.HasPrefix(nt, t) || strings.HasPrefix(t, nt) {
+			titleOK = true
+			score += 30
+			break
+		}
 	}
 
+	artistOK := false
 	if artistName != "" {
-		if artistNamesMatch(cand.ArtistName, artistName) {
+		if artistNamesMatchVariants(artistName, cand.ArtistName) {
+			artistOK = true
 			score += 50
-		} else {
-			return -1
+		} else if composer, _, ok := composerWork(cleanQueryTitle(albumTitle)); ok && composer != "" && artistNamesMatchVariants(composer, cand.ArtistName) {
+			// Classical releases are credited to the composer, not the performer.
+			artistOK = true
+			score += 50
 		}
+	} else {
+		artistOK = true
+	}
+
+	if !titleOK || !artistOK {
+		// Classical releases sometimes re-title the work on the release group
+		// (e.g. "Archipel (Debussy: La Mer - Ireland: Sarnia)" vs scraped
+		// "Archipel: Claude Debussy - La Mer; John Ireland - Sarnia"). When the
+		// artist (performer or composer), year, and type all align and the
+		// titles share meaningful tokens, accept as a weak match.
+		if artistOK && yearCompatible(cand.FirstReleaseDate, year) && typeCompatible(cand.PrimaryType, albumType) &&
+			titleTokenOverlap(nt, titleCompareForms(albumTitle)) >= 2 {
+			return 40 + cand.Score/10
+		}
+		return -1
 	}
 
 	if want := canonicalAlbumType(albumType); want != "" {
@@ -536,6 +630,222 @@ func stripTitleParens(title string) string {
 func firstArtistName(name string) string {
 	re := regexp.MustCompile(`\s*(&|feat\.|ft\.|with|vs\.|\+|/)\s*.*$`)
 	return strings.TrimSpace(re.ReplaceAllString(name, ""))
+}
+
+// ── Title cleaning / variants ──
+
+var (
+	trailingBracketsRe = regexp.MustCompile(`(?:\s*\[[^\]]*\]\s*)+$`)
+	trailingDateRe     = regexp.MustCompile(`[\s,()]*\d{1,2}/\d{1,2}/\d{2,4}[\s)]*$`)
+	slashSpacingRe     = regexp.MustCompile(`\s*/\s*`)
+	composerWorkRe     = regexp.MustCompile(`^([^:]{1,80}):\s*(.+)$`)
+)
+
+// cleanQueryTitle normalizes a scraped title for MusicBrainz queries: it strips
+// trailing parenthetical groups, bracketed edition markers like
+// "[30th Anniversary] [Expanded Edition]" / "[Blue]", and trailing dates like
+// "(7/3/66)" or ", 7/3/66" that scrapers append.
+func cleanQueryTitle(title string) string {
+	t := stripTitleParens(title)
+	t = trailingBracketsRe.ReplaceAllString(t, "")
+	t = trailingDateRe.ReplaceAllString(t, "")
+	return strings.TrimSpace(t)
+}
+
+// spaceSlashes pads "/" with spaces ("Same Sun/Same Sky" → "Same Sun / Same Sky"),
+// matching how MusicBrainz indexes titles that use a spaced slash.
+func spaceSlashes(title string) string {
+	return slashSpacingRe.ReplaceAllString(title, " / ")
+}
+
+// normalizeTitleForCompare prepares a title for scoring: normalizes text and
+// treats ";" and "/" (with any spacing) as equivalent separators, so a scraped
+// "Holst: The Planets; Bax: Tintagel" compares equal to MB's
+// "Holst: The Planets / Bax: Tintagel".
+func normalizeTitleForCompare(s string) string {
+	s = strings.ReplaceAll(s, ";", "/")
+	return slashSpacingRe.ReplaceAllString(normalizeText(s), "/")
+}
+
+// titleCompareForms returns the normalized title forms a candidate may match:
+// the cleaned full title and, for "Composer: Work" titles, the work alone.
+func titleCompareForms(title string) []string {
+	t := cleanQueryTitle(title)
+	forms := []string{normalizeTitleForCompare(t)}
+	if _, work, ok := composerWork(t); ok && work != "" {
+		forms = append(forms, normalizeTitleForCompare(work))
+	}
+	return forms
+}
+
+// composerWork splits a "Composer: Work" title into its leading name and the
+// work portion, e.g. "Steve Reich: The Sextets" → ("Steve Reich", "The Sextets").
+// It drives the fallback to composer-credited release groups that MusicBrainz
+// uses for classical releases.
+func composerWork(title string) (composer, work string, ok bool) {
+	m := composerWorkRe.FindStringSubmatch(strings.TrimSpace(title))
+	if len(m) != 3 {
+		return "", "", false
+	}
+	return strings.TrimSpace(m[1]), strings.TrimSpace(m[2]), true
+}
+
+// ── Artist name variants ──
+
+var (
+	leadingTheRe       = regexp.MustCompile(`^The\s+`)
+	afterConjunctionRe = regexp.MustCompile(`^\s*.*?\s*(?:&|feat\.|ft\.|with|vs\.|\+|/)\s*(.+?)\s*$`)
+)
+
+// artistQueryVariants returns deterministic variants of a scraped artist name
+// to probe in MusicBrainz queries and match verification:
+//   - the raw name and the name before a conjunction (existing behavior);
+//   - the name after a conjunction, e.g. "GA-20" from "Charlie Musselwhite & GA-20";
+//   - the name with a leading "The" dropped, covering bands indexed without it;
+//   - the last token (surname/distinctive word), which resolves word-joined
+//     MusicBrainz names like "Trashcan Sinatras" from "The Trash Can Sinatras".
+//
+// Variants are only ever probed as fallbacks and must still pass strict title,
+// type, and year scoring, so false positives are unlikely.
+func artistQueryVariants(name string) []string {
+	var out []string
+	seen := map[string]bool{}
+	add := func(s string) {
+		s = strings.TrimSpace(s)
+		if s == "" || seen[s] {
+			return
+		}
+		seen[s] = true
+		out = append(out, s)
+	}
+	add(name)
+	add(firstArtistName(name))
+	if m := afterConjunctionRe.FindStringSubmatch(name); len(m) == 2 {
+		add(strings.TrimSpace(m[1]))
+	}
+	if noThe := strings.TrimSpace(leadingTheRe.ReplaceAllString(name, "")); noThe != strings.TrimSpace(name) {
+		add(noThe)
+	}
+	// Only probe the last token for multi-word names (3+ words), where it is a
+	// distinctive word; short names like "Blue Dogs" would probe too loosely.
+	if fields := strings.Fields(name); len(fields) >= 3 {
+		add(fields[len(fields)-1])
+	}
+	return out
+}
+
+// namesEquivalent reports whether two artist names are the same after text
+// normalization or after removing all whitespace (bridging word-joined MB
+// names such as "Trashcan Sinatras" with spaced scraped names).
+func namesEquivalent(a, b string) bool {
+	if artistNamesMatch(a, b) {
+		return true
+	}
+	squash := func(s string) string { return strings.Join(strings.Fields(normalizeText(s)), "") }
+	return squash(a) == squash(b)
+}
+
+// artistNamesMatchVariants reports whether the MusicBrainz credit name matches
+// the scraped artist name or any of its known variants.
+func artistNamesMatchVariants(scraped, credit string) bool {
+	if namesEquivalent(scraped, credit) {
+		return true
+	}
+	for _, v := range artistQueryVariants(scraped) {
+		if namesEquivalent(v, credit) {
+			return true
+		}
+	}
+	return false
+}
+
+// releaseGroupArtistMatches verifies that a candidate release group's artist
+// credit corresponds to the scraped artist(s) or, for classical "Composer: Work"
+// titles, to the composer credited in MusicBrainz.
+func releaseGroupArtistMatches(credit string, artists []string, albumTitle string) bool {
+	for _, a := range artists {
+		if artistNamesMatchVariants(a, credit) {
+			return true
+		}
+	}
+	if composer, _, ok := composerWork(cleanQueryTitle(albumTitle)); ok {
+		if artistNamesMatchVariants(composer, credit) {
+			return true
+		}
+	}
+	return false
+}
+
+// ── Weak classical match support ──
+
+// yearCompatible reports whether the release group's first-release year is
+// within one year of the scraped year (unknown years are always compatible).
+func yearCompatible(date string, year int) bool {
+	if year <= 0 {
+		return true
+	}
+	cy := releaseYear(date)
+	if cy == 0 {
+		return true
+	}
+	d := cy - year
+	if d < 0 {
+		d = -d
+	}
+	return d <= 1
+}
+
+// typeCompatible reports whether the candidate's primary type is compatible
+// with the scraped type hint (or a plausible album/ep/single when no hint).
+func typeCompatible(candType, albumType string) bool {
+	want := canonicalAlbumType(albumType)
+	if want == "" {
+		switch canonicalAlbumType(candType) {
+		case "album", "ep", "single":
+			return true
+		default:
+			return false
+		}
+	}
+	return canonicalAlbumType(candType) == want
+}
+
+// titleTokenOverlap returns the largest count of meaningful shared tokens
+// between the candidate title and any scraped title form.
+func titleTokenOverlap(candTitle string, forms []string) int {
+	setC := tokenSet(candTitle)
+	best := 0
+	for _, f := range forms {
+		setF := tokenSet(f)
+		n := 0
+		for t := range setC {
+			if setF[t] {
+				n++
+			}
+		}
+		if n > best {
+			best = n
+		}
+	}
+	return best
+}
+
+var tokenRe = regexp.MustCompile(`[a-z0-9]+`)
+
+func tokenSet(s string) map[string]bool {
+	set := map[string]bool{}
+	for _, t := range tokenRe.FindAllString(s, -1) {
+		if len(t) > 2 {
+			set[t] = true
+		}
+	}
+	return set
+}
+
+// sanitizeLucene removes double quotes that would otherwise break a Lucene
+// phrase query (they terminate the phrase and let unrelated results through).
+func sanitizeLucene(s string) string {
+	return strings.ReplaceAll(s, `"`, "'")
 }
 
 // normalizeText normalizes text for fuzzy comparisons: lowercases, folds smart
