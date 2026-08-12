@@ -35,7 +35,7 @@ func sourceDisplayName(source string, mt model.MediaType) string {
 }
 
 func (r *Runner) sendNotification(ctx context.Context, wantMovie, wantTV, wantAnime, wantMusic, wantBooks bool, uniqueVideos, uniqueAnime, uniqueMusic, bookItems []ScrapedItem, progYear, progWeek, totalEvents int) {
-	if r.notify == nil || totalEvents == 0 {
+	if r.notify == nil {
 		return
 	}
 
@@ -45,15 +45,6 @@ func (r *Runner) sendNotification(ctx context.Context, wantMovie, wantTV, wantAn
 		sourceCounts = make(map[string]int)
 	}
 	sourceNotes := make(map[string]string)
-
-	pendingTotal := 0
-	for _, n := range sourceCounts {
-		pendingTotal += n
-	}
-	if pendingTotal == 0 {
-		r.log.Debug().Msg("no pending events to notify about")
-		return
-	}
 
 	if wantMovie && r.cfg.MediaTypes.Movies.Enabled {
 		for _, s := range r.cfg.MediaTypes.Movies.Scrapers {
@@ -126,6 +117,35 @@ func (r *Runner) sendNotification(ctx context.Context, wantMovie, wantTV, wantAn
 		}
 	}
 
+	r.markScrapeFailures(sourceCounts, sourceNotes)
+
+	pendingTotal := 0
+	for _, n := range sourceCounts {
+		pendingTotal += n
+	}
+
+	// No pending events. If scrapers failed, send an explicit alert so a total
+	// outage is visible; otherwise this week simply has nothing to report.
+	if pendingTotal == 0 {
+		if len(r.failedScrapers) == 0 {
+			r.log.Debug().Msg("no pending events to notify about")
+			return
+		}
+		msg := "No new releases found — scrape failures:\n"
+		labels := make([]string, 0, len(sourceNotes))
+		for l := range sourceNotes {
+			labels = append(labels, l)
+		}
+		sort.Strings(labels)
+		for _, l := range labels {
+			msg += fmt.Sprintf("\n\t%s: %s", l, sourceNotes[l])
+		}
+		if err := r.notify.Send("wmdl: Scrape Failures", msg, 8); err != nil {
+			r.log.Warn().Err(err).Msg("failure notification failed")
+		}
+		return
+	}
+
 	msg := fmt.Sprintf("**%d new release%s** ready for review:\n",
 		pendingTotal, map[bool]string{true: "s", false: ""}[pendingTotal != 1])
 
@@ -179,5 +199,51 @@ func (r *Runner) sendNotification(ctx context.Context, wantMovie, wantTV, wantAn
 
 	if err := r.notify.Send("wmdl: New Releases", msg, 5); err != nil {
 		r.log.Warn().Err(err).Msg("notification failed")
+	}
+}
+
+// markScrapeFailures annotates source counts whose provider returned an error
+// this run, so "0 items" reads differently from "scrape failed". Labels mirror
+// the zero-fill blocks in sendNotification so they render with the same text.
+// Deprecated providers (e.g. jikan) are intentionally not mapped.
+func (r *Runner) markScrapeFailures(sourceCounts map[string]int, sourceNotes map[string]string) {
+	if len(r.failedScrapers) == 0 {
+		return
+	}
+	mark := func(scraper string, mt model.MediaType) {
+		if r.failedScrapers[scraper] {
+			sourceNotes[sourceDisplayName(scraper, mt)] = "scrape failed"
+		}
+	}
+
+	if r.cfg.MediaTypes.Movies.Enabled {
+		for _, s := range r.cfg.MediaTypes.Movies.Scrapers {
+			mark(s, model.MediaTypeMovie)
+		}
+	}
+	if r.cfg.MediaTypes.TV.Enabled {
+		for _, s := range r.cfg.MediaTypes.TV.Scrapers {
+			mark(s, model.MediaTypeTV)
+		}
+	}
+	if r.cfg.MediaTypes.Anime.Enabled {
+		for _, name := range []string{"anilist", "tenrai"} {
+			if r.failedScrapers[name] {
+				sourceNotes[name+" (completed)"] = "scrape failed"
+				if r.cfg.MediaTypes.Anime.PhaseBEnabled {
+					sourceNotes[name+" (airing)"] = "scrape failed"
+				}
+			}
+		}
+	}
+	if r.cfg.MediaTypes.Music.Enabled {
+		for _, s := range r.cfg.MediaTypes.Music.Scrapers {
+			mark(s, model.MediaTypeMusic)
+		}
+	}
+	if r.cfg.MediaTypes.Books.Enabled {
+		for _, s := range r.cfg.MediaTypes.Books.Scrapers {
+			mark(s, model.MediaTypeBook)
+		}
 	}
 }

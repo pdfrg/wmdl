@@ -76,6 +76,10 @@ type Runner struct {
 	killBrave       func() error
 	mediaTypeFilter model.MediaType // "" = all types
 
+	// failedScrapers records providers whose Scrape() returned an error this
+	// run, so the notification can distinguish "0 items" from "scrape failed".
+	failedScrapers map[string]bool
+
 	lookbackOverrides LookbackOverrides
 
 	bookClient library.BookClient
@@ -131,20 +135,20 @@ func NewRunner(logger zerolog.Logger, cfg *config.Config, database *db.DB, headl
 	}
 
 	r := &Runner{
-		log:      logger,
-		cfg:      cfg,
-		db:       database,
-		tmdb:     NewTMDBClient(cfg.TMDB.APIKey, cfg.TMDB.AccessToken),
-		rt:       NewRTFinder(),
-		omdb:     NewOMDBClient(cfg.OMDB.APIKey),
-		mb:       NewMBClient(),
-		hc:       hcClient,
-		ol:       NewOLClient(),
-		notify:   notify,
-		debugURL: fmt.Sprintf("http://127.0.0.1:%d", cfg.Browser.DebugPort),
-		headless: headless,
+		log:            logger,
+		cfg:            cfg,
+		db:             database,
+		tmdb:           NewTMDBClient(cfg.TMDB.APIKey, cfg.TMDB.AccessToken),
+		rt:             NewRTFinder(),
+		omdb:           NewOMDBClient(cfg.OMDB.APIKey),
+		mb:             NewMBClient(),
+		hc:             hcClient,
+		ol:             NewOLClient(),
+		notify:         notify,
+		debugURL:       fmt.Sprintf("http://127.0.0.1:%d", cfg.Browser.DebugPort),
+		headless:       headless,
+		failedScrapers: make(map[string]bool),
 	}
-
 	if cfg.Library.Radarr.URL != "" && cfg.Library.Radarr.APIKey != "" {
 		r.radarr = library.NewRadarrClient(cfg.Library.Radarr.URL, cfg.Library.Radarr.APIKey, cfg.Library.Radarr.Timeout)
 	}
@@ -171,6 +175,8 @@ func (r *Runner) Run(ctx context.Context) error {
 	wantAnime := r.mediaTypeFilter == "" || r.mediaTypeFilter == model.MediaTypeAnime
 	wantMusic := r.mediaTypeFilter == "" || r.mediaTypeFilter == model.MediaTypeMusic
 	wantBooks := r.mediaTypeFilter == "" || r.mediaTypeFilter == model.MediaTypeBook
+
+	r.failedScrapers = make(map[string]bool)
 
 	// Pre-flight healthchecks for enrichment services.
 	// Network errors are warnings (may be transient), auth failures surface in the error text.
@@ -286,6 +292,7 @@ func (r *Runner) Run(ctx context.Context) error {
 		items, err := p.Scrape()
 		if err != nil {
 			r.log.Warn().Err(err).Str("provider", p.Name()).Msg("scrape failed")
+			r.failedScrapers[p.Name()] = true
 			continue
 		}
 		r.log.Info().Int("count", len(items)).Str("provider", p.Name()).Msg("found items")
@@ -333,6 +340,15 @@ func (r *Runner) Run(ctx context.Context) error {
 
 	if len(allItems) == 0 {
 		r.log.Info().Msg("no new releases found")
+		// If every provider failed, still alert so a total outage is visible
+		// rather than a silent no-op morning run.
+		if r.notify != nil && len(r.failedScrapers) > 0 {
+			py, pw := r.targetYear, r.targetWeek
+			if !r.hasTargetWeek {
+				py, pw = time.Now().ISOWeek()
+			}
+			r.sendNotification(ctx, wantMovie, wantTV, wantAnime, wantMusic, wantBooks, nil, nil, nil, nil, py, pw, 0)
+		}
 		return nil
 	}
 
