@@ -18,6 +18,8 @@
 #      → Create subfolder (enabled)
 #
 # How it works:
+#   A gotify notification is always sent when a torrent
+#   completes, regardless of category or LL availability.
 #   wmdl adds torrents with category = QB_IMPORT_CAT
 #   (save path = LL's Alternate Import Folder).
 #   When qBittorrent finishes downloading, this script:
@@ -28,6 +30,8 @@
 #        category, moving files OUT of the LL import folder
 #        while preserving seeding
 #   Future importAlternate calls find nothing to re-import.
+#   All curl calls use --connect-timeout/--max-time so a
+#   stopped or unreachable LL fails fast instead of hanging.
 
 # ── LazyLibrarian ───────────────────────────────────
 LL_URL="http://lazylibrarian:5299"
@@ -94,7 +98,7 @@ qblogin() {
         echo ""
         return
     fi
-    curl -s -c - "${QB_URL}/api/v2/auth/login" \
+    curl -s --connect-timeout 10 --max-time 30 -c - "${QB_URL}/api/v2/auth/login" \
         -d "username=${QB_USER}&password=${QB_PASS}" 2>/dev/null \
         | grep "SID" | awk '{print $NF}'
 }
@@ -105,7 +109,7 @@ qbsetcat() {
         log "warning: no info hash provided, cannot change category"
         return
     fi
-    local args=(-s -o /dev/null -w "%{http_code}" -X POST \
+    local args=(-s --connect-timeout 10 --max-time 30 -o /dev/null -w "%{http_code}" -X POST \
         "${QB_URL}/api/v2/torrents/setCategory" \
         -d "hashes=${hash}&category=${cat}")
     [ -n "$sid" ] && args+=(-b "SID=${sid}")
@@ -121,18 +125,24 @@ qbsetcat() {
 send_gotify() {
     local msg="$1"
     if [ -n "$GOTIFY_URL" ] && [ -n "$GOTIFY_TOKEN" ]; then
-        curl -s "${GOTIFY_URL}/message?token=${GOTIFY_TOKEN}" \
+        curl -s --connect-timeout 10 --max-time 30 "${GOTIFY_URL}/message?token=${GOTIFY_TOKEN}" \
             -F "title=Download Finished" \
             -F "message=$msg" \
-            -F "priority=5" > /dev/null
+            -F "priority=5" > /dev/null 2>&1 \
+            || log "✗ gotify notification failed for: $msg"
+    else
+        log "warning: GOTIFY_URL/GOTIFY_TOKEN not set, skipping notification for: $msg"
     fi
 }
 
+log "Torrent completed: $TORRENT_NAME (category: $CATEGORY)"
+send_gotify "$GOTIFY_MESSAGE"
+
 if [ "$CATEGORY" != "$QB_IMPORT_CAT" ]; then
+    log "warning: category '$CATEGORY' != '$QB_IMPORT_CAT', skipping LL import"
     exit 0
 fi
 
-log "Torrent completed: $TORRENT_NAME"
 FORMAT=$(detect_format "$CONTENT_PATH")
 log "Detected format: $FORMAT"
 
@@ -141,7 +151,7 @@ QB_SID=$(qblogin)
 case "$FORMAT" in
     ebook)
         log "Triggering LL eBook import..."
-        RESPONSE=$(curl -s -w "%{http_code}" -o /dev/null \
+        RESPONSE=$(curl -s --connect-timeout 10 --max-time 30 -w "%{http_code}" -o /dev/null \
             "${LL_URL}/api?apikey=${API_KEY}&cmd=importAlternate&library=eBook&wait=1")
         if [ "$RESPONSE" = "200" ]; then
             log "✓ eBook importAlternate successful"
@@ -155,7 +165,7 @@ case "$FORMAT" in
         ;;
     audiobook)
         log "Triggering LL AudioBook import..."
-        RESPONSE=$(curl -s -w "%{http_code}" -o /dev/null \
+        RESPONSE=$(curl -s --connect-timeout 10 --max-time 30 -w "%{http_code}" -o /dev/null \
             "${LL_URL}/api?apikey=${API_KEY}&cmd=importAlternate&library=AudioBook&wait=1")
         if [ "$RESPONSE" = "200" ]; then
             log "✓ AudioBook importAlternate successful"
@@ -169,9 +179,9 @@ case "$FORMAT" in
         ;;
     *)
         log "warning: unknown format, importing both"
-        RESPONSE_EB=$(curl -s -w "%{http_code}" -o /dev/null \
+        RESPONSE_EB=$(curl -s --connect-timeout 10 --max-time 30 -w "%{http_code}" -o /dev/null \
             "${LL_URL}/api?apikey=${API_KEY}&cmd=importAlternate&library=eBook&wait=1")
-        RESPONSE_AB=$(curl -s -w "%{http_code}" -o /dev/null \
+        RESPONSE_AB=$(curl -s --connect-timeout 10 --max-time 30 -w "%{http_code}" -o /dev/null \
             "${LL_URL}/api?apikey=${API_KEY}&cmd=importAlternate&library=AudioBook&wait=1")
         [ "$RESPONSE_EB" = "200" ] && log "✓ eBook importAlternate successful" || log "✗ eBook importAlternate failed (HTTP $RESPONSE_EB)"
         [ "$RESPONSE_AB" = "200" ] && log "✓ AudioBook importAlternate successful" || log "✗ AudioBook importAlternate failed (HTTP $RESPONSE_AB)"

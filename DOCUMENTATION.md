@@ -961,8 +961,10 @@ internal/notifier/  — webhook notifications
 The [scripts/](scripts/) directory contains ready-to-use shell scripts:
 
 - **`on-dl-comp.example.sh`** — qBittorrent completion hook for LazyLibrarian import:
-  detects format, triggers `importAlternate`, changes category to seeding folder,
-  sends Gotify notification.
+  always sends a Gotify notification on every torrent completion, then (for wmdl
+  `Books` category torrents) detects format, triggers `importAlternate`, changes
+  category to seeding folder. LL curls use timeouts so a stopped/unreachable LL
+  fails fast without hanging.
 - **`ll-gotify.example.sh`** — LazyLibrarian external script hook: sends rich
   Gotify notifications (title, description, cover image) when LL imports a book.
 
