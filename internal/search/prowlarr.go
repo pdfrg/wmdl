@@ -128,11 +128,9 @@ func (p *ProwlarrClient) Search(ctx context.Context, params SearchParams) ([]qua
 		q.Set("type", params.Type)
 	}
 	if len(params.IndexerIDs) > 0 {
-		idStrs := make([]string, len(params.IndexerIDs))
-		for i, id := range params.IndexerIDs {
-			idStrs[i] = strconv.Itoa(id)
+		for _, id := range params.IndexerIDs {
+			q.Add("indexerIds", strconv.Itoa(id))
 		}
-		q.Set("indexerIds", strings.Join(idStrs, ","))
 	}
 	if params.Limit > 0 {
 		q.Set("limit", fmt.Sprintf("%d", params.Limit))

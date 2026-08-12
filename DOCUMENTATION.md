@@ -96,7 +96,7 @@ Each `indexer_id.<category>` accepts a single ID or a list of IDs in descending 
 ```
 
 If any preferred indexer is configured, wmdl searches those trackers first (in one Prowlarr call via the
-comma-joined `indexerIds` param). If fewer than `show_top_n` (default 10) results are obtained from the
+`indexerIds` param, one repeated param per tracker). If fewer than `show_top_n` (default 10) results are obtained from the
 preferred trackers, a fallback search using all indexers is performed.
 
 Releases found on multiple trackers are deduplicated in the release picker: the copy from the

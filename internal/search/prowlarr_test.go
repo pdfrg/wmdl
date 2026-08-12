@@ -114,7 +114,7 @@ func TestProwlarrSearchMusic(t *testing.T) {
 
 func TestProwlarrSearchWithIndexerIDs(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, "1,9,12", r.URL.Query().Get("indexerIds"))
+		assert.Equal(t, []string{"1", "9", "12"}, r.URL.Query()["indexerIds"])
 		w.Write([]byte("[]"))
 	}))
 	defer srv.Close()
