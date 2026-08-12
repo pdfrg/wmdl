@@ -322,13 +322,13 @@ func (s *Searcher) SearchMusic(ctx context.Context, query string) error {
 		if parts := strings.SplitN(query, " - ", 2); len(parts) == 2 {
 			aName := strings.TrimSpace(parts[0])
 			albumTitle := strings.TrimSpace(parts[1])
-			rg, err := s.mb.SearchReleaseGroup(mbCtx, albumTitle, aName)
+			rg, err := s.mb.SearchReleaseGroup(mbCtx, albumTitle, aName, 0, "")
 			if err == nil && rg != nil && rg.ArtistMBID != "" {
 				artistMBID = rg.ArtistMBID
 				artistName = rg.ArtistName
 			}
 		} else {
-			rg, err := s.mb.SearchReleaseGroupByAlbum(mbCtx, query)
+			rg, err := s.mb.SearchReleaseGroupByAlbum(mbCtx, query, 0)
 			if err == nil && rg != nil && rg.ArtistMBID != "" {
 				artistMBID = rg.ArtistMBID
 				artistName = rg.ArtistName

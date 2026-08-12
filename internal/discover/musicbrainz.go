@@ -10,12 +10,16 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
+
+	"golang.org/x/text/unicode/norm"
 )
 
 const mbBase = "https://musicbrainz.org/ws/2"
 
 // MBClient handles MusicBrainz API lookups with rate limiting.
 type MBClient struct {
+	baseURL   string
 	client    *http.Client
 	lastReq   time.Time
 	mu        sync.Mutex
@@ -24,6 +28,7 @@ type MBClient struct {
 
 func NewMBClient() *MBClient {
 	return &MBClient{
+		baseURL:   mbBase,
 		client:    &http.Client{Timeout: 10 * time.Second},
 		userAgent: "wmdl/0.1.0 (https://github.com/pdfrg/wmdl)",
 	}
@@ -99,6 +104,7 @@ type MBArtistResult struct {
 type MBReleaseGroupResult struct {
 	MBID             string
 	Title            string
+	Score            int // MusicBrainz relevance score (0-100)
 	PrimaryType      string
 	SecondaryTypes   []string
 	FirstReleaseDate string
@@ -133,7 +139,7 @@ func (c *MBClient) SearchArtist(ctx context.Context, artistName string) (*MBArti
 	c.rateLimit()
 
 	query := url.QueryEscape(fmt.Sprintf(`artist:"%s"`, artistName))
-	u := fmt.Sprintf("%s/artist/?query=%s&fmt=json&limit=5", mbBase, query)
+	u := fmt.Sprintf("%s/artist/?query=%s&fmt=json&limit=5", c.baseURL, query)
 
 	req, err := http.NewRequestWithContext(ctx, "GET", u, nil)
 	if err != nil {
@@ -170,7 +176,7 @@ func (c *MBClient) SearchArtist(ctx context.Context, artistName string) (*MBArti
 func (c *MBClient) GetArtist(ctx context.Context, mbid string) (*MBArtistDetail, error) {
 	c.rateLimit()
 
-	u := fmt.Sprintf("%s/artist/%s?inc=tags+genres+ratings+annotation+url-rels+aliases&fmt=json", mbBase, mbid)
+	u := fmt.Sprintf("%s/artist/%s?inc=tags+genres+ratings+annotation+url-rels+aliases&fmt=json", c.baseURL, mbid)
 
 	req, err := http.NewRequestWithContext(ctx, "GET", u, nil)
 	if err != nil {
@@ -262,64 +268,99 @@ func (c *MBClient) GetArtist(ctx context.Context, mbid string) (*MBArtistDetail,
 }
 
 // SearchReleaseGroup searches for a release group by album title and artist.
-// Tries multiple query strategies in order of specificity, returning the first
-// high-confidence match.
-func (c *MBClient) SearchReleaseGroup(ctx context.Context, albumTitle, artistName string) (*MBReleaseGroupResult, error) {
+// Tries multiple query strategies, gathers candidate results, and returns the
+// best-ranked match. year and albumType are optional hints (0/"" when unknown)
+// used to prefer the correct release among same-title variants.
+func (c *MBClient) SearchReleaseGroup(ctx context.Context, albumTitle, artistName string, year int, albumType string) (*MBReleaseGroupResult, error) {
 	cleanTitle := stripTitleParens(albumTitle)
 	firstArtist := firstArtistName(artistName)
 
-	queries := []string{
-		fmt.Sprintf(`release:"%s" AND artist:"%s"`, albumTitle, artistName),
-		fmt.Sprintf(`release:"%s" AND artist:"%s"`, albumTitle, firstArtist),
-	}
+	var queries []string
+	queries = append(queries, releaseGroupQueries(albumTitle, artistName)...)
+	queries = append(queries, releaseGroupQueries(albumTitle, firstArtist)...)
 	if cleanTitle != albumTitle {
-		queries = append(queries,
-			fmt.Sprintf(`release:"%s" AND artist:"%s"`, cleanTitle, artistName),
-			fmt.Sprintf(`release:"%s" AND artist:"%s"`, cleanTitle, firstArtist),
-		)
+		queries = append(queries, releaseGroupQueries(cleanTitle, artistName)...)
+		queries = append(queries, releaseGroupQueries(cleanTitle, firstArtist)...)
 	}
 
-	for _, q := range queries {
-		result, err := c.searchReleaseGroupOnce(ctx, q)
-		if err != nil {
-			// Network/API error — try next fallback
-			continue
-		}
-		if result != nil {
-			return result, nil
-		}
+	candidates := c.searchAllCandidates(ctx, queries, albumTitle, artistName, year, albumType)
+	if best := c.pickBestReleaseGroup(candidates, albumTitle, artistName, year, albumType); best != nil {
+		return best, nil
 	}
-	return nil, nil
+
+	// Fall back to the release field, which can surface release-group titles
+	// that index slightly differently than their releases.
+	var relQueries []string
+	relQueries = append(relQueries, releaseFieldQueries(albumTitle, artistName)...)
+	relQueries = append(relQueries, releaseFieldQueries(albumTitle, firstArtist)...)
+	if cleanTitle != albumTitle {
+		relQueries = append(relQueries, releaseFieldQueries(cleanTitle, artistName)...)
+		relQueries = append(relQueries, releaseFieldQueries(cleanTitle, firstArtist)...)
+	}
+	candidates = c.searchAllCandidates(ctx, relQueries, albumTitle, artistName, year, albumType)
+	return c.pickBestReleaseGroup(candidates, albumTitle, artistName, year, albumType), nil
 }
 
 // SearchReleaseGroupByAlbum searches for a release group by album title only
 // (no artist constraint). Used as a blind check when the artist-specific search
 // finds no match — if the album exists under a different artist, the scrape
-// likely associated the wrong artist name.
-func (c *MBClient) SearchReleaseGroupByAlbum(ctx context.Context, albumTitle string) (*MBReleaseGroupResult, error) {
+// likely associated the wrong artist name. The caller must still verify the
+// artist name of the returned result.
+func (c *MBClient) SearchReleaseGroupByAlbum(ctx context.Context, albumTitle string, year int) (*MBReleaseGroupResult, error) {
 	cleanTitle := stripTitleParens(albumTitle)
-	queries := []string{
-		fmt.Sprintf(`release:"%s"`, albumTitle),
-	}
+
+	var queries []string
+	queries = append(queries, fmt.Sprintf(`releasegroup:"%s"`, albumTitle))
 	if cleanTitle != albumTitle {
-		queries = append(queries, fmt.Sprintf(`release:"%s"`, cleanTitle))
+		queries = append(queries, fmt.Sprintf(`releasegroup:"%s"`, cleanTitle))
 	}
-	for _, q := range queries {
-		result, err := c.searchReleaseGroupOnce(ctx, q)
-		if err != nil {
-			continue
-		}
-		if result != nil {
-			return result, nil
-		}
+
+	candidates := c.searchAllCandidates(ctx, queries, albumTitle, "", year, "")
+	if best := c.pickBestReleaseGroup(candidates, albumTitle, "", year, ""); best != nil {
+		return best, nil
 	}
-	return nil, nil
+
+	var relQueries []string
+	relQueries = append(relQueries, fmt.Sprintf(`release:"%s"`, albumTitle))
+	if cleanTitle != albumTitle {
+		relQueries = append(relQueries, fmt.Sprintf(`release:"%s"`, cleanTitle))
+	}
+	candidates = c.searchAllCandidates(ctx, relQueries, albumTitle, "", year, "")
+	return c.pickBestReleaseGroup(candidates, albumTitle, "", year, ""), nil
 }
 
-func (c *MBClient) searchReleaseGroupOnce(ctx context.Context, query string) (*MBReleaseGroupResult, error) {
+func releaseGroupQueries(albumTitle, artistName string) []string {
+	return []string{fmt.Sprintf(`releasegroup:"%s" AND artist:"%s"`, albumTitle, artistName)}
+}
+
+func releaseFieldQueries(albumTitle, artistName string) []string {
+	return []string{fmt.Sprintf(`release:"%s" AND artist:"%s"`, albumTitle, artistName)}
+}
+
+// searchAllCandidates runs query strategies in order, accumulating candidates.
+// It stops early once a query yields a candidate that scores as a plausible
+// match, so the common case (a specific query hitting on the first try) makes
+// a single rate-limited API call.
+func (c *MBClient) searchAllCandidates(ctx context.Context, queries []string, albumTitle, artistName string, year int, albumType string) []*MBReleaseGroupResult {
+	var candidates []*MBReleaseGroupResult
+	for _, q := range queries {
+		results, err := c.searchReleaseGroupsOnce(ctx, q)
+		if err != nil {
+			// Network/API error — try next fallback
+			continue
+		}
+		candidates = append(candidates, results...)
+		if c.pickBestReleaseGroup(candidates, albumTitle, artistName, year, albumType) != nil {
+			break
+		}
+	}
+	return candidates
+}
+
+func (c *MBClient) searchReleaseGroupsOnce(ctx context.Context, query string) ([]*MBReleaseGroupResult, error) {
 	c.rateLimit()
 
-	u := fmt.Sprintf("%s/release-group/?query=%s&fmt=json&limit=5", mbBase, url.QueryEscape(query))
+	u := fmt.Sprintf("%s/release-group/?query=%s&fmt=json&limit=10", c.baseURL, url.QueryEscape(query))
 
 	req, err := http.NewRequestWithContext(ctx, "GET", u, nil)
 	if err != nil {
@@ -339,26 +380,149 @@ func (c *MBClient) searchReleaseGroupOnce(ctx context.Context, query string) (*M
 		return nil, fmt.Errorf("decoding mb response: %w", err)
 	}
 
-	if len(result.ReleaseGroups) == 0 {
-		return nil, nil
+	results := make([]*MBReleaseGroupResult, 0, len(result.ReleaseGroups))
+	for _, rg := range result.ReleaseGroups {
+		var artistMBID, artistCreditName string
+		if len(rg.ArtistCredit) > 0 {
+			artistCreditName = rg.ArtistCredit[0].Name
+			artistMBID = rg.ArtistCredit[0].Artist.ID
+		}
+		results = append(results, &MBReleaseGroupResult{
+			MBID:             rg.ID,
+			Title:            rg.Title,
+			Score:            rg.Score,
+			PrimaryType:      rg.PrimaryType,
+			FirstReleaseDate: rg.FirstReleaseDate,
+			ArtistMBID:       artistMBID,
+			ArtistName:       artistCreditName,
+		})
+	}
+	return results, nil
+}
+
+// pickBestReleaseGroup scores candidate release groups and returns the best
+// match for the scraped album (or nil if none plausibly matches). Ranking
+// weighs exact title and artist equality, primary-type preference, year
+// closeness, and finally MusicBrainz's own relevance score.
+func (c *MBClient) pickBestReleaseGroup(candidates []*MBReleaseGroupResult, albumTitle, artistName string, year int, albumType string) *MBReleaseGroupResult {
+	uniq := make(map[string]*MBReleaseGroupResult)
+	for _, cand := range candidates {
+		if cand == nil || cand.MBID == "" {
+			continue
+		}
+		prev, ok := uniq[cand.MBID]
+		if !ok || cand.Score > prev.Score {
+			uniq[cand.MBID] = cand
+		}
 	}
 
-	best := &result.ReleaseGroups[0]
+	var winner *MBReleaseGroupResult
+	bestScore := -1
+	for _, cand := range uniq {
+		if s := scoreReleaseGroupCandidate(cand, albumTitle, artistName, year, albumType); s > bestScore {
+			bestScore = s
+			winner = cand
+		}
+	}
+	return winner
+}
 
-	var artistMBID, artistCreditName string
-	if len(best.ArtistCredit) > 0 {
-		artistCreditName = best.ArtistCredit[0].Name
-		artistMBID = best.ArtistCredit[0].Artist.ID
+func scoreReleaseGroupCandidate(cand *MBReleaseGroupResult, albumTitle, artistName string, year int, albumType string) int {
+	score := 0
+
+	if cand.Title == "" || albumTitle == "" {
+		return -1
+	}
+	nt := normalizeText(cand.Title)
+	ntarg := normalizeText(albumTitle)
+	if nt == ntarg {
+		score += 60
+	} else if strings.HasPrefix(nt, ntarg) || strings.HasPrefix(ntarg, nt) {
+		score += 30
+	} else {
+		return -1
 	}
 
-	return &MBReleaseGroupResult{
-		MBID:             best.ID,
-		Title:            best.Title,
-		PrimaryType:      best.PrimaryType,
-		FirstReleaseDate: best.FirstReleaseDate,
-		ArtistMBID:       artistMBID,
-		ArtistName:       artistCreditName,
-	}, nil
+	if artistName != "" {
+		if artistNamesMatch(cand.ArtistName, artistName) {
+			score += 50
+		} else {
+			return -1
+		}
+	}
+
+	if want := canonicalAlbumType(albumType); want != "" {
+		if canonicalAlbumType(cand.PrimaryType) == want {
+			score += 30
+		}
+	} else {
+		// No type hint from the scrape; prefer full-length/EP over
+		// singles/compilations/mixtapes since the scrapers never emit those.
+		switch canonicalAlbumType(cand.PrimaryType) {
+		case "album", "ep":
+			score += 20
+		case "single", "compilation", "mixtape":
+			score += 5
+		}
+	}
+
+	if year > 0 {
+		if cy := releaseYear(cand.FirstReleaseDate); cy == year {
+			score += 25
+		} else if cy > 0 {
+			diff := cy - year
+			if diff < 0 {
+				diff = -diff
+			}
+			if diff == 1 {
+				score += 10
+			}
+		}
+	}
+
+	score += cand.Score / 10
+	return score
+}
+
+// canonicalAlbumType maps both MusicBrainz primary types and wmdl AlbumType
+// values onto a common set for comparison ("LP" and "Album" are equivalent).
+func canonicalAlbumType(t string) string {
+	switch strings.ToLower(strings.TrimSpace(t)) {
+	case "album", "lp", "full-length":
+		return "album"
+	case "ep":
+		return "ep"
+	case "single":
+		return "single"
+	case "live":
+		return "live"
+	case "soundtrack":
+		return "soundtrack"
+	case "compilation":
+		return "compilation"
+	case "mixtape":
+		return "mixtape"
+	case "remix":
+		return "remix"
+	case "reissue":
+		return "reissue"
+	case "box set":
+		return "box set"
+	case "dj mix":
+		return "dj mix"
+	default:
+		return strings.ToLower(strings.TrimSpace(t))
+	}
+}
+
+// releaseYear extracts the 4-digit year from a MusicBrainz first-release-date.
+func releaseYear(date string) int {
+	for _, layout := range []string{"2006-01-02", "2006-01", "2006"} {
+		if t, err := time.Parse(layout, date); err == nil {
+			return t.Year()
+		}
+	}
+	return 0
 }
 
 // stripTitleParens removes trailing parenthetical groups like "(The Piano Versions)".
@@ -374,12 +538,44 @@ func firstArtistName(name string) string {
 	return strings.TrimSpace(re.ReplaceAllString(name, ""))
 }
 
+// normalizeText normalizes text for fuzzy comparisons: lowercases, folds smart
+// quotes/apostrophes, maps every Unicode dash variant to ASCII '-', applies
+// NFKD (dropping combining marks), and collapses whitespace. NFKD alone does
+// not fold characters like U+2010 HYPHEN into U+002D, which is why MusicBrainz
+// names such as "The All‐American Rejects" otherwise fail to match scraped
+// names that use a plain hyphen.
+func normalizeText(s string) string {
+	s = strings.ToLower(s)
+	s = strings.NewReplacer(
+		"\u2018", "'", "\u2019", "'", "\u02bc", "'", // curly/final quotes
+		"\u2010", "-", // HYPHEN
+		"\u2011", "-", // NON-BREAKING HYPHEN
+		"\u2012", "-", // FIGURE DASH
+		"\u2013", "-", // EN DASH
+		"\u2014", "-", // EM DASH
+		"\u2015", "-", // HORIZONTAL BAR
+		"\u2043", "-", // HYPHEN BULLET
+		"\u2212", "-", // MINUS SIGN
+		"\ufe63", "-", // SMALL HYPHEN-MINUS
+		"\uff0d", "-", // FULLWIDTH HYPHEN-MINUS
+	).Replace(s)
+	t := norm.NFKD.String(s)
+	var out strings.Builder
+	for _, r := range t {
+		if unicode.Is(unicode.Mn, r) {
+			continue
+		}
+		out.WriteRune(r)
+	}
+	return strings.Join(strings.Fields(out.String()), " ")
+}
+
 // GetReleaseGroupDetail fetches detailed info about a release group including
 // rating, tags, and genres.
 func (c *MBClient) GetReleaseGroupDetail(ctx context.Context, mbid string) (*MBReleaseGroupResult, error) {
 	c.rateLimit()
 
-	u := fmt.Sprintf("%s/release-group/%s?inc=tags+genres+ratings+artist-credits&fmt=json", mbBase, mbid)
+	u := fmt.Sprintf("%s/release-group/%s?inc=tags+genres+ratings+artist-credits&fmt=json", c.baseURL, mbid)
 
 	req, err := http.NewRequestWithContext(ctx, "GET", u, nil)
 	if err != nil {

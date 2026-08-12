@@ -5,9 +5,6 @@ import (
 	"fmt"
 	"strings"
 	"time"
-	"unicode"
-
-	"golang.org/x/text/unicode/norm"
 
 	"github.com/pdfrg/wmdl/internal/model"
 )
@@ -29,7 +26,7 @@ func (r *Runner) processMusicItem(ctx context.Context, item ScrapedItem, progYea
 
 	if item.AOTYURL != "" {
 		existingRelease, err := r.db.GetAlbumReleaseByAOTYURL(ctx, item.AOTYURL)
-		if err == nil && existingRelease != nil {
+		if err == nil && existingRelease != nil && existingRelease.MBID != "" {
 			existingEvent, err := r.db.GetLatestAlbumReleaseEvent(ctx, existingRelease.ID)
 			if err == nil && existingEvent != nil {
 				r.log.Info().Str("album", item.Title).Msg("already have this album, skipping")
@@ -52,7 +49,7 @@ func (r *Runner) processMusicItem(ctx context.Context, item ScrapedItem, progYea
 	var rgResult *MBReleaseGroupResult
 	var err error
 	for _, a := range artists {
-		rgResult, err = r.mb.SearchReleaseGroup(apiCtx, item.Title, a)
+		rgResult, err = r.mb.SearchReleaseGroup(apiCtx, item.Title, a, item.Year, string(item.AlbumType))
 		if err == nil && rgResult != nil {
 			break
 		}
@@ -61,7 +58,7 @@ func (r *Runner) processMusicItem(ctx context.Context, item ScrapedItem, progYea
 	if err != nil {
 		r.log.Warn().Err(err).Str("album", item.Title).Msg("MusicBrainz search failed, storing without MB data")
 	} else if rgResult == nil {
-		blindResult, blindErr := r.mb.SearchReleaseGroupByAlbum(apiCtx, item.Title)
+		blindResult, blindErr := r.mb.SearchReleaseGroupByAlbum(apiCtx, item.Title, item.Year)
 		if blindErr == nil && blindResult != nil {
 			match := false
 			for _, a := range artists {
@@ -196,18 +193,5 @@ func (r *Runner) processMusicItem(ctx context.Context, item ScrapedItem, progYea
 }
 
 func artistNamesMatch(a, b string) bool {
-	normalize := func(s string) string {
-		s = strings.ToLower(s)
-		s = strings.NewReplacer("\u2018", "'", "\u2019", "'", "\u02bc", "'").Replace(s)
-		t := norm.NFKD.String(s)
-		var out strings.Builder
-		for _, r := range t {
-			if unicode.Is(unicode.Mn, r) {
-				continue
-			}
-			out.WriteRune(r)
-		}
-		return out.String()
-	}
-	return normalize(a) == normalize(b)
+	return normalizeText(a) == normalizeText(b)
 }
