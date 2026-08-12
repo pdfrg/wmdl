@@ -57,6 +57,16 @@ type LidarrAddOptions struct {
 	Monitor           string `json:"monitor,omitempty"`
 }
 
+// MusicBrainzID returns the artist's MusicBrainz ID. Lidarr v2 exposes it as
+// foreignArtistId on list endpoints; the mbId field is frequently absent, so
+// it is used only as a fallback.
+func (a LidarrArtist) MusicBrainzID() string {
+	if a.MBID != "" {
+		return a.MBID
+	}
+	return a.ForeignArtistID
+}
+
 type LidarrArtistStats struct {
 	AlbumCount int `json:"albumCount,omitempty"`
 }
@@ -89,7 +99,18 @@ type LidarrAlbum struct {
 	Monitored      bool                   `json:"monitored"`
 	ReleaseDate    string                 `json:"releaseDate,omitempty"`
 	AlbumType      string                 `json:"albumType,omitempty"`
+	Statistics     *LidarrAlbumStatistics `json:"statistics,omitempty"`
 	AddOptions     *LidarrAlbumAddOptions `json:"addOptions,omitempty"`
+}
+
+// LidarrAlbumStatistics reports how much of an album is present on disk.
+// TrackFileCount > 0 means files have actually been downloaded.
+type LidarrAlbumStatistics struct {
+	TrackFileCount  int     `json:"trackFileCount"`
+	TrackCount      int     `json:"trackCount"`
+	TotalTrackCount int     `json:"totalTrackCount"`
+	SizeOnDisk      int64   `json:"sizeOnDisk"`
+	PercentOfTracks float64 `json:"percentOfTracks"`
 }
 
 type LidarrAlbumAddOptions struct {
@@ -263,7 +284,7 @@ func (c *LidarrClient) GetArtist(ctx context.Context, mbid string) (*LidarrArtis
 		return nil, err
 	}
 	for _, a := range artists {
-		if a.MBID == mbid {
+		if a.MusicBrainzID() == mbid {
 			return &a, nil
 		}
 	}

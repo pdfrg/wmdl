@@ -17,6 +17,33 @@ func TestLidarrNewClient(t *testing.T) {
 	assert.Equal(t, "key", c.apiKey)
 }
 
+func TestLidarrArtistMusicBrainzID(t *testing.T) {
+	t.Run("uses foreignArtistId when mbId absent", func(t *testing.T) {
+		a := LidarrArtist{ForeignArtistID: "09885b8e-f235-4b80-a02a-055539493173"}
+		assert.Equal(t, "09885b8e-f235-4b80-a02a-055539493173", a.MusicBrainzID())
+	})
+	t.Run("prefers mbId when present", func(t *testing.T) {
+		a := LidarrArtist{MBID: "mbid-a", ForeignArtistID: "mbid-b"}
+		assert.Equal(t, "mbid-a", a.MusicBrainzID())
+	})
+}
+
+func TestLidarrGetArtistMatchesByForeignArtistID(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`[
+			{"id":1,"foreignArtistId":"a2f69394-0d29-4f8d-b981-61e0789b1a3d","artistName":"A"},
+			{"id":2,"foreignArtistId":"09885b8e-f235-4b80-a02a-055539493173","artistName":"The All-American Rejects"}
+		]`))
+	}))
+	defer srv.Close()
+
+	c := NewLidarrClient(srv.URL, "key", 10)
+	got, err := c.GetArtist(context.Background(), "09885b8e-f235-4b80-a02a-055539493173")
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	assert.Equal(t, "The All-American Rejects", got.ArtistName)
+}
+
 func TestLidarrPing(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte("[]"))

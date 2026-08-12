@@ -6,6 +6,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
+	"github.com/pdfrg/wmdl/internal/db"
 	"github.com/pdfrg/wmdl/internal/model"
 )
 
@@ -169,4 +170,67 @@ func TestMusicDateLabel(t *testing.T) {
 			assert.Equal(t, tt.want, musicDateLabel(tt.source, tt.date))
 		})
 	}
+}
+
+func TestLibraryInfo_AlbumDownloadStatus(t *testing.T) {
+	album := &db.EventWithAlbumRelease{
+		Event: &model.AlbumReleaseEvent{},
+		Release: &model.AlbumRelease{
+			ArtistName: "The All-American Rejects",
+			Title:      "Sandbox",
+			MBID:       "4c379675-b7c0-41ae-a613-e5519dee7de4",
+			ArtistMBID: "09885b8e-f235-4b80-a02a-055539493173",
+		},
+	}
+	it := &itemState{albumEvent: album}
+	artistKey := "lidarr:" + album.Release.ArtistMBID
+	albumKey := "lidarr-album:" + album.Release.MBID
+	artistCache := &db.LibraryCache{Source: "lidarr", ExtID: album.Release.ArtistMBID, ArrTitle: "The All-American Rejects"}
+
+	withAlbum := func(details string) map[string]*db.LibraryCache {
+		return map[string]*db.LibraryCache{
+			artistKey: artistCache,
+			albumKey:  {Source: "lidarr-album", ExtID: album.Release.MBID, Details: details},
+		}
+	}
+
+	t.Run("downloaded", func(t *testing.T) {
+		info := it.libraryInfo(withAlbum(`{"statistics":{"trackFileCount":12,"trackCount":12}}`))
+		assert.Equal(t, libFull, info.status)
+		assert.Contains(t, info.label, "album in library")
+	})
+	t.Run("listed but not downloaded", func(t *testing.T) {
+		info := it.libraryInfo(withAlbum(`{"statistics":{"trackFileCount":0,"trackCount":12}}`))
+		assert.Equal(t, libPartial, info.status)
+		assert.Contains(t, info.label, "not downloaded")
+	})
+	t.Run("stale cache without statistics", func(t *testing.T) {
+		info := it.libraryInfo(withAlbum(`{"title":"Sandbox","monitored":false}`))
+		assert.Equal(t, libPartial, info.status)
+		assert.Contains(t, info.label, "not downloaded")
+	})
+	t.Run("artist only", func(t *testing.T) {
+		info := it.libraryInfo(map[string]*db.LibraryCache{artistKey: artistCache})
+		assert.Equal(t, libPartial, info.status)
+		assert.Contains(t, info.label, "album not found")
+	})
+	t.Run("not in library", func(t *testing.T) {
+		info := it.libraryInfo(map[string]*db.LibraryCache{})
+		assert.Equal(t, libNone, info.status)
+	})
+}
+
+func TestParseLidarrAlbumStats(t *testing.T) {
+	assert.Nil(t, parseLidarrAlbumStats(nil))
+
+	downloaded := parseLidarrAlbumStats(&db.LibraryCache{Details: `{"statistics":{"trackFileCount":12,"trackCount":12,"percentOfTracks":100}}`})
+	assert.NotNil(t, downloaded)
+	assert.Equal(t, 12, downloaded.TrackFileCount)
+
+	empty := parseLidarrAlbumStats(&db.LibraryCache{Details: `{"statistics":{"trackFileCount":0,"trackCount":12}}`})
+	assert.NotNil(t, empty)
+	assert.Equal(t, 0, empty.TrackFileCount)
+
+	assert.Nil(t, parseLidarrAlbumStats(&db.LibraryCache{Details: `{"title":"Sandbox"}`}))
+	assert.Nil(t, parseLidarrAlbumStats(&db.LibraryCache{Details: "not-json"}))
 }

@@ -111,7 +111,7 @@ func (r *Runner) cacheLibraryData(ctx context.Context) error {
 						continue
 					}
 					entries = append(entries, db.LibraryCache{
-						Source: "lidarr", ExtID: a.MBID,
+						Source: "lidarr", ExtID: a.MusicBrainzID(),
 						ArrID: int64(a.ID), ArrTitle: a.ArtistName, Details: string(details),
 					})
 				}

@@ -228,7 +228,7 @@ func (e *Executor) updateLidarrCache(ctx context.Context, artists []library.Lida
 			continue
 		}
 		entries = append(entries, db.LibraryCache{
-			Source: "lidarr", ExtID: a.MBID,
+			Source: "lidarr", ExtID: a.MusicBrainzID(),
 			ArrID: int64(a.ID), ArrTitle: a.ArtistName, Details: string(details),
 		})
 	}

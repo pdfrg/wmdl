@@ -103,10 +103,15 @@ func (it *itemState) libraryInfo(dbCache map[string]*db.LibraryCache) libInfo {
 		artistCache := dbCache[artistKey]
 		albumCache := dbCache[albumKey]
 		if artistCache != nil && albumCache != nil {
-			return libInfo{
-				label:  fmt.Sprintf("✓ Lidarr — %s [album in library]", it.albumEvent.Release.ArtistName),
-				status: libFull,
+			label := fmt.Sprintf("✓ Lidarr — %s [album in library]", it.albumEvent.Release.ArtistName)
+			status := libFull
+			// Only claim the album is present when Lidarr reports actual
+			// track files; unmonitored/listed-only albums have none.
+			if st := parseLidarrAlbumStats(albumCache); st == nil || st.TrackFileCount == 0 {
+				label = fmt.Sprintf("⚠ Lidarr — %s [in Lidarr, not downloaded]", it.albumEvent.Release.ArtistName)
+				status = libPartial
 			}
+			return libInfo{label: label, status: status}
 		}
 		if artistCache != nil {
 			return libInfo{
@@ -186,6 +191,28 @@ func (it *itemState) libraryInfo(dbCache map[string]*db.LibraryCache) libInfo {
 		}
 	}
 	return libInfo{status: libNone}
+}
+
+// parseLidarrAlbumStats extracts download statistics from a cached Lidarr
+// album. Returns nil when the cache entry predates statistics capture, so
+// callers can treat it as "in Lidarr, download status unknown".
+func parseLidarrAlbumStats(c *db.LibraryCache) *lidarrAlbumStats {
+	if c == nil || c.Details == "" {
+		return nil
+	}
+	var raw struct {
+		Statistics *struct {
+			TrackFileCount int `json:"trackFileCount"`
+		} `json:"statistics"`
+	}
+	if err := json.Unmarshal([]byte(c.Details), &raw); err != nil || raw.Statistics == nil {
+		return nil
+	}
+	return &lidarrAlbumStats{TrackFileCount: raw.Statistics.TrackFileCount}
+}
+
+type lidarrAlbumStats struct {
+	TrackFileCount int
 }
 
 func (it *itemState) collectionStr(dbCache map[string]*db.LibraryCache) string {
