@@ -93,9 +93,7 @@ type sonarrCommand struct {
 
 func (s *SonarrClient) Ping(ctx context.Context) error {
 	var health []map[string]interface{}
-	return s.retry(ctx, func() error {
-		return s.get(ctx, "/api/v3/health", &health)
-	})
+	return s.get(ctx, "/api/v3/health", &health)
 }
 
 func (s *SonarrClient) retry(ctx context.Context, fn func() error) error {

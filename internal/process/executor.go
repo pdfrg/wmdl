@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/rs/zerolog"
 
@@ -217,36 +218,46 @@ func (e *Executor) HealthCheck(ctx context.Context, checkProwlarr, checkDownload
 	var result HealthCheckResult
 	result.DownLibrary = make(map[string]bool)
 
+	// Each ping gets its own short deadline: Ping is a connectivity probe, so a
+	// down service is detected quickly instead of hanging on the client's HTTP
+	// timeout. Retries (if any) live on data operations, and the CLI offers an
+	// interactive [r] retry.
+	ping := func(parent context.Context, fn func(context.Context) error) error {
+		ctx, cancel := context.WithTimeout(parent, 3*time.Second)
+		defer cancel()
+		return fn(ctx)
+	}
+
 	if checkProwlarr {
-		if err := e.prowl.Ping(ctx); err != nil {
+		if err := ping(ctx, e.prowl.Ping); err != nil {
 			result.Critical = append(result.Critical, fmt.Sprintf("Prowlarr: %v", err))
 		}
 	}
 	if checkDownloader && e.dl != nil {
-		if err := e.dl.Ping(ctx); err != nil {
+		if err := ping(ctx, e.dl.Ping); err != nil {
 			result.Critical = append(result.Critical, fmt.Sprintf("Downloader (%s): %v", e.cfg.Downloader.Type, err))
 		}
 	}
 	if scope.Radarr && e.radarr != nil {
-		if err := e.radarr.Ping(ctx); err != nil {
+		if err := ping(ctx, e.radarr.Ping); err != nil {
 			result.Warnings = append(result.Warnings, fmt.Sprintf("Radarr: %v", err))
 			result.DownLibrary["radarr"] = true
 		}
 	}
 	if scope.Sonarr && e.sonarr != nil {
-		if err := e.sonarr.Ping(ctx); err != nil {
+		if err := ping(ctx, e.sonarr.Ping); err != nil {
 			result.Warnings = append(result.Warnings, fmt.Sprintf("Sonarr: %v", err))
 			result.DownLibrary["sonarr"] = true
 		}
 	}
 	if scope.Lidarr && e.lidarr != nil {
-		if err := e.lidarr.Ping(ctx); err != nil {
+		if err := ping(ctx, e.lidarr.Ping); err != nil {
 			result.Warnings = append(result.Warnings, fmt.Sprintf("Lidarr: %v", err))
 			result.DownLibrary["lidarr"] = true
 		}
 	}
 	if scope.Book && e.bookClient != nil {
-		if err := e.bookClient.Ping(ctx); err != nil {
+		if err := ping(ctx, e.bookClient.Ping); err != nil {
 			result.Warnings = append(result.Warnings, fmt.Sprintf("LazyLibrarian: %v", err))
 			result.DownLibrary["book"] = true
 		}

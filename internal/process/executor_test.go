@@ -77,13 +77,12 @@ func TestHealthCheckScoped(t *testing.T) {
 		lidarr: library.NewLidarrClient(downSrv.URL, "key", 5),
 	}
 
-	// A short deadline bounds the client's built-in retry so the down ping
-	// returns quickly. One down service consumes the budget, so each HealthCheck
-	// call below checks a healthy service before a down one.
+	// HealthCheck bounds each ping with its own short deadline, so a down
+	// service is detected quickly regardless of the caller's context. One down
+	// service is warned, and each HealthCheck call below checks a healthy
+	// service before a down one.
 	check := func(scope LibraryScope) HealthCheckResult {
-		ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
-		defer cancel()
-		return exec.HealthCheck(ctx, false, false, scope)
+		return exec.HealthCheck(context.Background(), false, false, scope)
 	}
 
 	t.Run("in-scope down service is warned, healthy one is not", func(t *testing.T) {
@@ -128,6 +127,30 @@ func TestHealthCheckScoped(t *testing.T) {
 		assert.Contains(t, res.Warnings[0], "Lidarr")
 		assert.True(t, res.DownLibrary["lidarr"])
 	})
+}
+
+func TestHealthCheckFailsFastOnHungService(t *testing.T) {
+	hangSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case <-time.After(30 * time.Second):
+		case <-r.Context().Done():
+		}
+	}))
+	defer hangSrv.Close()
+
+	exec := &Executor{
+		log:    zerolog.Nop(),
+		sonarr: library.NewSonarrClient(hangSrv.URL, "key", 10),
+	}
+
+	start := time.Now()
+	res := exec.HealthCheck(context.Background(), false, false, LibraryScope{Sonarr: true})
+	elapsed := time.Since(start)
+
+	require.Len(t, res.Warnings, 1)
+	assert.Contains(t, res.Warnings[0], "Sonarr")
+	assert.True(t, res.DownLibrary["sonarr"])
+	assert.Less(t, elapsed, 10*time.Second, "down service must be detected quickly, took %v", elapsed)
 }
 
 func TestPreWarmSkipsDisabledServices(t *testing.T) {

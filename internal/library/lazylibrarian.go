@@ -55,9 +55,7 @@ func (c *LazyLibrarianClient) retry(ctx context.Context, fn func() error) error 
 }
 
 func (c *LazyLibrarianClient) Ping(ctx context.Context) error {
-	return c.retry(ctx, func() error {
-		return c.doOK(ctx, url.Values{"cmd": {"getVersion"}})
-	})
+	return c.doOK(ctx, url.Values{"cmd": {"getVersion"}})
 }
 
 func (c *LazyLibrarianClient) AddAuthor(ctx context.Context, authorID string, fetchBooks bool) (*model.AuthorResult, error) {

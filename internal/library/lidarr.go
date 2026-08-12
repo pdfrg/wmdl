@@ -133,9 +133,7 @@ func (c *LidarrClient) SetAllAlbums(albums []LidarrAlbum) {
 
 func (c *LidarrClient) Ping(ctx context.Context) error {
 	var health []map[string]interface{}
-	return c.retry(ctx, func() error {
-		return c.get(ctx, "/api/v1/health", &health)
-	})
+	return c.get(ctx, "/api/v1/health", &health)
 }
 
 func (c *LidarrClient) retry(ctx context.Context, fn func() error) error {

@@ -91,9 +91,7 @@ type radarrCommand struct {
 
 func (r *RadarrClient) Ping(ctx context.Context) error {
 	var health []map[string]interface{}
-	return r.retry(ctx, func() error {
-		return r.get(ctx, "/api/v3/health", &health)
-	})
+	return r.get(ctx, "/api/v3/health", &health)
 }
 
 func (r *RadarrClient) retry(ctx context.Context, fn func() error) error {
