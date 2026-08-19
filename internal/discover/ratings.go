@@ -48,6 +48,13 @@ type rtOverlay struct {
 var scorecardRE = regexp.MustCompile(
 	`id="media-scorecard-json"[^>]*type="application/json"[^>]*>([^<]*)</script>`)
 
+// isRTSearchURL reports whether an RT URL is a search-results page rather than
+// a concrete movie/TV title page. Search pages carry no media-scorecard-json,
+// so scorecard scraping should be skipped for them.
+func isRTSearchURL(u string) bool {
+	return strings.Contains(u, "/search?search=")
+}
+
 // ScrapeRTRatings fetches an RT movie/TV page, extracts the embedded
 // media-scorecard-json, and returns headline + real audience scores.
 func ScrapeRTRatings(ctx context.Context, rtURL string) *RTRatings {

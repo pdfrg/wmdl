@@ -3,6 +3,7 @@ package discover
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -15,6 +16,7 @@ import (
 type OMDBClient struct {
 	http    *http.Client
 	apiKey  string
+	baseURL string
 	limiter *rate.Limiter
 }
 
@@ -69,8 +71,20 @@ func NewOMDBClient(apiKey string) *OMDBClient {
 			Timeout: 10 * time.Second,
 		},
 		apiKey:  apiKey,
+		baseURL: "https://www.omdbapi.com",
 		limiter: rate.NewLimiter(rate.Limit(10), 1),
 	}
+}
+
+// errOMDBNotFound is returned when OMDB reports that an IMDb ID is unknown
+// (not yet in OMDB's database). This is expected for very new or obscure
+// titles whose TMDB-provided ID hasn't propagated to OMDB, so callers can
+// treat it as a benign miss rather than a real failure.
+var errOMDBNotFound = errors.New("OMDB: ID not found")
+
+// isOMDBNotFoundError reports whether err is the benign "ID not in OMDB" miss.
+func isOMDBNotFoundError(err error) bool {
+	return errors.Is(err, errOMDBNotFound)
 }
 
 func (c *OMDBClient) FetchRatings(ctx context.Context, imdbID string) (*OMDBData, error) {
@@ -78,7 +92,7 @@ func (c *OMDBClient) FetchRatings(ctx context.Context, imdbID string) (*OMDBData
 		return nil, fmt.Errorf("rate limit wait: %w", err)
 	}
 
-	url := fmt.Sprintf("https://www.omdbapi.com/?i=%s&apikey=%s", imdbID, c.apiKey)
+	url := fmt.Sprintf("%s/?i=%s&apikey=%s", c.baseURL, imdbID, c.apiKey)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
@@ -101,7 +115,12 @@ func (c *OMDBClient) FetchRatings(ctx context.Context, imdbID string) (*OMDBData
 	}
 
 	if omdbResp.Response == "False" {
-		return nil, fmt.Errorf("OMDB error for %s: %s", imdbID, omdbResp.Error)
+		switch omdbResp.Error {
+		case "Incorrect IMDb ID.", "Movie not found!":
+			return nil, fmt.Errorf("%w (%s)", errOMDBNotFound, imdbID)
+		default:
+			return nil, fmt.Errorf("OMDB error for %s: %s", imdbID, omdbResp.Error)
+		}
 	}
 
 	result := &OMDBData{}

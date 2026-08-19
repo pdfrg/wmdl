@@ -117,7 +117,11 @@ func (r *Runner) processItem(ctx context.Context, item ScrapedItem, progYear, pr
 				Int64("imdb_votes", imdbVotes).
 				Msg("OMDB data")
 		} else if err != nil {
-			r.log.Warn().Err(err).Msg("OMDB failed")
+			if isOMDBNotFoundError(err) {
+				r.log.Debug().Err(err).Msg("OMDB ID not found (benign)")
+			} else {
+				r.log.Warn().Err(err).Msg("OMDB failed")
+			}
 		}
 	}
 	if imdbRating == 0 && item.ImdbRating > 0 {
@@ -143,7 +147,7 @@ func (r *Runner) processItem(ctx context.Context, item ScrapedItem, progYear, pr
 	}
 	rtURL := r.rt.FindURL(apiCtx, rtTitle, item.Year, string(mediaType))
 
-	if strings.Contains(rtURL, "search?search=") {
+	if isRTSearchURL(rtURL) {
 		if r.allocCtx != nil {
 			r.log.Info().Msg("trying RT search via chromedp")
 			if searchURL := SearchRTSite(ctx, r.allocCtx, rtTitle, item.Year, string(mediaType)); searchURL != "" {
@@ -155,7 +159,7 @@ func (r *Runner) processItem(ctx context.Context, item ScrapedItem, progYear, pr
 	apiCancel()
 
 	rtCritics, rtAudience, rtAudienceReal, rtRealVotes := 0.0, 0.0, 0.0, 0
-	if rtURL != "" {
+	if rtURL != "" && !isRTSearchURL(rtURL) {
 		r.log.Info().Str("url", rtURL).Msg("RT URL found")
 		ratings := ScrapeRTRatings(ctx, rtURL)
 		rtCritics = ratings.CriticsScore
@@ -170,6 +174,8 @@ func (r *Runner) processItem(ctx context.Context, item ScrapedItem, progYear, pr
 		if rtAudienceReal > 0 {
 			r.log.Info().Str("url", rtURL).Float64("real", rtAudienceReal).Int("votes", rtRealVotes).Msg("RT real audience score")
 		}
+	} else if isRTSearchURL(rtURL) {
+		r.log.Info().Str("url", rtURL).Msg("RT URL is a search fallback; no scorecard to fetch")
 	} else {
 		r.log.Info().Msg("RT URL not found")
 	}
