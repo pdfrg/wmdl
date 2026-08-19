@@ -76,21 +76,22 @@ Notes:
 
 			headless, _ := cmd.Flags().GetBool("headless")
 
-			typeFilterStr, _ := cmd.Flags().GetString("type")
-			var typeFilter model.MediaType
-			if typeFilterStr != "" {
-				switch model.MediaType(typeFilterStr) {
+			typeFilterStrs, _ := cmd.Flags().GetStringSlice("type")
+			var typeFilters []model.MediaType
+			for _, s := range typeFilterStrs {
+				mt := model.MediaType(strings.TrimSpace(s))
+				switch mt {
 				case model.MediaTypeAnime, model.MediaTypeMusic, model.MediaTypeMovie, model.MediaTypeTV, model.MediaTypeBook:
-					typeFilter = model.MediaType(typeFilterStr)
+					typeFilters = append(typeFilters, mt)
 				default:
-					return fmt.Errorf("invalid type %q: must be anime, movie, tv, music, or book", typeFilterStr)
+					return fmt.Errorf("invalid type %q: must be anime, movie, tv, music, or book", s)
 				}
 			}
 
 			lookbackStr, _ := cmd.Flags().GetString("lookback")
 			var lookbackOverrides discover.LookbackOverrides
 			if lookbackStr != "" {
-				if typeFilterStr != "" {
+				if len(typeFilters) > 0 {
 					return fmt.Errorf("--lookback cannot be combined with --type")
 				}
 				lookbackOverrides, err = parseLookbackFlag(lookbackStr)
@@ -99,7 +100,7 @@ Notes:
 				}
 			}
 
-			discovered, err := runDiscoverForWeek(cmd.Context(), database, cfg, targetYear, targetWeek, headless, typeFilter, lookbackOverrides)
+			discovered, err := runDiscoverForWeek(cmd.Context(), database, cfg, targetYear, targetWeek, headless, typeFilters, lookbackOverrides)
 			if err != nil {
 				return err
 			}
@@ -124,7 +125,7 @@ Notes:
 	}
 	addWeekFlag(cmd)
 	cmd.Flags().Bool("headless", false, "Run without opening a browser window (for cron/systemd)")
-	cmd.Flags().String("type", "", "Media type to discover (anime, movie, tv, music, book)")
+	cmd.Flags().StringSlice("type", nil, "Media type(s) to discover (anime, movie, tv, music, book). Comma-separated or repeatable: --type movie,tv or --type movie --type tv")
 	cmd.Flags().String("lookback", "", `Backfill past weeks for one or more media types.
   Format: type:range[,type:range...]
     type:  movie, tv, physical, anime, music, book

@@ -143,7 +143,7 @@ func (r *Runner) cacheLibraryData(ctx context.Context) error {
 		}
 	}
 
-	wantBooks := r.mediaTypeFilter == "" || r.mediaTypeFilter == model.MediaTypeBook
+	wantBooks := len(r.mediaTypeFilters) == 0 || r.mediaTypeFilters[model.MediaTypeBook]
 
 	if r.bookClient != nil && wantBooks {
 		books, err := r.bookClient.GetAllBooks(ctx)

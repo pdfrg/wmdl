@@ -202,17 +202,17 @@ func (r *Runner) sendNotification(ctx context.Context, wantMovie, wantTV, wantAn
 	}
 }
 
-// markScrapeFailures annotates source counts whose provider returned an error
-// this run, so "0 items" reads differently from "scrape failed". Labels mirror
-// the zero-fill blocks in sendNotification so they render with the same text.
-// Deprecated providers (e.g. jikan) are intentionally not mapped.
+// markScrapeFailures annotates source counts whose provider did not scrape
+// this run, so "0 items" reads differently from an actual failure. Labels
+// mirror the zero-fill blocks in sendNotification so they render with the
+// same text. Deprecated providers (e.g. jikan) are intentionally not mapped.
 func (r *Runner) markScrapeFailures(sourceCounts map[string]int, sourceNotes map[string]string) {
 	if len(r.failedScrapers) == 0 {
 		return
 	}
 	mark := func(scraper string, mt model.MediaType) {
-		if r.failedScrapers[scraper] {
-			sourceNotes[sourceDisplayName(scraper, mt)] = "scrape failed"
+		if reason, ok := r.failedScrapers[scraper]; ok {
+			sourceNotes[sourceDisplayName(scraper, mt)] = reason
 		}
 	}
 
@@ -228,10 +228,10 @@ func (r *Runner) markScrapeFailures(sourceCounts map[string]int, sourceNotes map
 	}
 	if r.cfg.MediaTypes.Anime.Enabled {
 		for _, name := range []string{"anilist", "tenrai"} {
-			if r.failedScrapers[name] {
-				sourceNotes[name+" (completed)"] = "scrape failed"
+			if reason, ok := r.failedScrapers[name]; ok {
+				sourceNotes[name+" (completed)"] = reason
 				if r.cfg.MediaTypes.Anime.PhaseBEnabled {
-					sourceNotes[name+" (airing)"] = "scrape failed"
+					sourceNotes[name+" (airing)"] = reason
 				}
 			}
 		}

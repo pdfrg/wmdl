@@ -22,6 +22,7 @@ type FlixPatrolProvider struct {
 	targetWeek      int
 	hasTargetWeek   bool
 	mediaTypeFilter model.MediaType
+	fetchPageFn     func(f *FlixPatrolProvider, page int, windowStart, windowEnd time.Time) ([]flixItem, error)
 }
 
 var (
@@ -31,8 +32,9 @@ var (
 
 func NewFlixPatrolProvider(debugURL string, allocCtx context.Context) *FlixPatrolProvider {
 	return &FlixPatrolProvider{
-		debugURL: debugURL,
-		allocCtx: allocCtx,
+		debugURL:    debugURL,
+		allocCtx:    allocCtx,
+		fetchPageFn: (*FlixPatrolProvider).fetchPage,
 	}
 }
 
@@ -90,8 +92,16 @@ func (f *FlixPatrolProvider) Scrape() ([]ScrapedItem, error) {
 	var allItems []flixItem
 pageLoop:
 	for page := 1; page <= 30; page++ {
-		items, err := f.fetchPage(page, streamStart, streamTue)
+		items, err := f.fetchPageFn(f, page, streamStart, streamTue)
 		if err != nil {
+			// A failure on the first page means the site (or our browser
+			// session) is unavailable, so surface it as a scrape error rather
+			// than silently reporting zero items. Later-page failures after a
+			// successful first page are logged and skipped — we still have
+			// partial data.
+			if page == 1 {
+				return nil, fmt.Errorf("flixpatrol page %d: %w", page, err)
+			}
 			log.Warn().Err(err).Msgf("FlixPatrol page %d failed", page)
 			continue
 		}

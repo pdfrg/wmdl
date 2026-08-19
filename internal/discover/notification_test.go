@@ -51,8 +51,15 @@ func openTestDB(t *testing.T) *db.DB {
 
 func TestMarkScrapeFailures(t *testing.T) {
 	r := &Runner{
-		cfg:            notificationTestConfig(),
-		failedScrapers: map[string]bool{"bookshop": true, "flixpatrol": true, "allmusic": true, "anilist": true, "tenrai": true, "jikan": true},
+		cfg: notificationTestConfig(),
+		failedScrapers: map[string]string{
+			"bookshop":   "scrape failed",
+			"flixpatrol": "browser unavailable: exec: \"brave\": executable file not found in $PATH",
+			"allmusic":   "browser unavailable",
+			"anilist":    "scrape failed",
+			"tenrai":     "scrape failed",
+			"jikan":      "scrape failed",
+		},
 	}
 	sourceCounts := map[string]int{
 		"bookshop": 0, "goodreads blog": 0,
@@ -67,9 +74,9 @@ func TestMarkScrapeFailures(t *testing.T) {
 	r.markScrapeFailures(sourceCounts, sourceNotes)
 
 	assert.Equal(t, "scrape failed", sourceNotes["bookshop"])
-	assert.Equal(t, "scrape failed", sourceNotes["flixpatrol movie"])
-	assert.Equal(t, "scrape failed", sourceNotes["flixpatrol tv"])
-	assert.Equal(t, "scrape failed", sourceNotes["allmusic"])
+	assert.Equal(t, "browser unavailable: exec: \"brave\": executable file not found in $PATH", sourceNotes["flixpatrol movie"])
+	assert.Equal(t, "browser unavailable: exec: \"brave\": executable file not found in $PATH", sourceNotes["flixpatrol tv"])
+	assert.Equal(t, "browser unavailable", sourceNotes["allmusic"])
 	assert.Equal(t, "scrape failed", sourceNotes["anilist (completed)"])
 	assert.Equal(t, "scrape failed", sourceNotes["anilist (airing)"])
 	assert.Equal(t, "scrape failed", sourceNotes["tenrai (completed)"])
@@ -91,7 +98,7 @@ func TestSendNotificationAllFailAlert(t *testing.T) {
 		cfg:            notificationTestConfig(),
 		db:             d,
 		notify:         mockNotifier,
-		failedScrapers: map[string]bool{"bookshop": true},
+		failedScrapers: map[string]string{"bookshop": "scrape failed"},
 	}
 
 	r.sendNotification(ctx, true, true, true, true, true, nil, nil, nil, nil, 2026, 33, 0)
@@ -124,13 +131,13 @@ func TestSendNotificationNormalPathAnnotation(t *testing.T) {
 		cfg:            notificationTestConfig(),
 		db:             d,
 		notify:         mockNotifier,
-		failedScrapers: map[string]bool{"bookshop": true},
+		failedScrapers: map[string]string{"bookshop": "browser unavailable"},
 	}
 
 	r.sendNotification(ctx, true, true, true, true, true, nil, nil, nil, nil, 2026, 33, 1)
 
 	msg := mockNotifier.Calls[0].Arguments.String(1)
-	assert.Contains(t, msg, "bookshop: 0 (scrape failed)")
+	assert.Contains(t, msg, "bookshop: 0 (browser unavailable)")
 	assert.Contains(t, msg, "tmdb movie: 1")
 	mockNotifier.AssertExpectations(t)
 }

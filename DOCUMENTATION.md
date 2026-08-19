@@ -391,6 +391,8 @@ Hardcover), save to SQLite, and optionally send a notification.
 wmdl discover                              # current week
 wmdl discover --headless                   # cron/systemd (no visible browser)
 wmdl discover --type movie                 # movies only
+wmdl discover --type movie,tv              # movies and TV
+wmdl discover --type movie --type tv       # same, repeatable flag
 wmdl discover --type book --week 2025-W14  # books for a specific week
 wmdl discover --lookback movie:2-8,tv:2-8 # one-shot lookback overrides
 ```
@@ -398,7 +400,8 @@ wmdl discover --lookback movie:2-8,tv:2-8 # one-shot lookback overrides
 Flags:
 - `--week` — target ISO week (see [week formats](#target-a-specific-week))
 - `--headless` — no browser window, for cron/systemd
-- `--type` — media type filter: `movie`, `tv`, `music`, `anime`, `book`
+- `--type` — media type filter: `movie`, `tv`, `music`, `anime`, `book`.
+  Repeatable and comma-separated, e.g. `--type movie --type tv` or `--type movie,tv`.
 - `--lookback` — one-shot lookback override, format: `type:range[,type:range...]`
   (e.g. `movie:4-8` looks back 4-8 weeks for movie streaming)
 

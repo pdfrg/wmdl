@@ -1,7 +1,10 @@
 package discover
 
 import (
+	"errors"
+	"strings"
 	"testing"
+	"time"
 )
 
 func TestParseFlixRow_AnimeGenre(t *testing.T) {
@@ -57,5 +60,54 @@ func TestParseFlixRow_AnimeGenre(t *testing.T) {
 				t.Errorf("MediaType = %q, want %q", item.MediaType, "movie")
 			}
 		})
+	}
+}
+
+func TestFlixPatrolScrapePage1Failure(t *testing.T) {
+	f := NewFlixPatrolProvider("http://127.0.0.1:9222", nil)
+	f.SetWeekRange(2026, 33)
+	fetchErr := errors.New("page 1 cloudflare challenge")
+	f.fetchPageFn = func(_ *FlixPatrolProvider, page int, _, _ time.Time) ([]flixItem, error) {
+		return nil, fetchErr
+	}
+
+	_, err := f.Scrape()
+	if err == nil {
+		t.Fatal("expected error when page 1 fails")
+	}
+	if !errors.Is(err, fetchErr) && !strings.Contains(err.Error(), "page 1") {
+		t.Fatalf("expected page 1 failure wrapped, got: %v", err)
+	}
+}
+
+func TestFlixPatrolScrapeLaterPageFailureIsTolerated(t *testing.T) {
+	f := NewFlixPatrolProvider("http://127.0.0.1:9222", nil)
+	f.SetWeekRange(2026, 33)
+
+	streamTue := truncateToDay(tuesdayOfISOWeek(2026, 33))
+	streamStart := truncateToDay(streamTue.AddDate(0, 0, -6))
+	fetchErr := errors.New("page 2 transient failure")
+	f.fetchPageFn = func(_ *FlixPatrolProvider, page int, _, _ time.Time) ([]flixItem, error) {
+		switch page {
+		case 1:
+			return []flixItem{{
+				Title:      "Test",
+				MediaType:  "movie",
+				Date:       streamStart.Format("Jan 2"),
+				IMDbRating: 7.5,
+			}}, nil
+		case 2:
+			return nil, fetchErr
+		default:
+			return []flixItem{{Title: "Old", Date: streamStart.AddDate(0, 0, -8).Format("Jan 2")}}, nil
+		}
+	}
+
+	items, err := f.Scrape()
+	if err != nil {
+		t.Fatalf("later-page failure should not abort scrape: %v", err)
+	}
+	if len(items) == 0 {
+		t.Fatal("expected partial items from page 1 despite later-page failure")
 	}
 }

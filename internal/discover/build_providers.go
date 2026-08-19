@@ -2,10 +2,21 @@ package discover
 
 import (
 	"fmt"
+	"sort"
+	"strings"
 	"time"
 
 	"github.com/pdfrg/wmdl/internal/model"
 )
+
+// browserUnavailable returns a failure reason for browser-required scrapers
+// that were skipped because the browser never came up.
+func (r *Runner) browserUnavailable() string {
+	if r.browserErr != nil {
+		return "browser unavailable: " + r.browserErr.Error()
+	}
+	return "browser unavailable"
+}
 
 func (r *Runner) buildProviders(wantMovie, wantTV, wantAnime, wantMusic, wantBooks bool) ([]ReleaseProvider, error) {
 	providers := []ReleaseProvider{}
@@ -79,6 +90,7 @@ func (r *Runner) buildProviders(wantMovie, wantTV, wantAnime, wantMusic, wantBoo
 						case "flixpatrol":
 							if r.browserCtx == nil {
 								r.log.Warn().Msg("flixpatrol: browser unavailable, skipping")
+								r.failedScrapers["flixpatrol"] = r.browserUnavailable()
 								continue
 							}
 							fp := NewFlixPatrolProvider(r.debugURL, r.browserCtx)
@@ -147,6 +159,7 @@ func (r *Runner) buildProviders(wantMovie, wantTV, wantAnime, wantMusic, wantBoo
 				case "goodreads":
 					if r.browserCtx == nil {
 						r.log.Warn().Msg("goodreads: browser unavailable, skipping")
+						r.failedScrapers["goodreads"] = r.browserUnavailable()
 						continue
 					}
 					gr := NewGoodreadsProvider(r.debugURL, r.browserCtx)
@@ -172,6 +185,7 @@ func (r *Runner) buildProviders(wantMovie, wantTV, wantAnime, wantMusic, wantBoo
 			}
 			if r.browserCtx == nil {
 				r.log.Warn().Msg("bookshop: browser unavailable, skipping")
+				r.failedScrapers["bookshop"] = r.browserUnavailable()
 			} else {
 				bs := NewBookshopProvider(r.debugURL, r.browserCtx)
 				realYear, realWeek := time.Now().ISOWeek()
@@ -202,6 +216,7 @@ func (r *Runner) buildProviders(wantMovie, wantTV, wantAnime, wantMusic, wantBoo
 				case "allmusic":
 					if r.browserCtx == nil {
 						r.log.Warn().Msg("allmusic: browser unavailable, skipping")
+						r.failedScrapers["allmusic"] = r.browserUnavailable()
 						continue
 					}
 					allmusic := NewAllMusicProvider(r.debugURL, r.browserCtx)
@@ -224,7 +239,12 @@ func (r *Runner) buildProviders(wantMovie, wantTV, wantAnime, wantMusic, wantBoo
 	}
 
 	if len(providers) == 0 {
-		return nil, fmt.Errorf("no providers enabled for type filter %q", r.mediaTypeFilter)
+		var enabled []string
+		for mt := range r.mediaTypeFilters {
+			enabled = append(enabled, string(mt))
+		}
+		sort.Strings(enabled)
+		return nil, fmt.Errorf("no providers enabled for type filter %q", strings.Join(enabled, ","))
 	}
 
 	return providers, nil

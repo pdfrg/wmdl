@@ -21,7 +21,7 @@ import (
 	"github.com/pdfrg/wmdl/internal/review"
 )
 
-func runDiscoverForWeek(ctx context.Context, database *db.DB, cfg *config.Config, year, week int, headless bool, typeFilter model.MediaType, lookbackOverrides discover.LookbackOverrides) (discovered bool, err error) {
+func runDiscoverForWeek(ctx context.Context, database *db.DB, cfg *config.Config, year, week int, headless bool, typeFilters []model.MediaType, lookbackOverrides discover.LookbackOverrides) (discovered bool, err error) {
 	hook.RunSoft(ctx, cfg.Hooks.PreDiscover, "pre-discover")
 	defer hook.RunDeferred(ctx, cfg.Hooks.PostDiscover, "post-discover")
 
@@ -38,8 +38,8 @@ func runDiscoverForWeek(ctx context.Context, database *db.DB, cfg *config.Config
 	}
 
 	runner := discover.NewRunner(log.Logger, cfg, database, headless)
-	if typeFilter != "" {
-		runner.SetMediaTypeFilter(typeFilter)
+	if len(typeFilters) > 0 {
+		runner.SetMediaTypeFilter(typeFilters...)
 	}
 	if len(lookbackOverrides) > 0 {
 		runner.SetLookbackOverrides(lookbackOverrides)

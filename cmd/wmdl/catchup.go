@@ -59,14 +59,14 @@ one week at a time — use catchup to handle all outstanding weeks.`,
 
 			if len(states) == 0 {
 				log.Info().Msg("No week data found. Running discover for current week.")
-				_, err = runDiscoverForWeek(c.Context(), database, cfg, 0, 0, false, "", nil)
+				_, err = runDiscoverForWeek(c.Context(), database, cfg, 0, 0, false, nil, nil)
 				return err
 			}
 
 			for _, s := range states {
 				if !s.Discovered {
 					log.Info().Msgf("Week %d/%d: needs discover, running now...", s.Year, s.Week)
-					if _, err := runDiscoverForWeek(c.Context(), database, cfg, s.Year, s.Week, false, "", nil); err != nil {
+					if _, err := runDiscoverForWeek(c.Context(), database, cfg, s.Year, s.Week, false, nil, nil); err != nil {
 						log.Warn().Err(err).Msg("discover failed")
 					}
 					continue

@@ -52,33 +52,35 @@ type LookbackRange struct {
 type LookbackOverrides map[string]LookbackRange
 
 type Runner struct {
-	log             zerolog.Logger
-	cfg             *config.Config
-	db              *db.DB
-	tmdb            *TMDBClient
-	rt              *RTFinder
-	omdb            *OMDBClient
-	mb              *MBClient
-	hc              *HardcoverClient
-	ol              *OLClient
-	radarr          *library.RadarrClient
-	sonarr          *library.SonarrClient
-	lidarr          *library.LidarrClient
-	notify          notifier.Notifier
-	debugURL        string
-	allocCtx        context.Context
-	allocCancel     context.CancelFunc
-	browserCtx      context.Context // single browser instance shared by all chromedp providers
-	targetYear      int
-	targetWeek      int
-	hasTargetWeek   bool
-	headless        bool
-	killBrave       func() error
-	mediaTypeFilter model.MediaType // "" = all types
+	log              zerolog.Logger
+	cfg              *config.Config
+	db               *db.DB
+	tmdb             *TMDBClient
+	rt               *RTFinder
+	omdb             *OMDBClient
+	mb               *MBClient
+	hc               *HardcoverClient
+	ol               *OLClient
+	radarr           *library.RadarrClient
+	sonarr           *library.SonarrClient
+	lidarr           *library.LidarrClient
+	notify           notifier.Notifier
+	debugURL         string
+	allocCtx         context.Context
+	allocCancel      context.CancelFunc
+	browserCtx       context.Context // single browser instance shared by all chromedp providers
+	targetYear       int
+	targetWeek       int
+	hasTargetWeek    bool
+	headless         bool
+	killBrave        func() error
+	mediaTypeFilters map[model.MediaType]bool // nil/empty = all types
+	browserErr       error                    // set when the browser fails to launch/pre-allocate
 
-	// failedScrapers records providers whose Scrape() returned an error this
-	// run, so the notification can distinguish "0 items" from "scrape failed".
-	failedScrapers map[string]bool
+	// failedScrapers records providers that did not scrape successfully this
+	// run, keyed by provider name with a human-readable reason, so the
+	// notification can distinguish "0 items" from an actual failure.
+	failedScrapers map[string]string
 
 	lookbackOverrides LookbackOverrides
 
@@ -91,8 +93,11 @@ type Runner struct {
 	}]
 }
 
-func (r *Runner) SetMediaTypeFilter(mt model.MediaType) {
-	r.mediaTypeFilter = mt
+func (r *Runner) SetMediaTypeFilter(types ...model.MediaType) {
+	r.mediaTypeFilters = make(map[model.MediaType]bool)
+	for _, mt := range types {
+		r.mediaTypeFilters[mt] = true
+	}
 }
 
 func (r *Runner) SetTargetWeek(year, week int) {
@@ -147,7 +152,7 @@ func NewRunner(logger zerolog.Logger, cfg *config.Config, database *db.DB, headl
 		notify:         notify,
 		debugURL:       fmt.Sprintf("http://127.0.0.1:%d", cfg.Browser.DebugPort),
 		headless:       headless,
-		failedScrapers: make(map[string]bool),
+		failedScrapers: make(map[string]string),
 	}
 	if cfg.Library.Radarr.URL != "" && cfg.Library.Radarr.APIKey != "" {
 		r.radarr = library.NewRadarrClient(cfg.Library.Radarr.URL, cfg.Library.Radarr.APIKey, cfg.Library.Radarr.Timeout)
@@ -170,13 +175,13 @@ func (r *Runner) Run(ctx context.Context) error {
 		return fmt.Errorf("TMDB not configured: set tmdb.api_key or tmdb.access_token in config\n  Get a free API key at https://www.themoviedb.org/settings/api")
 	}
 
-	wantMovie := r.mediaTypeFilter == "" || r.mediaTypeFilter == model.MediaTypeMovie
-	wantTV := r.mediaTypeFilter == "" || r.mediaTypeFilter == model.MediaTypeTV
-	wantAnime := r.mediaTypeFilter == "" || r.mediaTypeFilter == model.MediaTypeAnime
-	wantMusic := r.mediaTypeFilter == "" || r.mediaTypeFilter == model.MediaTypeMusic
-	wantBooks := r.mediaTypeFilter == "" || r.mediaTypeFilter == model.MediaTypeBook
+	wantMovie := len(r.mediaTypeFilters) == 0 || r.mediaTypeFilters[model.MediaTypeMovie]
+	wantTV := len(r.mediaTypeFilters) == 0 || r.mediaTypeFilters[model.MediaTypeTV]
+	wantAnime := len(r.mediaTypeFilters) == 0 || r.mediaTypeFilters[model.MediaTypeAnime]
+	wantMusic := len(r.mediaTypeFilters) == 0 || r.mediaTypeFilters[model.MediaTypeMusic]
+	wantBooks := len(r.mediaTypeFilters) == 0 || r.mediaTypeFilters[model.MediaTypeBook]
 
-	r.failedScrapers = make(map[string]bool)
+	r.failedScrapers = make(map[string]string)
 
 	// Pre-flight healthchecks for enrichment services.
 	// Network errors are warnings (may be transient), auth failures surface in the error text.
@@ -234,6 +239,7 @@ func (r *Runner) Run(ctx context.Context) error {
 	if (wantMovie || wantTV) || wantMusic || wantBooks {
 		killBrave, err := browser.EnsureRunning(r.cfg.Browser.Binary, r.cfg.Browser.DebugPort, r.cfg.Browser.Profile, r.headless)
 		if err != nil {
+			r.browserErr = err
 			r.log.Warn().Err(err).Msg("browser unavailable, some features disabled")
 		} else if killBrave != nil {
 			r.killBrave = killBrave
@@ -272,6 +278,7 @@ func (r *Runner) Run(ctx context.Context) error {
 		if err := chromedp.Run(r.browserCtx, chromedp.ActionFunc(func(ctx context.Context) error {
 			return nil
 		})); err != nil {
+			r.browserErr = err
 			r.log.Warn().Err(err).Msg("failed to pre-allocate chromedp browser, disabling browser providers")
 			r.browserCtx = nil
 		}
@@ -292,7 +299,7 @@ func (r *Runner) Run(ctx context.Context) error {
 		items, err := p.Scrape()
 		if err != nil {
 			r.log.Warn().Err(err).Str("provider", p.Name()).Msg("scrape failed")
-			r.failedScrapers[p.Name()] = true
+			r.failedScrapers[p.Name()] = err.Error()
 			continue
 		}
 		r.log.Info().Int("count", len(items)).Str("provider", p.Name()).Msg("found items")
@@ -450,13 +457,13 @@ func (r *Runner) Run(ctx context.Context) error {
 
 	// Process video items (only when type filter matches)
 	if (wantMovie || wantTV) && len(uniqueVideos) > 0 {
-		// When filtering to a specific video subtype (movie or tv),
-		// only process items matching that type.
+		// When filtering to specific video subtypes (movie/tv), only process
+		// items matching one of the selected types.
 		toProcess := uniqueVideos
-		if r.mediaTypeFilter == model.MediaTypeMovie || r.mediaTypeFilter == model.MediaTypeTV {
+		if len(r.mediaTypeFilters) > 0 {
 			var filtered []ScrapedItem
 			for _, item := range uniqueVideos {
-				if item.MediaType == r.mediaTypeFilter {
+				if r.mediaTypeFilters[item.MediaType] {
 					filtered = append(filtered, item)
 				}
 			}
