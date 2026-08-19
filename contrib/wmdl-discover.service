@@ -4,7 +4,9 @@
 #   cp contrib/wmdl-discover.service ~/.config/systemd/user/
 #   systemctl --user daemon-reload
 #
-# Paths: adjust ExecStart to match your `which wmdl` or build output.
+# Paths: ExecStart points at the standard install location (~/.local/bin/wmdl,
+# e.g. `go build -o ~/.local/bin/wmdl ./cmd/wmdl`). Adjust it to match your
+# `which wmdl` or build output.
 # Requires: a working $HOME/.config/wmdl/config.yaml.
 #
 # NOTE: --headless is intentionally omitted. AllMusic (Cloudflare) blocks
@@ -20,7 +22,7 @@ Wants=network-online.target
 
 [Service]
 Type=oneshot
-ExecStart=%h/go/bin/wmdl discover
+ExecStart=%h/.local/bin/wmdl discover
 
 # Hardening (minimal — user namespacing from ProtectSystem/ReadWritePaths
 # breaks SSH config file permission checks for hooks that use SSH)

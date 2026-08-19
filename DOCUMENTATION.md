@@ -967,7 +967,7 @@ reviewed and processed at your convenience.
 
 ```
 crontab -e
-0 5 * * 3 $HOME/go/bin/wmdl discover --headless
+0 5 * * 3 $HOME/.local/bin/wmdl discover --headless
 ```
 
 ## Data Storage
