@@ -259,7 +259,7 @@ func (c *LazyLibrarianClient) doOK(ctx context.Context, params url.Values) error
 		return fmt.Errorf("lazylibrarian: reading response: %w", err)
 	}
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("lazylibrarian: %s returned %d: %s", params.Get("cmd"), resp.StatusCode, strings.TrimSpace(string(body)))
+		return fmt.Errorf("lazylibrarian: %s returned %d: %s", params.Get("cmd"), resp.StatusCode, sanitizeLLBody(body))
 	}
 	return nil
 }
@@ -275,7 +275,7 @@ func (c *LazyLibrarianClient) doJSON(ctx context.Context, params url.Values, dst
 		if err != nil {
 			return fmt.Errorf("lazylibrarian: %s returned %d: reading body: %w", params.Get("cmd"), resp.StatusCode, err)
 		}
-		return fmt.Errorf("lazylibrarian: %s returned %d: %s", params.Get("cmd"), resp.StatusCode, strings.TrimSpace(string(body)))
+		return fmt.Errorf("lazylibrarian: %s returned %d: %s", params.Get("cmd"), resp.StatusCode, sanitizeLLBody(body))
 	}
 	if err := json.NewDecoder(resp.Body).Decode(dst); err != nil {
 		return fmt.Errorf("lazylibrarian: parsing %s response: %w", params.Get("cmd"), err)
@@ -305,4 +305,66 @@ type llBook struct {
 	BookFile    string `json:"bookfile"`
 	AudioFile   string `json:"audiofile"`
 	BookIsbn    string `json:"bookisbn"`
+}
+
+// sanitizeLLBody reduces an error response body to a short, actionable snippet.
+// LazyLibrarian error responses frequently embed a full HTML page with a Python
+// traceback; dumping all of it into logs is noisy and hides the actual cause.
+// This strips tags, keeps the final meaningful line(s) of the traceback (the
+// exception itself), and truncates to a reasonable length.
+func sanitizeLLBody(body []byte) string {
+	s := strings.TrimSpace(string(body))
+	if s == "" {
+		return ""
+	}
+
+	// Find the last Python traceback line containing an exception, e.g.
+	// "TypeError: string indices must be integers, not 'str'". When present,
+	// prefer it over the raw HTML so the real error is visible.
+	if idx := strings.LastIndex(s, "Traceback"); idx >= 0 {
+		lines := strings.Split(s[idx:], "\n")
+		var lastErr string
+		for _, ln := range lines {
+			ln = strings.TrimSpace(ln)
+			if ln == "" || strings.HasPrefix(ln, "File ") || strings.HasPrefix(ln, "^") {
+				continue
+			}
+			if strings.Contains(ln, ":") && !strings.Contains(ln, "<") {
+				lastErr = ln
+			}
+		}
+		if lastErr != "" {
+			return truncateLL(lastErr, 300)
+		}
+	}
+
+	// Strip HTML tags for non-traceback HTML error pages.
+	if strings.Contains(s, "<") && strings.Contains(s, ">") {
+		s = stripLLTags(s)
+	}
+
+	return truncateLL(s, 300)
+}
+
+func stripLLTags(s string) string {
+	var b strings.Builder
+	inTag := false
+	for _, r := range s {
+		switch {
+		case r == '<':
+			inTag = true
+		case r == '>':
+			inTag = false
+		case !inTag:
+			b.WriteRune(r)
+		}
+	}
+	return strings.Join(strings.Fields(b.String()), " ")
+}
+
+func truncateLL(s string, max int) string {
+	if len(s) <= max {
+		return s
+	}
+	return s[:max] + "..."
 }

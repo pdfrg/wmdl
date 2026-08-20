@@ -64,7 +64,7 @@ func (e *Executor) ProcessBookLibraryDecisions(ctx context.Context, events []db.
 		}
 
 		if _, err := e.bookClient.AddBook(ctx, bookID); err != nil {
-			e.log.Warn().Err(err).Str("book", title).Msg("lazylibrarian addBook")
+			e.log.Warn().Err(err).Str("book", title).Msg("lazylibrarian addBook failed (check LazyLibrarian server — likely a server-side lookup error)")
 			continue
 		}
 
@@ -218,7 +218,7 @@ func (e *Executor) processPhase3BookBatchItem(ctx context.Context, item *BatchIt
 	}
 
 	if _, err := e.bookClient.AddBook(ctx, hcID); err != nil {
-		e.log.Warn().Err(err).Str("book", ae.Book.Title).Msg("book phase 3: addBook failed")
+		e.log.Warn().Err(err).Str("book", ae.Book.Title).Msg("book phase 3: addBook failed (check LazyLibrarian server — likely a server-side lookup error)")
 	} else {
 		if err := e.bookClient.UnqueueBook(ctx, hcID, model.BookFormatEbook); err != nil {
 			e.log.Warn().Err(err).Str("book", ae.Book.Title).Msg("book phase 3: unqueueBook ebook")

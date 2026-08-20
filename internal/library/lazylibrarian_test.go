@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
+
 	"github.com/pdfrg/wmdl/internal/model"
 )
 
@@ -292,4 +294,43 @@ func TestNewBookClient_Factory(t *testing.T) {
 	if c == nil {
 		t.Fatal("expected non-nil client for lazylibrarian backend")
 	}
+}
+
+func TestSanitizeLLBody(t *testing.T) {
+	t.Run("extracts exception from traceback page", func(t *testing.T) {
+		body := []byte(`<!DOCTYPE html>
+<html><head><title>500 Internal Server Error</title></head>
+<body>
+<pre id="traceback">Traceback (most recent call last):
+  File "/app/lazylibrarian/api.py", line 2388, in _addonebook
+    api = source['api']
+TypeError: string indices must be integers, not 'str'
+</pre>
+</body></html>`)
+		got := sanitizeLLBody(body)
+		assert.Contains(t, got, "TypeError: string indices must be integers, not 'str'")
+		assert.NotContains(t, got, "<html>")
+		assert.NotContains(t, got, "Traceback (most recent call last)")
+		assert.Less(t, len(got), 300)
+	})
+
+	t.Run("strips tags from plain html error", func(t *testing.T) {
+		got := sanitizeLLBody([]byte("<html><body><h2>500 Internal Server Error</h2><p>boom</p></body></html>"))
+		assert.Contains(t, got, "boom")
+		assert.NotContains(t, got, "<h2>")
+	})
+
+	t.Run("truncates long output", func(t *testing.T) {
+		long := make([]byte, 500)
+		for i := range long {
+			long[i] = 'a'
+		}
+		got := sanitizeLLBody(long)
+		assert.LessOrEqual(t, len(got), 300+len("..."))
+		assert.Contains(t, got, "...")
+	})
+
+	t.Run("empty body returns empty", func(t *testing.T) {
+		assert.Empty(t, sanitizeLLBody(nil))
+	})
 }
