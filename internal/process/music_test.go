@@ -4,6 +4,8 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+
+	"github.com/pdfrg/wmdl/internal/config"
 )
 
 func TestMusicSearchQueries(t *testing.T) {
@@ -52,5 +54,41 @@ func TestFormatOverview(t *testing.T) {
 	t.Run("empty text", func(t *testing.T) {
 		lines := formatOverview("", 50)
 		assert.Empty(t, lines)
+	})
+}
+
+func TestMusicCategory(t *testing.T) {
+	cfg := &config.Config{
+		Downloader: config.DownloaderConfig{
+			Categories: config.CategoryConfig{
+				Music:      "Albums",
+				MusicTrial: "Music",
+			},
+		},
+	}
+	e := &Executor{cfg: cfg}
+
+	t.Run("non-trial uses music category", func(t *testing.T) {
+		assert.Equal(t, "Albums", e.musicCategory(false))
+	})
+
+	t.Run("trial uses music_trial category", func(t *testing.T) {
+		assert.Equal(t, "Music", e.musicCategory(true))
+	})
+
+	t.Run("trial falls back to music when music_trial empty", func(t *testing.T) {
+		e2 := &Executor{cfg: &config.Config{
+			Downloader: config.DownloaderConfig{
+				Categories: config.CategoryConfig{Music: "Albums"},
+			},
+		}}
+		assert.Equal(t, "Albums", e2.musicCategory(true))
+	})
+
+	t.Run("non-trial defaults to Music when music empty", func(t *testing.T) {
+		e2 := &Executor{cfg: &config.Config{
+			Downloader: config.DownloaderConfig{Categories: config.CategoryConfig{}},
+		}}
+		assert.Equal(t, "Music", e2.musicCategory(false))
 	})
 }

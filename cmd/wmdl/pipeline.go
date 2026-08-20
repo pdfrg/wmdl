@@ -935,7 +935,7 @@ func runProcessForWeek(ctx context.Context, database *db.DB, cfg *config.Config,
 				log.Info().Msg("pipeline aborted by user")
 			}
 			// Prompt for music trial decisions after batch picker
-			if hasAlbums && !skips.Lidarr && cfg.Library.Lidarr.URL != "" {
+			if hasAlbums && cfg.Library.Lidarr.URL != "" {
 				musicMode := cfg.MediaTypeMode(model.MediaTypeMusic)
 				if musicMode == config.ProcessModeFull {
 					for _, item := range result.Items {
@@ -943,12 +943,7 @@ func runProcessForWeek(ctx context.Context, database *db.DB, cfg *config.Config,
 							continue
 						}
 						ae := item.MusicResult.Event.Release
-						artistMBID := ae.ArtistMBID
-						if artistMBID != "" && exec.LidarrArtistExists(ctx, artistMBID) {
-							item.Trial = !process.PromptYesNo(ctx, fmt.Sprintf("  %s is tracked in Lidarr. Add this release to Lidarr?", ae.ArtistName))
-						} else {
-							item.Trial = !process.PromptYesNo(ctx, fmt.Sprintf("  Add %s to Lidarr?", ae.ArtistName))
-						}
+						item.Trial = exec.PromptMusicTrial(ctx, ae.ArtistName, ae.ArtistMBID)
 					}
 				}
 			}

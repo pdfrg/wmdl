@@ -727,6 +727,21 @@ func runBacklogBatch(ctx context.Context, database *db.DB, cfg *config.Config, t
 			if errors.Is(err, process.ErrAbort) {
 				log.Info().Msg("pipeline aborted by user")
 			}
+			// Prompt for music trial decisions after the batch picker so each
+			// album can be routed to the trial category when it isn't added to
+			// Lidarr.
+			if hasAlbums && cfg.Library.Lidarr.URL != "" {
+				musicMode := cfg.MediaTypeMode(model.MediaTypeMusic)
+				if musicMode == config.ProcessModeFull {
+					for _, item := range result.Items {
+						if item.MusicResult == nil || len(item.Selected) == 0 {
+							continue
+						}
+						ae := item.MusicResult.Event.Release
+						item.Trial = exec.PromptMusicTrial(ctx, ae.ArtistName, ae.ArtistMBID)
+					}
+				}
+			}
 			batchPicked, batchAlbumResults, batchBookInfo := exec.ProcessBatchResults(ctx, result.Items)
 			picked = append(picked, batchPicked...)
 			albumResults = batchAlbumResults

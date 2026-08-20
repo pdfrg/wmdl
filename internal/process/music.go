@@ -231,18 +231,7 @@ func (e *Executor) PickMusicAlbum(ctx context.Context, sr *MusicSearchResult) *M
 		return &MusicAlbumResult{Event: ae}
 	}
 
-	trial := false
-	if e.lidarr != nil && !e.SkipLidarr() {
-		mode := e.cfg.MediaTypeMode(model.MediaTypeMusic)
-		if mode == config.ProcessModeFull {
-			artistMBID := ae.Release.ArtistMBID
-			if artistMBID != "" && e.LidarrArtistExists(ctx, artistMBID) {
-				trial = !PromptYesNo(ctx, fmt.Sprintf("  %s is tracked in Lidarr. Add this release to Lidarr?", ae.Release.ArtistName))
-			} else {
-				trial = !PromptYesNo(ctx, fmt.Sprintf("  Add %s to Lidarr?", ae.Release.ArtistName))
-			}
-		}
-	}
+	trial := e.PromptMusicTrial(ctx, ae.Release.ArtistName, ae.Release.ArtistMBID)
 
 	category := e.musicCategory(trial)
 	var releaseEventID int64
@@ -471,6 +460,25 @@ func (e *Executor) handleSkipLibraryMusic(ctx context.Context, ae db.EventWithAl
 	_ = e.db.SetSetting(ctx, fmt.Sprintf("lidarr_artist_%s", artistMbid), fmt.Sprintf("%d", added.ID))
 	_ = e.db.UpdateAlbumReleaseEventStatus(ctx, ae.Event.ID, model.StatusDownloaded)
 	e.log.Info().Int("lidarr_id", added.ID).Str("artist", ae.Release.ArtistName).Msg("added artist to Lidarr after skip (monitored, RSS will pick up)")
+}
+
+// PromptMusicTrial asks whether an album should be added to Lidarr and
+// returns true when it's a "trial" download (not added to Lidarr), which routes
+// it to the music_trial download category. The user is prompted per album
+// regardless of Lidarr health; if Lidarr isn't configured the album is treated
+// as a trial (there is nothing to add it to).
+func (e *Executor) PromptMusicTrial(ctx context.Context, artistName, artistMBID string) bool {
+	if e.lidarr == nil {
+		return true
+	}
+	mode := e.cfg.MediaTypeMode(model.MediaTypeMusic)
+	if mode != config.ProcessModeFull {
+		return true
+	}
+	if artistMBID != "" && e.LidarrArtistExists(ctx, artistMBID) {
+		return !PromptYesNo(ctx, fmt.Sprintf("  %s is tracked in Lidarr. Add this release to Lidarr?", artistName))
+	}
+	return !PromptYesNo(ctx, fmt.Sprintf("  Add %s to Lidarr?", artistName))
 }
 
 func (e *Executor) musicCategory(trial bool) string {
