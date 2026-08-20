@@ -15,7 +15,7 @@ func TestRPChartsLiveEndpoint(t *testing.T) {
 
 	items, err := p.Scrape()
 	require.NoError(t, err)
-	require.NotEmpty(t, items, "live charts.json should yield new_albums")
+	require.NotEmpty(t, items, "live charts.json should yield top albums")
 
 	for _, item := range items {
 		assert.NotEmpty(t, item.Title, "entry title must not be empty")

@@ -86,11 +86,20 @@ func (p *RPChartsProvider) Scrape() ([]ScrapedItem, error) {
 		return nil, err
 	}
 
+	// rpcharts "albums" is the weekly top-albums chart. It still contains a
+	// lot of rarely-played back catalog, so we restrict to the current year
+	// and the previous year (release Year from the payload). created_at is
+	// the date RP's chart tracker first observed the album (tracking began
+	// May 2026) — not its commercial release date, and is not used for the
+	// year filter.
+	currentYear := time.Now().Year()
+	minYear := currentYear - 1
+
 	var items []ScrapedItem
 	for _, entry := range p.selectedAlbums(payload) {
-		// created_at is the date RP's chart tracker first observed the album
-		// (tracking began May 2026) — not its commercial release date. It may
-		// be a back-catalog album with an old Year.
+		if entry.Year < minYear {
+			continue
+		}
 		item := ScrapedItem{
 			Title:       entry.Name,
 			ArtistName:  entry.Sub,
@@ -133,7 +142,7 @@ func (p *RPChartsProvider) fetch() (*rpChartsPayload, error) {
 	return &payload, nil
 }
 
-// selectedAlbums returns the weekly "new albums" entries for the configured
+// selectedAlbums returns the weekly top "albums" entries for the configured
 // stations. The "all" slug (or an empty config) selects the All Stations
 // aggregate (channel -1), which avoids per-station lists dominated by
 // Serenity ambient tracks. Specific slugs merge their windows; overlaps are
@@ -142,7 +151,7 @@ func (p *RPChartsProvider) selectedAlbums(payload *rpChartsPayload) []rpChartsEn
 	if len(p.stations) == 0 || containsStr(p.stations, rpChartsStationSlugAll) {
 		for _, st := range payload.Stations {
 			if st.Channel == -1 {
-				return st.Weekly.NewAlbums
+				return st.Weekly.Albums
 			}
 		}
 		return nil
@@ -151,7 +160,7 @@ func (p *RPChartsProvider) selectedAlbums(payload *rpChartsPayload) []rpChartsEn
 	var merged []rpChartsEntry
 	for _, st := range payload.Stations {
 		if containsStr(p.stations, st.Slug) {
-			merged = append(merged, st.Weekly.NewAlbums...)
+			merged = append(merged, st.Weekly.Albums...)
 		}
 	}
 	return merged

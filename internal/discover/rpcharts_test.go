@@ -46,7 +46,7 @@ func TestRPChartsScrapeAllStations(t *testing.T) {
 	first := items[0]
 	assert.Equal(t, "Ensoulment", first.Title)
 	assert.Equal(t, "The The", first.ArtistName)
-	assert.Equal(t, 2024, first.Year)
+	assert.Equal(t, 2025, first.Year)
 	assert.Equal(t, "2026-07-30", first.ReleaseDate)
 	assert.Equal(t, model.MediaTypeMusic, first.MediaType)
 	assert.Equal(t, "rpcharts", first.Source)
@@ -57,6 +57,52 @@ func TestRPChartsScrapeAllStations(t *testing.T) {
 	for _, item := range items {
 		assert.NotEqual(t, "Rule 42 - Mellow Ambient", item.Title)
 	}
+}
+
+// TestRPChartsScrapeFiltersOldBackCatalog verifies that the top-albums list
+// is filtered to the current and previous release years, dropping rarely
+// played back-catalog entries. The fixture's "Old Back Catalog" (year 1990)
+// must be excluded while current/current-1 entries are kept.
+func TestRPChartsScrapeFiltersOldBackCatalog(t *testing.T) {
+	srv := testRPChartsServer(t, http.StatusOK, loadRPChartsFixture(t))
+	defer srv.Close()
+
+	p := NewRPChartsProvider(nil)
+	p.endpoint = srv.URL
+
+	items, err := p.Scrape()
+	require.NoError(t, err)
+	require.Len(t, items, 3)
+
+	for _, item := range items {
+		assert.GreaterOrEqual(t, item.Year, time.Now().Year()-1, "title %q", item.Title)
+		assert.NotEqual(t, "Old Back Catalog", item.Title)
+	}
+}
+
+// TestRPChartsScrapeUsesAlbumsNotNewAlbums verifies that selectedAlbums reads
+// the weekly top "albums" list rather than the "new_albums" list.
+func TestRPChartsScrapeUsesAlbumsNotNewAlbums(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{
+			"version": 1,
+			"stations": [
+				{"channel": -1, "slug": "", "name": "All Stations",
+				 "weekly": {"period": "p", "songs": [], "artists": [],
+				  "albums": [{"rank": 1, "name": "Top Album", "sub": "A", "year": 2026, "album_id": "1"}],
+				  "new_albums": [{"rank": 1, "name": "Brand New Album", "sub": "B", "year": 2026, "album_id": "2"}]}}
+			]
+		}`))
+	}))
+	defer srv.Close()
+
+	p := NewRPChartsProvider(nil)
+	p.endpoint = srv.URL
+
+	items, err := p.Scrape()
+	require.NoError(t, err)
+	require.Len(t, items, 1)
+	assert.Equal(t, "Top Album", items[0].Title)
 }
 
 func TestRPChartsScrapeExplicitAllSlug(t *testing.T) {
@@ -174,12 +220,12 @@ func TestRPChartsScrapeLiveFixture(t *testing.T) {
 
 	items, err := p.Scrape()
 	require.NoError(t, err)
-	require.Len(t, items, 20)
+	require.Len(t, items, 9)
 
 	for _, item := range items {
 		assert.NotEmpty(t, item.Title)
 		assert.NotEmpty(t, item.ArtistName)
-		assert.Greater(t, item.Year, 0)
+		assert.GreaterOrEqual(t, item.Year, time.Now().Year()-1, "title %q", item.Title)
 		assert.Equal(t, model.MediaTypeMusic, item.MediaType)
 		assert.Equal(t, "rpcharts", item.Source)
 		assert.Contains(t, item.ReleaseDate, "-")
@@ -189,10 +235,18 @@ func TestRPChartsScrapeLiveFixture(t *testing.T) {
 		assert.NotEmpty(t, item.ImageURL)
 	}
 
+	// The top-albums list, filtered to current/current-1 release years.
+	// Ensoulment (2024) and the older back catalog are dropped.
 	first := items[0]
-	assert.Equal(t, "Dirt", first.Title)
-	assert.Equal(t, "Alice In Chains", first.ArtistName)
-	assert.Equal(t, 1993, first.Year)
-	assert.Equal(t, "2026-07-31", first.ReleaseDate)
-	assert.Equal(t, "https://radioparadise.com/music/album/30592", first.Notes)
+	assert.Equal(t, "I Built You a Tower", first.Title)
+	assert.Equal(t, "Death Cab for Cutie", first.ArtistName)
+	assert.Equal(t, 2026, first.Year)
+	assert.Equal(t, "2026-05-05", first.ReleaseDate)
+	assert.Equal(t, "https://radioparadise.com/music/album/27518", first.Notes)
+
+	titles := make([]string, 0, len(items))
+	for _, item := range items {
+		titles = append(titles, item.Title)
+	}
+	assert.NotContains(t, titles, "Ensoulment")
 }

@@ -10,17 +10,14 @@
         "period": "Week of July 26, 2026",
         "songs": [],
         "artists": [],
-        "albums": [],
-        "new_songs": [],
-        "new_artists": [],
-        "new_albums": [
+        "albums": [
           {
             "rank": 1,
             "name": "Ensoulment",
             "sub": "The The",
             "plays": 23,
             "cover": "https://img.radioparadise.com/covers/l/26434.jpg",
-            "year": 2024,
+            "year": 2025,
             "song_id": 26434,
             "album_id": "26434",
             "created_at": "2026-07-30"
@@ -46,11 +43,41 @@
             "song_id": 26510,
             "album_id": "26510",
             "created_at": "2026-08-01"
+          },
+          {
+            "rank": 4,
+            "name": "Old Back Catalog",
+            "sub": "Some Artist",
+            "plays": 4,
+            "cover": "https://img.radioparadise.com/covers/l/26400.jpg",
+            "year": 1990,
+            "song_id": 26400,
+            "album_id": "26400",
+            "created_at": "2026-08-01"
           }
-        ]
+        ],
+        "new_songs": [],
+        "new_artists": [],
+        "new_albums": []
       },
-      "monthly": { "period": "Past 30 Days", "songs": [], "artists": [], "albums": [], "new_songs": [], "new_artists": [], "new_albums": [] },
-      "yearly": { "period": "Past 365 Days", "songs": [], "artists": [], "albums": [], "new_songs": [], "new_artists": [], "new_albums": [] }
+      "monthly": {
+        "period": "Past 30 Days",
+        "songs": [],
+        "artists": [],
+        "albums": [],
+        "new_songs": [],
+        "new_artists": [],
+        "new_albums": []
+      },
+      "yearly": {
+        "period": "Past 365 Days",
+        "songs": [],
+        "artists": [],
+        "albums": [],
+        "new_songs": [],
+        "new_artists": [],
+        "new_albums": []
+      }
     },
     {
       "channel": 0,
@@ -60,17 +87,14 @@
         "period": "Week of July 26, 2026",
         "songs": [],
         "artists": [],
-        "albums": [],
-        "new_songs": [],
-        "new_artists": [],
-        "new_albums": [
+        "albums": [
           {
             "rank": 1,
             "name": "Ensoulment",
             "sub": "The The",
             "plays": 23,
             "cover": "https://img.radioparadise.com/covers/l/26434.jpg",
-            "year": 2024,
+            "year": 2025,
             "song_id": 26434,
             "album_id": "26434",
             "created_at": "2026-07-30"
@@ -86,10 +110,29 @@
             "album_id": "26501",
             "created_at": "2026-07-28"
           }
-        ]
+        ],
+        "new_songs": [],
+        "new_artists": [],
+        "new_albums": []
       },
-      "monthly": { "period": "Past 30 Days", "songs": [], "artists": [], "albums": [], "new_songs": [], "new_artists": [], "new_albums": [] },
-      "yearly": { "period": "Past 365 Days", "songs": [], "artists": [], "albums": [], "new_songs": [], "new_artists": [], "new_albums": [] }
+      "monthly": {
+        "period": "Past 30 Days",
+        "songs": [],
+        "artists": [],
+        "albums": [],
+        "new_songs": [],
+        "new_artists": [],
+        "new_albums": []
+      },
+      "yearly": {
+        "period": "Past 365 Days",
+        "songs": [],
+        "artists": [],
+        "albums": [],
+        "new_songs": [],
+        "new_artists": [],
+        "new_albums": []
+      }
     },
     {
       "channel": 2,
@@ -99,10 +142,7 @@
         "period": "Week of July 26, 2026",
         "songs": [],
         "artists": [],
-        "albums": [],
-        "new_songs": [],
-        "new_artists": [],
-        "new_albums": [
+        "albums": [
           {
             "rank": 1,
             "name": "Rapture",
@@ -114,10 +154,29 @@
             "album_id": "26510",
             "created_at": "2026-08-01"
           }
-        ]
+        ],
+        "new_songs": [],
+        "new_artists": [],
+        "new_albums": []
       },
-      "monthly": { "period": "Past 30 Days", "songs": [], "artists": [], "albums": [], "new_songs": [], "new_artists": [], "new_albums": [] },
-      "yearly": { "period": "Past 365 Days", "songs": [], "artists": [], "albums": [], "new_songs": [], "new_artists": [], "new_albums": [] }
+      "monthly": {
+        "period": "Past 30 Days",
+        "songs": [],
+        "artists": [],
+        "albums": [],
+        "new_songs": [],
+        "new_artists": [],
+        "new_albums": []
+      },
+      "yearly": {
+        "period": "Past 365 Days",
+        "songs": [],
+        "artists": [],
+        "albums": [],
+        "new_songs": [],
+        "new_artists": [],
+        "new_albums": []
+      }
     },
     {
       "channel": 42,
@@ -127,10 +186,7 @@
         "period": "Week of July 26, 2026",
         "songs": [],
         "artists": [],
-        "albums": [],
-        "new_songs": [],
-        "new_artists": [],
-        "new_albums": [
+        "albums": [
           {
             "rank": 1,
             "name": "Rule 42 - Mellow Ambient",
@@ -142,10 +198,29 @@
             "album_id": "99999",
             "created_at": "2026-07-27"
           }
-        ]
+        ],
+        "new_songs": [],
+        "new_artists": [],
+        "new_albums": []
       },
-      "monthly": { "period": "Past 30 Days", "songs": [], "artists": [], "albums": [], "new_songs": [], "new_artists": [], "new_albums": [] },
-      "yearly": { "period": "Past 365 Days", "songs": [], "artists": [], "albums": [], "new_songs": [], "new_artists": [], "new_albums": [] }
+      "monthly": {
+        "period": "Past 30 Days",
+        "songs": [],
+        "artists": [],
+        "albums": [],
+        "new_songs": [],
+        "new_artists": [],
+        "new_albums": []
+      },
+      "yearly": {
+        "period": "Past 365 Days",
+        "songs": [],
+        "artists": [],
+        "albums": [],
+        "new_songs": [],
+        "new_artists": [],
+        "new_albums": []
+      }
     }
   ]
 }

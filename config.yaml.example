@@ -107,7 +107,7 @@ downloader:
     movies: "Movies"
     tv: "TV"
     music: "Music"
-    music_trial: "Music-Trial"  # separate category for trial albums (not added to Lidarr)
+    music_trial: "Music-Trial"  # category for trial albums (not added to Lidarr); you're prompted per album
     anime: "Anime"
     ebooks: "Books"           # for LazyLibrarian: set both to the same category whose
     audiobooks: "Books"       # save path is LL's Alternate Import Folder
@@ -228,19 +228,23 @@ media_types:
   music:
     enabled: true
     mode: "full"
-    scrapers: ["albumoftheyear", "allmusic", "rpcharts"]
+    scrapers: ["albumoftheyear", "allmusic"]
+    # rpcharts is OPTIONAL and off by default (not ready for primetime): add
+    # it to the scrapers list to enable. It pulls Radio Paradise's weekly top
+    # "albums" chart. Only albums from the current year and the previous year
+    # are kept (release year from the chart data), so old rarely-played back
+    # catalog is filtered out. Items can recur week to week; wmdl dedups
+    # repeat events via the existing pending/approved/downloaded status.
+    # rpcharts_stations: which chart stations to pull from. "all" (default) =
+    # the All Stations aggregate (avoids Serenity ambient tracks dominating
+    # single-station lists). Otherwise list station slugs: main, mellow,
+    # rockit, globe, beyond, serenity, kfat.
+    # rpcharts ignores lookback_weeks (no historical data).
     # How many weeks before the target to look back for new music.
     # After the first run, music advances 1 wmdl week per run sequentially,
     # just like movies/TV. Changing this value later has NO effect unless
     # you delete the database to restart discovery.
     lookback_weeks: 1
-    # rpcharts: which Radio Paradise chart stations to pull "new albums" from.
-    # "all" (default) = the All Stations aggregate (avoids Serenity ambient
-    # tracks dominating single-station lists). Otherwise list station slugs:
-    # main, mellow, rockit, globe, beyond, serenity, kfat.
-    # "new albums" = first observed by RP's chart tracker (tracking began
-    # May 2026), so release years may be old.
-    # rpcharts ignores lookback_weeks (no historical data).
     rpcharts_stations: ["all"]
     filter:
       # Blocked/origin filters (same keys as movies/tv)

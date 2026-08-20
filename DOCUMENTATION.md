@@ -672,13 +672,16 @@ After adding an item to the library, wmdl checks for gaps:
   appear when the WMDL atomic week crosses a calendar month boundary (roughly once
   per month).
 - **RP Charts** (`rpcharts`) — plain HTTP scraper for Radio Paradise's machine-readable
-  chart export. Pulls albums that were **new to RP's rotation last week** (`weekly.new_albums`).
-  "New" here means **first observed by RP's chart tracker since it began tracking in May 2026**,
-  so these can be back-catalog albums with old release years; the tracker's first-seen date is
-  used as the release date. Has no historical data, so it ignores `lookback_weeks` and needs no
-  browser. Select stations via `media_types.music.rpcharts_stations` (`"all"` = All Stations
-  aggregate, the default; otherwise station slugs: `main`, `mellow`, `rockit`, `globe`, `beyond`,
-  `serenity`, `kfat`). Provides no score data, so it is exempt from the critic/user score filter.
+  chart export. Pulls the weekly **top albums** chart (`weekly.albums`) as a gauge of what's
+  currently trending. It is **opt-in and off by default** (not considered production-ready):
+  add `"rpcharts"` to `media_types.music.scrapers` to enable. Only albums with a release year
+  of the current year or the previous year are kept, so rarely played back-catalog albums with
+  old release years are filtered out. The tracker's first-seen date is used as the release date.
+  Has no historical data, so it ignores `lookback_weeks` and needs no browser. Select stations
+  via `media_types.music.rpcharts_stations` (`"all"` = All Stations aggregate, the default;
+  otherwise station slugs: `main`, `mellow`, `rockit`, `globe`, `beyond`, `serenity`, `kfat`).
+  Items can recur week to week; wmdl dedups repeat events via the existing pending/approved/
+  downloaded status. Provides no score data, so it is exempt from the critic/user score filter.
 
 ### Enrichment
 
@@ -748,15 +751,18 @@ library:
 ```
 
 **Trial albums (new/experimental music):** When processing in `full` mode, each
-downloaded album prompts "Add to Lidarr?" — answering N:
+downloaded album is prompted "Add to Lidarr?" per album — answering N:
 - Downloads to the `music_trial` category (configure `downloader.categories.music_trial`)
 - Skips the Lidarr add entirely
 - Torrents still seed in the trial category's save path
 
-This lets you listen before committing to library management. To later add a
-trial album to Lidarr, move its files to Lidarr's root folder and add the
-artist manually in the Lidarr UI. Leave `music_trial` unset or empty to send
-all music to the default `music` category (preserving existing behavior).
+The prompt is shown per album regardless of Lidarr health. If Lidarr is
+unreachable or not configured (`library.lidarr.url` empty), the album is
+treated as a trial download and routed to `music_trial`, since there is no
+Lidarr instance to add it to. To later add a trial album to Lidarr, move its
+files to Lidarr's root folder and add the artist manually in the Lidarr UI.
+Leave `music_trial` unset or empty to send all music to the default `music`
+category (preserving existing behavior).
 
 ## Anime Pipeline
 
@@ -904,6 +910,16 @@ into a single book entry.
 > to Config > push "User Admin" button right under the top bar > Select user > pick your LL
 > username > HardCover Token > enter the entire token including "Bearer" > press "Save" button
 > at bottom.
+
+> **`addBook` server errors:** wmdl calls `addBook` with the Hardcover book ID. If
+> your LazyLibrarian returns an HTTP 500 from `addBook` (for example a
+> `TypeError: string indices must be integers, not 'str'` traceback in `_addonebook`),
+> that is a **server-side LazyLibrarian bug** in your installed version — the call is
+> correct and fails for every book regardless of ID. HardCover is a fully-supported
+> `BOOK_API` source (see `lazylibrarian/startup.py` `INFOSOURCES`), so updating your
+> LazyLibrarian to the current version resolves it (the current `_addonebook` looks
+> up `INFOSOURCES[source]['api']` correctly). wmdl reports this as a warning and
+> continues with the other items.
 
 **Download client categories:** Set both `ebooks` and `audiobooks` to the same category
 (e.g. `"Books"`) whose save path points to LL's Alternate Import Folder. On download
