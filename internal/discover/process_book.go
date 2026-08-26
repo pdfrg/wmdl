@@ -92,6 +92,10 @@ func (r *Runner) processBookItem(ctx context.Context, item ScrapedItem, progYear
 		}
 	}
 
+	// Normalize the enriched author name: some sources (notably the Hardcover
+	// API) return names with runs of whitespace (e.g. "Steve         Hawk").
+	authorName = normalizeAuthorName(authorName)
+
 	author := &model.Author{
 		HardcoverID: hcAuthorID,
 		OLID:        authorOLID,
@@ -554,7 +558,22 @@ var (
 	htmlInlineRe   = regexp.MustCompile("[ \t\u00a0]+")
 	htmlLineSpace  = regexp.MustCompile("[ \t\u00a0]*\n[ \t\u00a0]*")
 	htmlBlankRe    = regexp.MustCompile(`\n{3,}`)
+
+	authorSpaceRe = regexp.MustCompile(`\s+`)
 )
+
+// normalizeAuthorName collapses runs of whitespace in an author name to a
+// single space and trims surrounding whitespace. Enrichment sources
+// (especially the Hardcover API) occasionally return names with embedded
+// runs of spaces; storing them verbatim garbles review/process display and
+// breaks exact-name author dedup.
+func normalizeAuthorName(s string) string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return s
+	}
+	return authorSpaceRe.ReplaceAllString(s, " ")
+}
 
 // cleanBookDescription normalizes a book description for display: block and
 // break tags become paragraph breaks, remaining HTML tags are stripped,

@@ -70,3 +70,53 @@ func TestCleanBookDescription(t *testing.T) {
 		})
 	}
 }
+
+func TestNormalizeAuthorName(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{
+			name: "clean name unchanged",
+			in:   "Steve Hawk",
+			want: "Steve Hawk",
+		},
+		{
+			name: "runs of spaces collapsed",
+			in:   "Steve                                         Hawk",
+			want: "Steve Hawk",
+		},
+		{
+			name: "double space collapsed",
+			in:   "Emily  Jane",
+			want: "Emily Jane",
+		},
+		{
+			name: "tabs and newlines collapsed",
+			in:   "Jon\t\tRonson\nSmith",
+			want: "Jon Ronson Smith",
+		},
+		{
+			name: "leading and trailing whitespace trimmed",
+			in:   "  Steve Hawk  \n\t",
+			want: "Steve Hawk",
+		},
+		{
+			name: "empty string",
+			in:   "",
+			want: "",
+		},
+		{
+			name: "only whitespace",
+			in:   "   \t\n  ",
+			want: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, normalizeAuthorName(tt.in))
+		})
+	}
+}
