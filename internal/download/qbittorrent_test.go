@@ -2,6 +2,7 @@ package download
 
 import (
 	"context"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -206,6 +207,34 @@ func TestQbittorrentAddWithOptions(t *testing.T) {
 	assert.Equal(t, "t1", id)
 }
 
+func TestQbittorrentAddTorrentData(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v2/auth/login" {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		assert.Equal(t, "/api/v2/torrents/add", r.URL.Path)
+		if err := r.ParseMultipartForm(8 << 20); err != nil {
+			t.Fatalf("parsing multipart form: %v", err)
+		}
+		file, _, err := r.FormFile("torrents")
+		require.NoError(t, err)
+		defer file.Close()
+		data, err := io.ReadAll(file)
+		require.NoError(t, err)
+		assert.Equal(t, "d8:announce", string(data))
+		assert.Equal(t, "Albums", r.FormValue("category"))
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"added_torrent_ids":["datahash1"],"failure_count":0,"pending_count":0,"success_count":1}`))
+	}))
+	defer srv.Close()
+
+	c := NewQbittorrentClient(srv.URL, "user", "pass")
+	id, err := c.AddTorrentData(context.Background(), "release.torrent", []byte("d8:announce"), WithCategory("Albums"))
+	require.NoError(t, err)
+	assert.Equal(t, "datahash1", id)
+}
+
 func TestQbittorrentPing(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "/api/v2/auth/login", r.URL.Path)
@@ -219,27 +248,44 @@ func TestQbittorrentPing(t *testing.T) {
 
 func TestParseAddResponse(t *testing.T) {
 	t.Run("new JSON format", func(t *testing.T) {
-		id := parseAddResponse([]byte(`{"added_torrent_ids":["hash1"],"failure_count":0,"pending_count":0,"success_count":1}`))
+		id, err := parseAddResponse([]byte(`{"added_torrent_ids":["hash1"],"failure_count":0,"pending_count":0,"success_count":1}`))
+		require.NoError(t, err)
 		assert.Equal(t, "hash1", id)
 	})
 
 	t.Run("multiple torrents", func(t *testing.T) {
-		id := parseAddResponse([]byte(`{"added_torrent_ids":["hash1","hash2"],"failure_count":0,"pending_count":0,"success_count":2}`))
+		id, err := parseAddResponse([]byte(`{"added_torrent_ids":["hash1","hash2"],"failure_count":0,"pending_count":0,"success_count":2}`))
+		require.NoError(t, err)
 		assert.Equal(t, "hash1", id)
 	})
 
-	t.Run("empty list", func(t *testing.T) {
-		id := parseAddResponse([]byte(`{"added_torrent_ids":[],"failure_count":0,"pending_count":0,"success_count":0}`))
+	t.Run("empty list all zero", func(t *testing.T) {
+		id, err := parseAddResponse([]byte(`{"added_torrent_ids":[],"failure_count":0,"pending_count":0,"success_count":0}`))
+		require.NoError(t, err)
+		assert.Empty(t, id)
+	})
+
+	t.Run("pending add reports error", func(t *testing.T) {
+		id, err := parseAddResponse([]byte(`{"added_torrent_ids":[],"failure_count":0,"pending_count":1,"success_count":0}`))
+		assert.ErrorContains(t, err, "no torrent added")
+		assert.Empty(t, id)
+	})
+
+	t.Run("failed add reports error", func(t *testing.T) {
+		id, err := parseAddResponse([]byte(`{"added_torrent_ids":[],"failure_count":1,"pending_count":0,"success_count":0}`))
+		assert.ErrorContains(t, err, "no torrent added")
 		assert.Empty(t, id)
 	})
 
 	t.Run("old plain text", func(t *testing.T) {
-		id := parseAddResponse([]byte("Ok."))
+		id, err := parseAddResponse([]byte("Ok."))
+		require.NoError(t, err)
 		assert.Empty(t, id)
 	})
 
 	t.Run("invalid JSON", func(t *testing.T) {
-		id := parseAddResponse([]byte("not json"))
+		id, err := parseAddResponse([]byte("not json"))
+		require.NoError(t, err)
 		assert.Empty(t, id)
 	})
 }

@@ -525,3 +525,52 @@ func scanEventWithAlbumReleaseRows(rows *sql.Rows) ([]EventWithAlbumRelease, err
 	}
 	return results, rows.Err()
 }
+
+// CreateAlbumDownload records which music release was chosen and added for an
+// album event. Music previously had no download record, so failures like "add
+// reported success but no torrent landed" were invisible.
+func (d *DB) CreateAlbumDownload(ctx context.Context, dl *model.AlbumDownload) (int64, error) {
+	res, err := d.db.ExecContext(ctx, `
+		INSERT INTO album_downloads (album_release_event, release_title, uri,
+		                             indexer_id, indexer_name, score, quality, source_type, codec,
+		                             info_hash, category, status, client_torrent_id)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, dl.AlbumReleaseEvent, dl.ReleaseTitle, dl.URI,
+		dl.IndexerID, dl.IndexerName, dl.Score, dl.Quality, dl.SourceType,
+		dl.Codec, dl.InfoHash, dl.Category, string(dl.Status), dl.ClientTorrentID)
+	if err != nil {
+		return 0, fmt.Errorf("creating album download: %w", err)
+	}
+	id, err := res.LastInsertId()
+	if err != nil {
+		return 0, fmt.Errorf("getting last insert id: %w", err)
+	}
+	return id, nil
+}
+
+// GetAlbumDownload returns the most recent album download for a given album
+// release event, or nil when none exists.
+func (d *DB) GetAlbumDownload(ctx context.Context, albumEventID int64) (*model.AlbumDownload, error) {
+	var dl model.AlbumDownload
+	var status, createdAt string
+	err := d.db.QueryRowContext(ctx, `
+		SELECT id, album_release_event, release_title, uri,
+		       indexer_id, indexer_name, score, quality, source_type, codec,
+		       info_hash, category, status, client_torrent_id, created_at
+		FROM album_downloads WHERE album_release_event = ?
+		ORDER BY id DESC LIMIT 1
+	`, albumEventID).Scan(
+		&dl.ID, &dl.AlbumReleaseEvent, &dl.ReleaseTitle, &dl.URI,
+		&dl.IndexerID, &dl.IndexerName, &dl.Score, &dl.Quality, &dl.SourceType,
+		&dl.Codec, &dl.InfoHash, &dl.Category, &status, &dl.ClientTorrentID, &createdAt,
+	)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("getting album download: %w", err)
+	}
+	dl.Status = model.DownloadStatus(status)
+	dl.CreatedAt = createdAt
+	return &dl, nil
+}

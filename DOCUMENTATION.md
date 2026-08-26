@@ -165,6 +165,23 @@ downloader:
 
 See `config.yaml.example` for per-client credentials.
 
+#### How torrents are added
+
+For releases with a Prowlarr `downloadUrl`, wmdl fetches the `.torrent` file
+itself (via Prowlarr) and pushes the bytes to the download client
+(`torrents/add` file upload for qBittorrent, `metainfo` for Transmission,
+`core.add_torrent_file` for Deluge). This makes the add synchronous and
+confirmable — a torrent client's *async* URL fetch can silently fail when the
+source is slow or overloaded, reporting success while nothing is added. If the
+`.torrent` fetch fails and a magnet is available, wmdl falls back to the magnet.
+
+Each confirmed add is recorded: the chosen release title, the URL/magnet used,
+the indexer, the quality score, the info hash, the client torrent ID, and the
+category are stored in `downloads` (video), `book_downloads`, or the
+`album_downloads` table (music). If an add cannot be confirmed the event is
+**not** marked `downloaded` and no download row is created, so the item is
+re-processed on the next run.
+
 ### Shell Hooks
 
 Shell commands that run before and after `wmdl discover`. Useful for bandwidth

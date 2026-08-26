@@ -259,7 +259,7 @@ func (c *LazyLibrarianClient) doOK(ctx context.Context, params url.Values) error
 		return fmt.Errorf("lazylibrarian: reading response: %w", err)
 	}
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("lazylibrarian: %s returned %d: %s", params.Get("cmd"), resp.StatusCode, sanitizeLLBody(body))
+		return fmt.Errorf("%s", llError(params.Get("cmd"), resp.StatusCode, sanitizeLLBody(body)))
 	}
 	return nil
 }
@@ -275,7 +275,7 @@ func (c *LazyLibrarianClient) doJSON(ctx context.Context, params url.Values, dst
 		if err != nil {
 			return fmt.Errorf("lazylibrarian: %s returned %d: reading body: %w", params.Get("cmd"), resp.StatusCode, err)
 		}
-		return fmt.Errorf("lazylibrarian: %s returned %d: %s", params.Get("cmd"), resp.StatusCode, sanitizeLLBody(body))
+		return fmt.Errorf("%s", llError(params.Get("cmd"), resp.StatusCode, sanitizeLLBody(body)))
 	}
 	if err := json.NewDecoder(resp.Body).Decode(dst); err != nil {
 		return fmt.Errorf("lazylibrarian: parsing %s response: %w", params.Get("cmd"), err)
@@ -305,6 +305,18 @@ type llBook struct {
 	BookFile    string `json:"bookfile"`
 	AudioFile   string `json:"audiofile"`
 	BookIsbn    string `json:"bookisbn"`
+}
+
+// llError formats a LazyLibrarian error, annotating known server-side
+// regressions with an actionable hint. LL commit 2ccab7dc (2026-07-21) broke
+// addBook with "TypeError: string indices must be integers, not 'str'"; it was
+// fixed upstream on 2026-08-03, so the hint points at updating LazyLibrarian.
+func llError(cmd string, code int, sanitized string) string {
+	msg := fmt.Sprintf("lazylibrarian: %s returned %d: %s", cmd, code, sanitized)
+	if strings.Contains(sanitized, "TypeError: string indices must be integers, not 'str'") {
+		msg += " (known LazyLibrarian addBook regression — update LazyLibrarian to a build after 2026-08-03)"
+	}
+	return msg
 }
 
 // sanitizeLLBody reduces an error response body to a short, actionable snippet.

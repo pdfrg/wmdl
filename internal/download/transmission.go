@@ -3,6 +3,7 @@ package download
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -159,6 +160,47 @@ func (t *TransmissionClient) AddTorrent(ctx context.Context, torrentURL string, 
 
 func (t *TransmissionClient) AddMagnet(ctx context.Context, magnetURI string, opts ...Option) (string, error) {
 	return t.addTorrent(ctx, magnetURI, false, opts...)
+}
+
+// AddTorrentData adds a torrent from its raw .torrent bytes (base64 metainfo).
+func (t *TransmissionClient) AddTorrentData(ctx context.Context, name string, data []byte, opts ...Option) (string, error) {
+	opt := &AddOptions{}
+	for _, o := range opts {
+		o(opt)
+	}
+
+	args := torrentAddArgs{
+		Metainfo: base64.StdEncoding.EncodeToString(data),
+		Paused:   opt.Paused,
+		Labels:   nil,
+	}
+	if opt.Category != "" {
+		args.Labels = []string{opt.Category}
+	}
+	if opt.SavePath != "" {
+		args.DownloadDir = opt.SavePath
+	}
+
+	resp, err := t.do(ctx, "torrent-add", args)
+	if err != nil {
+		return "", err
+	}
+	if resp.Result != "success" {
+		return "", fmt.Errorf("transmission torrent-add failed: %s", resp.Result)
+	}
+
+	var added struct {
+		TorrentAdded *struct {
+			HashString string `json:"hashString"`
+		} `json:"torrent-added"`
+	}
+	if len(resp.Arguments) > 0 {
+		_ = json.Unmarshal(resp.Arguments, &added)
+	}
+	if added.TorrentAdded != nil {
+		return added.TorrentAdded.HashString, nil
+	}
+	return "", nil
 }
 
 func (t *TransmissionClient) addTorrent(ctx context.Context, value string, isMagnet bool, opts ...Option) (string, error) {

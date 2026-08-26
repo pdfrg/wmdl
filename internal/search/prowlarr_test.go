@@ -84,6 +84,41 @@ func TestProwlarrSearchMovies(t *testing.T) {
 	assert.Len(t, results, 3)
 }
 
+func TestProwlarrFetchTorrent(t *testing.T) {
+	t.Run("success returns torrent bytes", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			assert.Equal(t, "/42/download", r.URL.Path)
+			assert.Equal(t, "secret", r.URL.Query().Get("apikey"))
+			w.Header().Set("Content-Type", "application/x-bittorrent")
+			w.Write([]byte("d8:announce"))
+		}))
+		defer srv.Close()
+
+		c := NewProwlarrClient(srv.URL, "key", 10, nil)
+		data, err := c.FetchTorrent(context.Background(), srv.URL+"/42/download?apikey=secret&link=abc")
+		require.NoError(t, err)
+		assert.Equal(t, "d8:announce", string(data))
+	})
+
+	t.Run("non-200 returns error", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusBadRequest)
+			w.Write([]byte("bad"))
+		}))
+		defer srv.Close()
+
+		c := NewProwlarrClient(srv.URL, "key", 10, nil)
+		_, err := c.FetchTorrent(context.Background(), srv.URL+"/42/download")
+		assert.ErrorContains(t, err, "400")
+	})
+
+	t.Run("connection error returns error", func(t *testing.T) {
+		c := NewProwlarrClient("http://127.0.0.1:1", "key", 2, nil)
+		_, err := c.FetchTorrent(context.Background(), "http://127.0.0.1:1/x")
+		assert.Error(t, err)
+	})
+}
+
 func TestProwlarrSearchAnime(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "tvsearch", r.URL.Query().Get("type"))

@@ -11,7 +11,6 @@ import (
 
 	"github.com/pdfrg/wmdl/internal/config"
 	"github.com/pdfrg/wmdl/internal/db"
-	"github.com/pdfrg/wmdl/internal/download"
 	"github.com/pdfrg/wmdl/internal/library"
 	"github.com/pdfrg/wmdl/internal/model"
 	"github.com/pdfrg/wmdl/internal/quality"
@@ -357,14 +356,8 @@ func (e *Executor) ProcessPhase3Pickers(ctx context.Context) {
 		}
 
 		for _, release := range chosen {
-			uri := release.DownloadURL
-			if uri == "" {
-				uri = release.MagnetURL
-			}
-			if uri != "" {
-				if _, err := e.dl.AddTorrent(ctx, uri, download.WithCategory(category)); err != nil {
-					e.log.Warn().Err(err).Msg("phase 3 add failed")
-				}
+			if _, err := addReleaseToClient(ctx, e.log, e.dl, e.prowl, release, category); err != nil {
+				e.log.Warn().Err(err).Str("release", release.RawTitle).Msg("phase 3 add failed")
 			}
 		}
 		e.log.Info().Str("title", c.Title).Msg("phase 3 item downloaded")

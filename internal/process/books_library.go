@@ -7,7 +7,6 @@ import (
 
 	"github.com/pdfrg/wmdl/internal/config"
 	"github.com/pdfrg/wmdl/internal/db"
-	"github.com/pdfrg/wmdl/internal/download"
 	"github.com/pdfrg/wmdl/internal/model"
 	"github.com/pdfrg/wmdl/internal/quality"
 )
@@ -206,14 +205,8 @@ func (e *Executor) processPhase3BookBatchItem(ctx context.Context, item *BatchIt
 		category = e.cfg.Downloader.Categories.Audiobooks
 	}
 	for _, br := range chosen {
-		uri := br.DownloadURL
-		if uri == "" {
-			uri = br.MagnetURL
-		}
-		if uri != "" {
-			if _, err := e.dl.AddTorrent(ctx, uri, download.WithCategory(category)); err != nil {
-				e.log.Warn().Err(err).Str("book", ae.Book.Title).Msg("book phase 3: add to client failed")
-			}
+		if _, err := addReleaseToClient(ctx, e.log, e.dl, e.prowl, br.ParsedRelease, category); err != nil {
+			e.log.Warn().Err(err).Str("book", ae.Book.Title).Str("release", br.RawTitle).Msg("book phase 3: add to client failed")
 		}
 	}
 

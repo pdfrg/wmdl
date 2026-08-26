@@ -480,7 +480,7 @@ func (s *Searcher) downloadReleases(ctx context.Context, chosen []quality.Parsed
 			}
 			continue
 		}
-		tid, err := s.dl.AddTorrent(ctx, uri, download.WithCategory(category))
+		tid, err := addReleaseToClient(ctx, s.log, s.dl, s.prowl, release, category)
 		if err != nil {
 			s.log.Warn().Err(err).Str("title", release.RawTitle).Msg("download failed")
 			continue

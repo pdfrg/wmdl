@@ -162,10 +162,12 @@ func (d *DB) updateReleaseEventStatus(ctx context.Context, q querier, id int64, 
 
 func (d *DB) CreateDownload(ctx context.Context, dl *model.Download) (int64, error) {
 	res, err := d.db.ExecContext(ctx, `
-		INSERT INTO downloads (title_id, release_event_id, quality, source_type, codec,
+		INSERT INTO downloads (title_id, release_event_id, release_title, uri,
+		                       indexer_id, indexer_name, score, quality, source_type, codec,
 		                       info_hash, category, status, client_torrent_id, radarr_id, sonarr_id)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`, dl.TitleID, dl.ReleaseEventID, dl.Quality, dl.SourceType, dl.Codec,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, dl.TitleID, dl.ReleaseEventID, dl.ReleaseTitle, dl.URI,
+		dl.IndexerID, dl.IndexerName, dl.Score, dl.Quality, dl.SourceType, dl.Codec,
 		dl.InfoHash, dl.Category, string(dl.Status), dl.ClientTorrentID, dl.RadarrID, dl.SonarrID)
 	if err != nil {
 		return 0, fmt.Errorf("creating download: %w", err)
@@ -194,12 +196,14 @@ func (d *DB) getDownloadByTitleID(ctx context.Context, q querier, titleID int64)
 	var dl model.Download
 	var status, createdAt string
 	err := q.QueryRowContext(ctx, `
-		SELECT id, title_id, release_event_id, quality, source_type, codec,
+		SELECT id, title_id, release_event_id, release_title, uri,
+		       indexer_id, indexer_name, score, quality, source_type, codec,
 		       info_hash, category, status, client_torrent_id, radarr_id, sonarr_id, created_at
 		FROM downloads WHERE title_id = ?
 		ORDER BY id DESC LIMIT 1
 	`, titleID).Scan(
-		&dl.ID, &dl.TitleID, &dl.ReleaseEventID, &dl.Quality, &dl.SourceType,
+		&dl.ID, &dl.TitleID, &dl.ReleaseEventID, &dl.ReleaseTitle, &dl.URI,
+		&dl.IndexerID, &dl.IndexerName, &dl.Score, &dl.Quality, &dl.SourceType,
 		&dl.Codec, &dl.InfoHash, &dl.Category, &status, &dl.ClientTorrentID,
 		&dl.RadarrID, &dl.SonarrID, &createdAt,
 	)

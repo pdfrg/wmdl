@@ -8,7 +8,6 @@ import (
 	"strings"
 
 	"github.com/pdfrg/wmdl/internal/db"
-	"github.com/pdfrg/wmdl/internal/download"
 	"github.com/pdfrg/wmdl/internal/model"
 	"github.com/pdfrg/wmdl/internal/quality"
 	"github.com/pdfrg/wmdl/internal/search"
@@ -264,32 +263,21 @@ func (e *Executor) addBookToClient(ctx context.Context, evt db.EventWithBook, ch
 
 	var added int
 	for _, r := range chosen {
-		url := r.DownloadURL
-		if url == "" {
-			url = r.MagnetURL
+		uri := r.DownloadURL
+		if uri == "" {
+			uri = r.MagnetURL
 		}
-		if url == "" {
+		if uri == "" {
 			e.log.Warn().Str("title", r.RawTitle).Msg("book release has no download URL or magnet")
 			continue
 		}
 
-		var tid string
-		var dlErr error
-		if strings.HasPrefix(url, "magnet:") {
-			tid, dlErr = e.dl.AddMagnet(ctx, url, download.WithCategory(cat))
-			if dlErr != nil {
-				e.log.Warn().Err(dlErr).Str("title", r.RawTitle).Msg("adding book magnet")
-				continue
-			}
-			e.log.Info().Str("title", r.RawTitle).Str("tid", tid).Str("category", cat).Msg("book magnet added")
-		} else {
-			tid, dlErr = e.dl.AddTorrent(ctx, url, download.WithCategory(cat))
-			if dlErr != nil {
-				e.log.Warn().Err(dlErr).Str("title", r.RawTitle).Msg("adding book torrent")
-				continue
-			}
-			e.log.Info().Str("title", r.RawTitle).Str("tid", tid).Str("category", cat).Msg("book torrent added")
+		tid, err := addReleaseToClient(ctx, e.log, e.dl, e.prowl, r.ParsedRelease, cat)
+		if err != nil {
+			e.log.Warn().Err(err).Str("title", r.RawTitle).Msg("adding book release")
+			continue
 		}
+		e.log.Info().Str("title", r.RawTitle).Str("torrent_id", tid).Str("category", cat).Msg("book release added")
 
 		quality := r.EbookFormat
 		if r.IsAudiobook && r.AudiobookFormat != "" {
@@ -303,13 +291,18 @@ func (e *Executor) addBookToClient(ctx context.Context, evt db.EventWithBook, ch
 			BookID:           evt.Book.ID,
 			BookReleaseEvent: evt.Event.ID,
 			Format:           format,
+			ReleaseTitle:     r.RawTitle,
+			URI:              uri,
+			IndexerID:        r.IndexerID,
+			IndexerName:      r.IndexerName,
+			Score:            r.Score,
 			Quality:          quality,
 			SourceType:       r.Source,
 			Codec:            r.Codec,
 			InfoHash:         r.InfoHash,
 			Category:         cat,
-			ClientTorrentID:  tid,
 			Status:           model.DownloadAdded,
+			ClientTorrentID:  tid,
 		}
 		if _, err := e.db.CreateBookDownload(ctx, dl); err != nil {
 			e.log.Warn().Err(err).Msg("saving book download record")

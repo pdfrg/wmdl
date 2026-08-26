@@ -96,6 +96,50 @@ func TestCreateAlbumReleaseEvent(t *testing.T) {
 	assert.Greater(t, id, int64(0))
 }
 
+func TestCreateAlbumDownload(t *testing.T) {
+	d := openTestDB(t)
+	ctx := context.Background()
+
+	releaseID := seedAlbumRelease(t, d, ctx)
+	ev := &model.AlbumReleaseEvent{ReleaseID: releaseID, Source: "aoty", Status: model.StatusApproved}
+	evID, err := d.CreateAlbumReleaseEvent(ctx, ev)
+	require.NoError(t, err)
+
+	dl := &model.AlbumDownload{
+		AlbumReleaseEvent: evID,
+		ReleaseTitle:      "Gnarls_Barkley-Atlanta-WEB-2026-QUAVER",
+		URI:               "http://prowlarr/42/download?link=abc",
+		IndexerID:         42,
+		IndexerName:       "seedpool",
+		Score:             250,
+		Quality:           "",
+		SourceType:        "WEB",
+		Codec:             "",
+		InfoHash:          "abc123",
+		Category:          "Albums",
+		Status:            model.DownloadAdded,
+		ClientTorrentID:   "torrentid1",
+	}
+	id, err := d.CreateAlbumDownload(ctx, dl)
+	require.NoError(t, err)
+	assert.Greater(t, id, int64(0))
+
+	got, err := d.GetAlbumDownload(ctx, evID)
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	assert.Equal(t, "Gnarls_Barkley-Atlanta-WEB-2026-QUAVER", got.ReleaseTitle)
+	assert.Equal(t, 42, got.IndexerID)
+	assert.Equal(t, "seedpool", got.IndexerName)
+	assert.Equal(t, 250, got.Score)
+	assert.Equal(t, "Albums", got.Category)
+	assert.Equal(t, model.DownloadAdded, got.Status)
+	assert.Equal(t, "torrentid1", got.ClientTorrentID)
+
+	none, err := d.GetAlbumDownload(ctx, evID+999)
+	require.NoError(t, err)
+	assert.Nil(t, none)
+}
+
 func TestGetLatestAlbumReleaseEvent(t *testing.T) {
 	d := openTestDB(t)
 	ctx := context.Background()

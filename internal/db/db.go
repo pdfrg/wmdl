@@ -125,6 +125,11 @@ func (d *DB) Migrate(ctx context.Context) error {
 		id              INTEGER PRIMARY KEY AUTOINCREMENT,
 		title_id        INTEGER NOT NULL REFERENCES titles(id),
 		release_event_id INTEGER NOT NULL REFERENCES release_events(id),
+		release_title   TEXT NOT NULL DEFAULT '',
+		uri             TEXT NOT NULL DEFAULT '',
+		indexer_id      INTEGER NOT NULL DEFAULT 0,
+		indexer_name    TEXT NOT NULL DEFAULT '',
+		score           INTEGER NOT NULL DEFAULT 0,
 		quality         TEXT NOT NULL DEFAULT '',
 		source_type     TEXT NOT NULL DEFAULT '',
 		codec           TEXT NOT NULL DEFAULT '',
@@ -278,6 +283,30 @@ func (d *DB) Migrate(ctx context.Context) error {
 		book_release_event  INTEGER NOT NULL REFERENCES book_release_events(id),
 		format              TEXT NOT NULL DEFAULT 'both'
 		                    CHECK(format IN ('ebook','audiobook','both')),
+		release_title       TEXT NOT NULL DEFAULT '',
+		uri                 TEXT NOT NULL DEFAULT '',
+		indexer_id          INTEGER NOT NULL DEFAULT 0,
+		indexer_name        TEXT NOT NULL DEFAULT '',
+		score               INTEGER NOT NULL DEFAULT 0,
+		quality             TEXT NOT NULL DEFAULT '',
+		source_type         TEXT NOT NULL DEFAULT '',
+		codec               TEXT NOT NULL DEFAULT '',
+		info_hash           TEXT NOT NULL DEFAULT '',
+		category            TEXT NOT NULL DEFAULT '',
+		status              TEXT NOT NULL DEFAULT 'added'
+		                    CHECK(status IN ('added','downloading','complete','upgraded')),
+		client_torrent_id   TEXT NOT NULL DEFAULT '',
+		created_at          TEXT NOT NULL DEFAULT (datetime('now'))
+	);
+
+	CREATE TABLE IF NOT EXISTS album_downloads (
+		id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+		album_release_event INTEGER NOT NULL REFERENCES album_release_events(id),
+		release_title       TEXT NOT NULL DEFAULT '',
+		uri                 TEXT NOT NULL DEFAULT '',
+		indexer_id          INTEGER NOT NULL DEFAULT 0,
+		indexer_name        TEXT NOT NULL DEFAULT '',
+		score               INTEGER NOT NULL DEFAULT 0,
 		quality             TEXT NOT NULL DEFAULT '',
 		source_type         TEXT NOT NULL DEFAULT '',
 		codec               TEXT NOT NULL DEFAULT '',
@@ -300,6 +329,18 @@ func (d *DB) Migrate(ctx context.Context) error {
 	d.migrateExec(ctx, `ALTER TABLE book_release_events ADD COLUMN audiobook_processed INTEGER NOT NULL DEFAULT 0`)
 	d.migrateExec(ctx, `ALTER TABLE books ADD COLUMN shelvings_count INTEGER DEFAULT 0`)
 	d.migrateExec(ctx, `ALTER TABLE books ADD COLUMN hardcover_slug TEXT NOT NULL DEFAULT ''`)
+
+	// download metadata columns (chosen release tracking)
+	d.migrateExec(ctx, `ALTER TABLE downloads ADD COLUMN release_title TEXT NOT NULL DEFAULT ''`)
+	d.migrateExec(ctx, `ALTER TABLE downloads ADD COLUMN uri TEXT NOT NULL DEFAULT ''`)
+	d.migrateExec(ctx, `ALTER TABLE downloads ADD COLUMN indexer_id INTEGER NOT NULL DEFAULT 0`)
+	d.migrateExec(ctx, `ALTER TABLE downloads ADD COLUMN indexer_name TEXT NOT NULL DEFAULT ''`)
+	d.migrateExec(ctx, `ALTER TABLE downloads ADD COLUMN score INTEGER NOT NULL DEFAULT 0`)
+	d.migrateExec(ctx, `ALTER TABLE book_downloads ADD COLUMN release_title TEXT NOT NULL DEFAULT ''`)
+	d.migrateExec(ctx, `ALTER TABLE book_downloads ADD COLUMN uri TEXT NOT NULL DEFAULT ''`)
+	d.migrateExec(ctx, `ALTER TABLE book_downloads ADD COLUMN indexer_id INTEGER NOT NULL DEFAULT 0`)
+	d.migrateExec(ctx, `ALTER TABLE book_downloads ADD COLUMN indexer_name TEXT NOT NULL DEFAULT ''`)
+	d.migrateExec(ctx, `ALTER TABLE book_downloads ADD COLUMN score INTEGER NOT NULL DEFAULT 0`)
 
 	// Recreate titles table to update media_type CHECK constraint for anime support.
 	// Guarded: only runs if the CHECK constraint still lacks 'anime' (old DB).

@@ -285,6 +285,14 @@ func TestLazyLibrarianClient_GetSeriesMembers(t *testing.T) {
 	}
 }
 
+func TestLLErrorHint(t *testing.T) {
+	msg := llError("addBook", 500, "TypeError: string indices must be integers, not 'str'")
+	assert.Contains(t, msg, "update LazyLibrarian")
+
+	plain := llError("queueBook", 500, "some other error")
+	assert.NotContains(t, plain, "update LazyLibrarian")
+}
+
 func TestNewBookClient_Factory(t *testing.T) {
 	if c := NewBookClient("none", "", "", 0); c != nil {
 		t.Fatal("expected nil for 'none' backend")

@@ -8,7 +8,6 @@ import (
 
 	"github.com/pdfrg/wmdl/internal/config"
 	"github.com/pdfrg/wmdl/internal/db"
-	"github.com/pdfrg/wmdl/internal/download"
 	"github.com/pdfrg/wmdl/internal/library"
 	"github.com/pdfrg/wmdl/internal/model"
 	"github.com/pdfrg/wmdl/internal/quality"
@@ -239,26 +238,44 @@ func (e *Executor) PickMusicAlbum(ctx context.Context, sr *MusicSearchResult) *M
 		releaseEventID = ae.Event.ID
 	}
 
+	added := false
 	for _, release := range chosen {
 		e.log.Info().Str("release", release.RawTitle).Str("artist", ae.Release.ArtistName).Str("album", ae.Release.Title).Int("score", release.Score).Msg("selected music release")
 		uri := release.DownloadURL
 		if uri == "" {
 			uri = release.MagnetURL
 		}
-		if uri != "" {
-			tid, err := e.dl.AddTorrent(ctx, uri, download.WithCategory(category))
-			if err != nil {
-				e.log.Warn().Err(err).Msg("music add failed")
-			} else {
-				e.log.Info().Str("client", e.cfg.Downloader.Type).Str("category", category).Str("torrent_id", tid).Msg("added music to download client")
-				_ = tid
-			}
+		tid, err := addReleaseToClient(ctx, e.log, e.dl, e.prowl, release, category)
+		if err != nil {
+			e.log.Warn().Err(err).Str("album", ae.Release.Title).Str("artist", ae.Release.ArtistName).Msg("music add failed")
+			continue
+		}
+		added = true
+		e.log.Info().Str("client", e.cfg.Downloader.Type).Str("category", category).Str("torrent_id", tid).Msg("added music to download client")
+
+		dl := &model.AlbumDownload{
+			AlbumReleaseEvent: releaseEventID,
+			ReleaseTitle:      release.RawTitle,
+			URI:               uri,
+			IndexerID:         release.IndexerID,
+			IndexerName:       release.IndexerName,
+			Score:             release.Score,
+			Quality:           musicQuality(release),
+			SourceType:        release.Source,
+			Codec:             release.Codec,
+			InfoHash:          release.InfoHash,
+			Category:          category,
+			Status:            model.DownloadAdded,
+			ClientTorrentID:   tid,
+		}
+		if _, err := e.db.CreateAlbumDownload(ctx, dl); err != nil {
+			e.log.Warn().Err(err).Str("album", ae.Release.Title).Msg("creating album download record")
 		}
 
 		_ = e.db.UpdateAlbumReleaseEventStatus(ctx, releaseEventID, model.StatusDownloaded)
 	}
 
-	return &MusicAlbumResult{Event: ae, Downloaded: true, Trial: trial}
+	return &MusicAlbumResult{Event: ae, Downloaded: added, Trial: trial}
 }
 
 func (e *Executor) ProcessMusicAlbumDecisions(ctx context.Context, results []MusicAlbumResult) {
@@ -508,23 +525,42 @@ func (e *Executor) processMusicBatchItem(ctx context.Context, item *BatchItem) *
 		releaseEventID = ae.Event.ID
 	}
 
+	added := false
 	for _, release := range item.Selected {
 		e.log.Info().Str("release", release.RawTitle).Str("artist", ae.Release.ArtistName).Str("album", ae.Release.Title).Int("score", release.Score).Msg("selected music release")
 		uri := release.DownloadURL
 		if uri == "" {
 			uri = release.MagnetURL
 		}
-		if uri != "" {
-			tid, err := e.dl.AddTorrent(ctx, uri, download.WithCategory(category))
-			if err != nil {
-				e.log.Warn().Err(err).Msg("music add failed")
-			} else {
-				e.log.Info().Str("client", e.cfg.Downloader.Type).Str("category", category).Str("torrent_id", tid).Msg("added music to download client")
-			}
+		tid, err := addReleaseToClient(ctx, e.log, e.dl, e.prowl, release, category)
+		if err != nil {
+			e.log.Warn().Err(err).Str("album", ae.Release.Title).Str("artist", ae.Release.ArtistName).Msg("music add failed")
+			continue
+		}
+		added = true
+		e.log.Info().Str("client", e.cfg.Downloader.Type).Str("category", category).Str("torrent_id", tid).Msg("added music to download client")
+
+		dl := &model.AlbumDownload{
+			AlbumReleaseEvent: releaseEventID,
+			ReleaseTitle:      release.RawTitle,
+			URI:               uri,
+			IndexerID:         release.IndexerID,
+			IndexerName:       release.IndexerName,
+			Score:             release.Score,
+			Quality:           musicQuality(release),
+			SourceType:        release.Source,
+			Codec:             release.Codec,
+			InfoHash:          release.InfoHash,
+			Category:          category,
+			Status:            model.DownloadAdded,
+			ClientTorrentID:   tid,
+		}
+		if _, err := e.db.CreateAlbumDownload(ctx, dl); err != nil {
+			e.log.Warn().Err(err).Str("album", ae.Release.Title).Msg("creating album download record")
 		}
 
 		_ = e.db.UpdateAlbumReleaseEventStatus(ctx, releaseEventID, model.StatusDownloaded)
 	}
 
-	return &MusicAlbumResult{Event: ae, Downloaded: true, Trial: item.Trial}
+	return &MusicAlbumResult{Event: ae, Downloaded: added, Trial: item.Trial}
 }

@@ -192,6 +192,34 @@ func (p *ProwlarrClient) Ping(ctx context.Context) error {
 	return nil
 }
 
+// FetchTorrent downloads the raw .torrent file for a release from Prowlarr's
+// proxy download URL (downloadUrl). Fetching here (rather than handing the URL
+// to a torrent client) lets wmdl control retries and detect failures instead of
+// relying on the client's asynchronous URL fetch.
+func (p *ProwlarrClient) FetchTorrent(ctx context.Context, downloadURL string) ([]byte, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, downloadURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("prowlarr fetch torrent: creating request: %w", err)
+	}
+
+	resp, err := p.http.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("prowlarr fetch torrent: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+		return nil, fmt.Errorf("prowlarr fetch torrent returned %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+
+	data, err := io.ReadAll(io.LimitReader(resp.Body, 32<<20)) // 32 MiB cap
+	if err != nil {
+		return nil, fmt.Errorf("prowlarr fetch torrent: reading body: %w", err)
+	}
+	return data, nil
+}
+
 func (p *ProwlarrClient) GetIndexerName(ctx context.Context, id int) string {
 	p.mu.Lock()
 	if p.indexerNames == nil {

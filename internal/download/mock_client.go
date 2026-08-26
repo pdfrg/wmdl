@@ -20,6 +20,11 @@ func (m *MockClient) AddMagnet(ctx context.Context, uri string, opts ...Option) 
 	return args.String(0), args.Error(1)
 }
 
+func (m *MockClient) AddTorrentData(ctx context.Context, name string, data []byte, opts ...Option) (string, error) {
+	args := m.Called(ctx, name, data, opts)
+	return args.String(0), args.Error(1)
+}
+
 func (m *MockClient) Ping(ctx context.Context) error {
 	args := m.Called(ctx)
 	return args.Error(0)

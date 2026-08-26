@@ -8,7 +8,6 @@ import (
 
 	"github.com/pdfrg/wmdl/internal/config"
 	"github.com/pdfrg/wmdl/internal/db"
-	"github.com/pdfrg/wmdl/internal/download"
 	"github.com/pdfrg/wmdl/internal/library"
 	"github.com/pdfrg/wmdl/internal/model"
 	"github.com/pdfrg/wmdl/internal/quality"
@@ -125,27 +124,28 @@ func (e *Executor) addToClient(ctx context.Context, evt db.EventWithTitle, chose
 		if uri == "" {
 			uri = release.MagnetURL
 		}
-		var torrentID string
-		if uri != "" {
-			tid, err := e.dl.AddTorrent(ctx, uri, download.WithCategory(category))
-			if err != nil {
-				e.log.Warn().Err(err).Msg("direct add failed")
-			} else {
-				torrentID = tid
-				e.log.Info().Str("client", e.cfg.Downloader.Type).Str("category", category).Msg("added to download client")
-			}
+		tid, err := addReleaseToClient(ctx, e.log, e.dl, e.prowl, release, category)
+		if err != nil {
+			e.log.Warn().Err(err).Str("release", release.RawTitle).Msg("direct add failed")
+			continue
 		}
+		e.log.Info().Str("client", e.cfg.Downloader.Type).Str("category", category).Str("torrent_id", tid).Msg("added to download client")
 
 		dl := &model.Download{
 			TitleID:         title.ID,
 			ReleaseEventID:  releaseEventID,
+			ReleaseTitle:    release.RawTitle,
+			URI:             uri,
+			IndexerID:       release.IndexerID,
+			IndexerName:     release.IndexerName,
+			Score:           release.Score,
 			Quality:         fmt.Sprintf("%dp", release.Resolution),
 			SourceType:      release.Source,
 			Codec:           release.Codec,
 			InfoHash:        release.InfoHash,
 			Category:        category,
 			Status:          model.DownloadAdded,
-			ClientTorrentID: torrentID,
+			ClientTorrentID: tid,
 		}
 		if _, err := e.db.CreateDownload(ctx, dl); err != nil {
 			e.log.Warn().Err(err).Msg("creating download record")
@@ -458,14 +458,8 @@ func (e *Executor) processPhase3BatchItem(ctx context.Context, item *BatchItem) 
 		category = e.cfg.Downloader.Categories.TV
 	}
 	for _, release := range item.Selected {
-		uri := release.DownloadURL
-		if uri == "" {
-			uri = release.MagnetURL
-		}
-		if uri != "" {
-			if _, err := e.dl.AddTorrent(ctx, uri, download.WithCategory(category)); err != nil {
-				e.log.Warn().Err(err).Str("title", sr.Event.Title.Title).Msg("phase 3 add failed")
-			}
+		if _, err := addReleaseToClient(ctx, e.log, e.dl, e.prowl, release, category); err != nil {
+			e.log.Warn().Err(err).Str("title", sr.Event.Title.Title).Str("release", release.RawTitle).Msg("phase 3 add failed")
 		}
 	}
 	e.log.Info().Str("title", sr.Event.Title.Title).Msg("phase 3 item downloaded")

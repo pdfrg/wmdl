@@ -32,5 +32,9 @@ func WithPaused(paused bool) Option {
 type Client interface {
 	AddTorrent(ctx context.Context, url string, opts ...Option) (torrentID string, err error)
 	AddMagnet(ctx context.Context, uri string, opts ...Option) (torrentID string, err error)
+	// AddTorrentData pushes the raw .torrent file bytes to the client. This
+	// avoids relying on the client's async URL fetch, which can silently fail
+	// when the source is slow or overloaded.
+	AddTorrentData(ctx context.Context, name string, data []byte, opts ...Option) (torrentID string, err error)
 	Ping(ctx context.Context) error
 }

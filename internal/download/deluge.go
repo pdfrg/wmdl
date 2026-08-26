@@ -3,6 +3,7 @@ package download
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -116,6 +117,41 @@ func (d *DelugeClient) AddTorrent(ctx context.Context, torrentURL string, opts .
 
 func (d *DelugeClient) AddMagnet(ctx context.Context, magnetURI string, opts ...Option) (string, error) {
 	return d.add(ctx, magnetURI, opts...)
+}
+
+// AddTorrentData adds a torrent from its raw .torrent file bytes.
+func (d *DelugeClient) AddTorrentData(ctx context.Context, name string, data []byte, opts ...Option) (string, error) {
+	if err := d.login(ctx); err != nil {
+		return "", err
+	}
+
+	opt := &AddOptions{}
+	for _, o := range opts {
+		o(opt)
+	}
+
+	delugeOpts := map[string]interface{}{}
+	if opt.SavePath != "" {
+		delugeOpts["download_location"] = opt.SavePath
+	}
+	if opt.Paused {
+		delugeOpts["add_paused"] = true
+	}
+	if opt.Category != "" {
+		delugeOpts["label"] = opt.Category
+	}
+
+	encoded := base64.StdEncoding.EncodeToString(data)
+	resp, err := d.call(ctx, "core.add_torrent_file", []interface{}{name, encoded, delugeOpts})
+	if err != nil {
+		return "", err
+	}
+
+	torrentID, ok := resp.Result.(string)
+	if !ok {
+		return "", fmt.Errorf("deluge add torrent file: unexpected response type %T", resp.Result)
+	}
+	return torrentID, nil
 }
 
 func (d *DelugeClient) add(ctx context.Context, uri string, opts ...Option) (string, error) {

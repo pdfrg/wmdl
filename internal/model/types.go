@@ -104,6 +104,11 @@ type Download struct {
 	ID              int64
 	TitleID         int64
 	ReleaseEventID  int64
+	ReleaseTitle    string // raw release title of the chosen release
+	URI             string // download URL or magnet used
+	IndexerID       int
+	IndexerName     string
+	Score           int
 	Quality         string
 	SourceType      string
 	Codec           string
@@ -255,6 +260,11 @@ type BookDownload struct {
 	BookID           int64
 	BookReleaseEvent int64
 	Format           BookFormat
+	ReleaseTitle     string // raw release title of the chosen release
+	URI              string // download URL or magnet used
+	IndexerID        int
+	IndexerName      string
+	Score            int
 	Quality          string
 	SourceType       string
 	Codec            string
@@ -263,6 +273,27 @@ type BookDownload struct {
 	Status           DownloadStatus
 	ClientTorrentID  string
 	CreatedAt        string
+}
+
+// AlbumDownload records which music release was actually chosen and added for
+// an album event. Music previously had no download record at all, making
+// failures like "added but no torrent landed" invisible.
+type AlbumDownload struct {
+	ID                int64
+	AlbumReleaseEvent int64
+	ReleaseTitle      string // raw release title of the chosen release
+	URI               string // download URL or magnet used
+	IndexerID         int
+	IndexerName       string
+	Score             int
+	Quality           string
+	SourceType        string
+	Codec             string
+	InfoHash          string
+	Category          string
+	Status            DownloadStatus
+	ClientTorrentID   string
+	CreatedAt         string
 }
 
 type AuthorResult struct {
