@@ -159,15 +159,9 @@ func runReviewForWeek(ctx context.Context, database *db.DB, cfg *config.Config, 
 				if err := tui.Run(); err != nil {
 					return 0, err
 				}
-				apr, _, pending := tui.Counts()
+				apr, _, pending, dl := tui.Counts()
 				approved = apr
-				if pending > 0 {
-					fmt.Fprintf(os.Stderr, "\n%d items still need decisions.\n", pending)
-				} else if approved > 0 {
-					fmt.Fprintf(os.Stderr, "\nApproved %d titles for processing.\n", approved)
-				} else {
-					fmt.Fprintf(os.Stderr, "\nAll items rejected.\n")
-				}
+				printReviewResult(apr, pending, dl)
 				target.Reviewed = (pending == 0)
 				if err := database.UpsertWeekState(ctx, target); err != nil {
 					fmt.Fprintf(os.Stderr, "Warning: tracking week state: %v\n", err)
@@ -203,15 +197,9 @@ func runReviewForWeek(ctx context.Context, database *db.DB, cfg *config.Config, 
 			if err := tui.Run(); err != nil {
 				return 0, err
 			}
-			apr, _, pending := tui.Counts()
+			apr, _, pending, dl := tui.Counts()
 			approved = apr
-			if pending > 0 {
-				fmt.Fprintf(os.Stderr, "\n%d items still need decisions.\n", pending)
-			} else if approved > 0 {
-				fmt.Fprintf(os.Stderr, "\nApproved %d titles for processing.\n", approved)
-			} else {
-				fmt.Fprintf(os.Stderr, "\nAll items rejected.\n")
-			}
+			printReviewResult(apr, pending, dl)
 			target.Reviewed = (pending == 0)
 			if err := database.UpsertWeekState(ctx, target); err != nil {
 				fmt.Fprintf(os.Stderr, "Warning: tracking week state: %v\n", err)
@@ -253,15 +241,9 @@ func runReviewForWeek(ctx context.Context, database *db.DB, cfg *config.Config, 
 		return 0, err
 	}
 
-	apr, _, pending := tui.Counts()
+	apr, _, pending, _ := tui.Counts()
 	approved = apr + autoApproved
-	if pending > 0 {
-		fmt.Fprintf(os.Stderr, "\n%d items still need decisions.\n", pending)
-	} else if approved > 0 {
-		fmt.Fprintf(os.Stderr, "\nApproved %d titles for processing.\n", approved)
-	} else {
-		fmt.Fprintf(os.Stderr, "\nAll items rejected — nothing to process.\n")
-	}
+	printReviewResult(approved, pending, 0)
 	target.Reviewed = (pending == 0)
 	if err := database.UpsertWeekState(ctx, target); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: tracking week state: %v\n", err)
@@ -270,6 +252,22 @@ func runReviewForWeek(ctx context.Context, database *db.DB, cfg *config.Config, 
 		return 0, nil
 	}
 	return approved, nil
+}
+
+// printReviewResult reports the outcome of a review TUI session.
+func printReviewResult(approved, pending, downloaded int) {
+	if pending > 0 {
+		fmt.Fprintf(os.Stderr, "\n%d items still need decisions.\n", pending)
+		return
+	}
+	switch {
+	case approved > 0:
+		fmt.Fprintf(os.Stderr, "\nApproved %d titles for processing.\n", approved)
+	case downloaded > 0:
+		fmt.Fprintf(os.Stderr, "\nAll %d items already downloaded.\n", downloaded)
+	default:
+		fmt.Fprintf(os.Stderr, "\nAll items rejected — nothing to process.\n")
+	}
 }
 
 // countReviewStatus tallies approved, decided (non-pending), and whether any

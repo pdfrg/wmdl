@@ -72,7 +72,7 @@ func NewReviewTUIWithEvents(events []db.EventWithTitle, albumEvents []db.EventWi
 	}
 	for _, b := range bookEvents {
 		be := b
-		items[idx] = itemState{bookEvent: &be, decision: decisionForStatus(be.Event.Status)}
+		items[idx] = itemState{bookEvent: &be, decision: decisionForStatus(be.Event.Status), origFormatPref: be.Event.FormatPref}
 		idx++
 	}
 
@@ -142,13 +142,15 @@ func (t *TUI) ApprovedCount() int {
 	return len(t.approved) + t.approvedBooks
 }
 
-func (t *TUI) Counts() (approved, rejected, pending int) {
+func (t *TUI) Counts() (approved, rejected, pending, downloaded int) {
 	for _, it := range t.items {
 		switch it.decision {
 		case decisionApproved:
 			approved++
 		case decisionRejected:
 			rejected++
+		case decisionDownloaded:
+			downloaded++
 		default:
 			pending++
 		}
@@ -301,7 +303,7 @@ func (t *TUI) currentItem() *itemState {
 
 func (t *TUI) hasDecisions() bool {
 	for _, it := range t.items {
-		if it.decision != decisionNone {
+		if it.decision != decisionNone && it.decision != decisionDownloaded {
 			return true
 		}
 	}
@@ -313,12 +315,17 @@ func (t *TUI) saveDecisions() error {
 	defer cancel()
 	return t.database.Transaction(saveCtx, func(tx *sql.Tx) error {
 		for _, it := range t.items {
-			if it.decision == decisionNone {
+			if it.decision == decisionNone || it.decision == decisionDownloaded {
 				continue
 			}
 			status := model.StatusApproved
 			if it.decision == decisionRejected {
 				status = model.StatusRejected
+			}
+			// Never downgrade an already-downloaded item to approved unless the
+			// user explicitly expanded a downloaded book's formats to "both".
+			if it.isDownloaded() && status == model.StatusApproved && !it.bookFormatExpanded {
+				continue
 			}
 
 			switch {
@@ -439,55 +446,13 @@ func (t *TUI) updateReview(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return t, t.loadCurrentPosterCmd()
 
 	case "a":
-		it := t.currentItem()
-		if it == nil {
-			return t, nil
-		}
-		if it.bookEvent != nil {
-			ev := it.bookEvent.Event
-			if it.decision == decisionNone {
-				ev.FormatPref = t.defaultBookFormat
-				it.decision = decisionApproved
-				return t, nil
-			}
-			switch ev.FormatPref {
-			case model.BookFormatBoth:
-				ev.FormatPref = model.BookFormatEbook
-			case model.BookFormatEbook:
-				ev.FormatPref = model.BookFormatAudiobook
-			case model.BookFormatAudiobook:
-				ev.FormatPref = ""
-				it.decision = decisionNone
-				return t, nil
-			}
-			if ev.FormatPref != "" {
-				it.decision = decisionApproved
-			}
-			return t, nil
-		}
-		if it.decision == decisionApproved {
-			it.decision = decisionNone
-		} else {
-			it.decision = decisionApproved
-		}
+		return t.approveCurrent()
 
 	case "r":
-		it := t.currentItem()
-		if it == nil {
-			return t, nil
-		}
-		if it.decision == decisionRejected {
-			it.decision = decisionNone
-		} else {
-			it.decision = decisionRejected
-		}
+		return t.rejectCurrent()
 
 	case "u":
-		it := t.currentItem()
-		if it == nil {
-			return t, nil
-		}
-		it.decision = decisionNone
+		return t.undecideCurrent()
 
 	case "m":
 		t.filterUndecided = false
@@ -654,6 +619,101 @@ func (t *TUI) updateReview(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	return t, nil
 }
 
+// approveCurrent handles the `a` key. Downloaded items are not re-approved by
+// accident — the one exception is expanding a downloaded book that has a
+// missing format to "both", so the missing format gets fetched.
+func (t *TUI) approveCurrent() (tea.Model, tea.Cmd) {
+	it := t.currentItem()
+	if it == nil {
+		return t, nil
+	}
+	if it.isDownloaded() {
+		if it.bookEvent != nil && !it.bookFormatExpanded {
+			ev := it.bookEvent.Event
+			if !ev.EbookProcessed || !ev.AudiobookProcessed {
+				ev.FormatPref = model.BookFormatBoth
+				it.decision = decisionApproved
+				it.bookFormatExpanded = true
+			}
+		}
+		return t, nil
+	}
+	if it.bookEvent != nil {
+		ev := it.bookEvent.Event
+		if it.decision == decisionNone {
+			ev.FormatPref = t.defaultBookFormat
+			it.decision = decisionApproved
+			return t, nil
+		}
+		switch ev.FormatPref {
+		case model.BookFormatBoth:
+			ev.FormatPref = model.BookFormatEbook
+		case model.BookFormatEbook:
+			ev.FormatPref = model.BookFormatAudiobook
+		case model.BookFormatAudiobook:
+			ev.FormatPref = ""
+			it.decision = decisionNone
+			return t, nil
+		}
+		if ev.FormatPref != "" {
+			it.decision = decisionApproved
+		}
+		return t, nil
+	}
+	if it.decision == decisionApproved {
+		it.decision = decisionNone
+	} else {
+		it.decision = decisionApproved
+	}
+	return t, nil
+}
+
+// rejectCurrent handles the `r` key. A downloaded item can be explicitly
+// rejected; pressing `r` again restores the downloaded state.
+func (t *TUI) rejectCurrent() (tea.Model, tea.Cmd) {
+	it := t.currentItem()
+	if it == nil {
+		return t, nil
+	}
+	if it.isDownloaded() {
+		if it.decision == decisionRejected {
+			if it.bookFormatExpanded {
+				it.bookEvent.Event.FormatPref = it.origFormatPref
+				it.bookFormatExpanded = false
+			}
+			it.decision = decisionDownloaded
+		} else {
+			it.decision = decisionRejected
+		}
+		return t, nil
+	}
+	if it.decision == decisionRejected {
+		it.decision = decisionNone
+	} else {
+		it.decision = decisionRejected
+	}
+	return t, nil
+}
+
+// undecideCurrent handles the `u` key. For a downloaded item this only undoes
+// a book format expansion; otherwise the decision is cleared.
+func (t *TUI) undecideCurrent() (tea.Model, tea.Cmd) {
+	it := t.currentItem()
+	if it == nil {
+		return t, nil
+	}
+	if it.isDownloaded() {
+		if it.bookFormatExpanded {
+			it.bookEvent.Event.FormatPref = it.origFormatPref
+			it.bookFormatExpanded = false
+			it.decision = decisionDownloaded
+		}
+		return t, nil
+	}
+	it.decision = decisionNone
+	return t, nil
+}
+
 func (t *TUI) updateConfirm(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "q", "ctrl+c":
@@ -697,6 +757,7 @@ func (t *TUI) View() tea.View {
 		footer = keyStyle.Render("j") + helpStyle.Render("/") + keyStyle.Render("k") + helpStyle.Render("   ") +
 			keyStyle.Render("a") + helpStyle.Render(" 🟢  ") +
 			keyStyle.Render("r") + helpStyle.Render(" 🔴  ") +
+			helpStyle.Render("🔵 downloaded  ") +
 			keyStyle.Render("n") + helpStyle.Render(" ❔  ") +
 			keyStyle.Render("m") + helpStyle.Render(" 🎬️  ") +
 			keyStyle.Render("t") + helpStyle.Render(" 📺️  ") +

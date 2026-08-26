@@ -225,6 +225,9 @@ func (t *TUI) buildMusicContent(ae *db.EventWithAlbumRelease, rw int, maxLines i
 		case decisionRejected:
 			decoration = " "
 			decorationStyle = rejectedStyle
+		case decisionDownloaded:
+			decoration = " "
+			decorationStyle = downloadedStyle
 		}
 	}
 
@@ -362,6 +365,18 @@ func (t *TUI) buildBookContent(be *db.EventWithBook, rw int, maxLines int) strin
 		case decisionRejected:
 			decoration = " "
 			decorationStyle = rejectedStyle
+		case decisionDownloaded:
+			decorationStyle = downloadedStyle
+			switch {
+			case ev.EbookProcessed && ev.AudiobookProcessed:
+				decoration = " "
+			case ev.EbookProcessed:
+				decoration = " "
+			case ev.AudiobookProcessed:
+				decoration = " "
+			default:
+				decoration = " "
+			}
 		}
 	}
 
@@ -600,6 +615,9 @@ func (t *TUI) buildRightContent(tl *model.Title, ev *model.ReleaseEvent, rw int,
 		case decisionRejected:
 			decoration = " "
 			decorationStyle = rejectedStyle
+		case decisionDownloaded:
+			decoration = " "
+			decorationStyle = downloadedStyle
 		}
 	}
 
@@ -862,6 +880,26 @@ func (t *TUI) buildConfirmContent() string {
 		}
 	}
 	if !hasRejected {
+		b.WriteString(confirmEmptyStyle.Render("  (none)"))
+		b.WriteString("\n")
+	}
+
+	b.WriteString("\n")
+	b.WriteString(sectionStyle.Render("── Already downloaded ──"))
+	b.WriteString("\n")
+	hasDownloaded := false
+	for _, it := range t.items {
+		if it.decision == decisionDownloaded {
+			title := it.displayTitle()
+			if it.albumEvent == nil && it.bookEvent == nil && it.event.Title.Year > 0 {
+				title = fmt.Sprintf("%s (%d)", title, it.event.Title.Year)
+			}
+			b.WriteString(confirmDownloadedStyle.Render("  ◉ " + title))
+			b.WriteString("\n")
+			hasDownloaded = true
+		}
+	}
+	if !hasDownloaded {
 		b.WriteString(confirmEmptyStyle.Render("  (none)"))
 		b.WriteString("\n")
 	}

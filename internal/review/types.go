@@ -19,12 +19,18 @@ const (
 	decisionNone decision = iota
 	decisionApproved
 	decisionRejected
+	// decisionDownloaded marks an item that is already downloaded. It is
+	// preserved across re-review (never downgraded to approved by accident),
+	// unless the user explicitly rejects it or expands a book's formats.
+	decisionDownloaded
 )
 
 func decisionForStatus(s model.ReleaseStatus) decision {
 	switch s {
-	case model.StatusApproved, model.StatusDownloaded:
+	case model.StatusApproved:
 		return decisionApproved
+	case model.StatusDownloaded:
+		return decisionDownloaded
 	case model.StatusRejected:
 		return decisionRejected
 	default:
@@ -44,6 +50,26 @@ type itemState struct {
 	albumEvent *db.EventWithAlbumRelease // for music (nil for movies/TV)
 	bookEvent  *db.EventWithBook         // for books (nil for movies/TV/music)
 	decision   decision
+
+	// Book format expansion: when a downloaded book had only one format
+	// processed, pressing `a` expands FormatPref to "both" and re-approves it
+	// so the missing format is searched. origFormatPref lets `r`/`u` undo.
+	origFormatPref     model.BookFormat
+	bookFormatExpanded bool
+}
+
+// isDownloaded reports whether the item's pre-review DB status is downloaded.
+// The in-memory status is never mutated, so this stays true even after the user
+// changes the decision (used to decide which transitions are allowed).
+func (it *itemState) isDownloaded() bool {
+	switch {
+	case it.bookEvent != nil:
+		return it.bookEvent.Event.Status == model.StatusDownloaded
+	case it.albumEvent != nil:
+		return it.albumEvent.Event.Status == model.StatusDownloaded
+	default:
+		return it.event.Event.Status == model.StatusDownloaded
+	}
 }
 
 func (it *itemState) mediaType() model.MediaType {
