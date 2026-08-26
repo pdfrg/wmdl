@@ -3,6 +3,7 @@ package discover
 import (
 	"context"
 	"fmt"
+	"os/exec"
 	"regexp"
 	"strings"
 	"sync"
@@ -234,10 +235,17 @@ func (r *Runner) Run(ctx context.Context) error {
 		}()
 	}
 
-	// Auto-launch Brave if not already running on the debug port
-	// Needed for video/TV/movie processing, AllMusic, and Goodreads scraping.
+	// Auto-launch the configured browser if not already running on the debug
+	// port. Needed for video/TV/movie processing, AllMusic, and Goodreads scraping.
 	if (wantMovie || wantTV) || wantMusic || wantBooks {
-		killBrave, err := browser.EnsureRunning(r.cfg.Browser.Binary, r.cfg.Browser.DebugPort, r.cfg.Browser.Profile, r.headless)
+		killBrave, err := func() (func() error, error) {
+			// Fail fast with an actionable message when the configured
+			// binary doesn't resolve, instead of a bare exec error.
+			if _, lookErr := exec.LookPath(r.cfg.Browser.Binary); lookErr != nil {
+				return nil, fmt.Errorf("browser %q not found in $PATH: install it or set browser.binary (e.g. chromium)", r.cfg.Browser.Binary)
+			}
+			return browser.EnsureRunning(r.cfg.Browser.Binary, r.cfg.Browser.DebugPort, r.cfg.Browser.Profile, r.headless)
+		}()
 		if err != nil {
 			r.browserErr = err
 			r.log.Warn().Err(err).Msg("browser unavailable, some features disabled")
@@ -319,25 +327,24 @@ func (r *Runner) Run(ctx context.Context) error {
 			}
 		}
 		if bsCount > 0 && bsReleaseDate != "" {
-			if d, err := time.Parse("January 2, 2006", bsReleaseDate); err == nil {
+			var d time.Time
+			var err error
+			for _, f := range []string{"January 2, 2006", "Jan 2, 2006"} {
+				d, err = time.Parse(f, bsReleaseDate)
+				if err == nil {
+					break
+				}
+			}
+			if err == nil {
 				storeYear, storeWeek := d.ISOWeek()
 				reviewStart := tuesdayOfISOWeek(storeYear, storeWeek).AddDate(0, 0, 1)
+				evtYear, evtWeek := r.bookshopStorageWeek(storeYear, storeWeek)
 				ts := r.cfg.MediaTypes.Books.LookbackWeeks
 				r.log.Info().
 					Int("count", bsCount).
 					Str("release_date", d.Format("2006-01-02")).
-					Str("stored_under", fmt.Sprintf("%d-W%02d", storeYear, storeWeek)).
-					Int("timeshift_weeks", ts).
-					Str("review_from", reviewStart.Format("2006-01-02")).
-					Msg("bookshop: future week pre-population")
-			} else if d, err := time.Parse("Jan 2, 2006", bsReleaseDate); err == nil {
-				storeYear, storeWeek := d.ISOWeek()
-				reviewStart := tuesdayOfISOWeek(storeYear, storeWeek).AddDate(0, 0, 1)
-				ts := r.cfg.MediaTypes.Books.LookbackWeeks
-				r.log.Info().
-					Int("count", bsCount).
-					Str("release_date", d.Format("2006-01-02")).
-					Str("stored_under", fmt.Sprintf("%d-W%02d", storeYear, storeWeek)).
+					Str("release_week", fmt.Sprintf("%d-W%02d", storeYear, storeWeek)).
+					Str("stored_under", fmt.Sprintf("%d-W%02d", evtYear, evtWeek)).
 					Int("timeshift_weeks", ts).
 					Str("review_from", reviewStart.Format("2006-01-02")).
 					Msg("bookshop: future week pre-population")

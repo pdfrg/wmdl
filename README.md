@@ -62,8 +62,9 @@ wmdl all
 
 ## Recommended
 
-- Chromium-based browser — Brave (recommended), Chrome, Chromium, Edge, Vivaldi, Opera. Required for Goodreads,
-Bookshop, and AllMusic chromedp-based scrapers. Other scrapers work without any browser.
+- Chromium-based browser — Chromium or Chrome (recommended). Avoid Brave for now: it currently cannot pass
+Cloudflare Turnstile challenges, which several scrapers (FlixPatrol, Bookshop, AllMusic) sit behind.
+Edge, Vivaldi, and Opera also work. Required for the chromedp-based scrapers; other scrapers work without any browser.
 - Radarr, Sonarr, Lidarr, LazyLibrarian — required for `arr, auto, yolo` modes. `full, prowlarr-grab` work without.
 - Terminal with Kitty image protocol support — Kitty, Ghostty, or Rio. Required for TUI rendering of movie/TV posters,
 album and book covers.

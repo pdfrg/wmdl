@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/pdfrg/wmdl/internal/model"
@@ -119,6 +120,8 @@ func (r *Runner) sendNotification(ctx context.Context, wantMovie, wantTV, wantAn
 
 	r.markScrapeFailures(sourceCounts, sourceNotes)
 
+	bsNote := r.bookshopPrePopSummary(bookItems)
+
 	pendingTotal := 0
 	for _, n := range sourceCounts {
 		pendingTotal += n
@@ -127,6 +130,16 @@ func (r *Runner) sendNotification(ctx context.Context, wantMovie, wantTV, wantAn
 	// No pending events. If scrapers failed, send an explicit alert so a total
 	// outage is visible; otherwise this week simply has nothing to report.
 	if pendingTotal == 0 {
+		if bsNote != "" {
+			// Scrapers ran fine, but everything found belongs to a future
+			// review week (bookshop pre-population). Report it so a quiet
+			// week doesn't look like a broken scraper.
+			msg := fmt.Sprintf("No releases pending for %d-W%02d.\n\n%s", progYear, progWeek, bsNote)
+			if err := r.notify.Send("wmdl: Bookshop Pre-Population", msg, 5); err != nil {
+				r.log.Warn().Err(err).Msg("notification failed")
+			}
+			return
+		}
 		if len(r.failedScrapers) == 0 {
 			r.log.Debug().Msg("no pending events to notify about")
 			return
@@ -160,6 +173,9 @@ func (r *Runner) sendNotification(ctx context.Context, wantMovie, wantTV, wantAn
 			msg += fmt.Sprintf("\n\t%s: %d (%s)", l, sourceCounts[l], note)
 		} else {
 			msg += fmt.Sprintf("\n\t%s: %d", l, sourceCounts[l])
+		}
+		if l == "bookshop" && bsNote != "" {
+			msg += fmt.Sprintf("\n\t\t%s", bsNote)
 		}
 	}
 
@@ -200,6 +216,59 @@ func (r *Runner) sendNotification(ctx context.Context, wantMovie, wantTV, wantAn
 	if err := r.notify.Send("wmdl: New Releases", msg, 5); err != nil {
 		r.log.Warn().Err(err).Msg("notification failed")
 	}
+}
+
+// bookshopPrePopSummary summarizes where this run's bookshop finds will be
+// stored (their timeshifted review week), so notifications can distinguish
+// "0 pending this week" from "the scraper found nothing". Returns "" when no
+// bookshop items with a parseable release date were scraped.
+func (r *Runner) bookshopPrePopSummary(items []ScrapedItem) string {
+	weekCounts := make(map[string]int)
+	total := 0
+	for _, item := range items {
+		if item.Source != "bookshop" && !strings.Contains(item.Source, "bookshop") {
+			continue
+		}
+		if item.ReleaseDate == "" {
+			continue
+		}
+		var t time.Time
+		var err error
+		for _, f := range []string{"January 2, 2006", "Jan 2, 2006", "2006-01-02"} {
+			t, err = time.Parse(f, item.ReleaseDate)
+			if err == nil {
+				break
+			}
+		}
+		if err != nil {
+			continue
+		}
+		y, w := t.ISOWeek()
+		sy, sw := r.bookshopStorageWeek(y, w)
+		weekCounts[fmt.Sprintf("%d-W%02d", sy, sw)]++
+		total++
+	}
+	if total == 0 {
+		return ""
+	}
+
+	weeks := make([]string, 0, len(weekCounts))
+	for wk := range weekCounts {
+		weeks = append(weeks, wk)
+	}
+	sort.Strings(weeks)
+
+	parts := make([]string, 0, len(weeks))
+	for _, wk := range weeks {
+		parts = append(parts, fmt.Sprintf("%d → %s", weekCounts[wk], wk))
+	}
+	// Single week (the common case): drop the per-batch count prefix.
+	stored := strings.Join(parts, ", ")
+	if len(parts) == 1 {
+		stored = weeks[0]
+	}
+	return fmt.Sprintf("%d scraped today, stored under %s (reviewable in a future week)",
+		total, stored)
 }
 
 // markScrapeFailures annotates source counts whose provider did not scrape

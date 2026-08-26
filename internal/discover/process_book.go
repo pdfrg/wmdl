@@ -352,11 +352,7 @@ func (r *Runner) processBookItem(ctx context.Context, item ScrapedItem, progYear
 
 		evtYear, evtWeek := progYear, progWeek
 		if isBookshop && storeYear > 0 {
-			ts := r.cfg.MediaTypes.Books.LookbackWeeks
-			if ts <= 0 {
-				ts = 1
-			}
-			evtYear, evtWeek = addISOWeekOffset(storeYear, storeWeek, -ts)
+			evtYear, evtWeek = r.bookshopStorageWeek(storeYear, storeWeek)
 		}
 		evt := &model.BookReleaseEvent{
 			BookID:      bookID,
@@ -536,6 +532,19 @@ func (r *Runner) bookTargetWeekFrom(year, week int) (int, int) {
 		timeshiftWeeks = 1
 	}
 	return addISOWeekOffset(year, week, timeshiftWeeks)
+}
+
+// bookshopStorageWeek maps a bookshop release-date week to the week its
+// release events are stored under: the release week timeshifted back by the
+// configured books lookback, which lands on the program week whose discover
+// run would naturally cover these titles. Review of that program week picks
+// them up ("future week pre-population").
+func (r *Runner) bookshopStorageWeek(releaseYear, releaseWeek int) (int, int) {
+	timeshiftWeeks := r.cfg.MediaTypes.Books.LookbackWeeks
+	if timeshiftWeeks <= 0 {
+		timeshiftWeeks = 1
+	}
+	return addISOWeekOffset(releaseYear, releaseWeek, -timeshiftWeeks)
 }
 
 var (

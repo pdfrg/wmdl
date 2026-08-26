@@ -58,18 +58,41 @@ to respect the user's time and attention.
 A custom Go template can override the JSON payload via `custom_template` with fields
 `{{.Title}}`, `{{.Message}}`, `{{.Priority}}`.
 
+The discover notification lists pending items per source — these are what
+`wmdl review` will show for the target week. Bookshop works differently: it can only
+see the current week's new releases, so its finds are stored under their timeshifted
+review week ("future week pre-population") and surface in a later review cycle. The
+notification reflects this with an indented line under `bookshop`, e.g.:
+
+```
+	bookshop: 0
+		14 scraped today, stored under 2026-W36 (reviewable in a future week)
+```
+
+If everything scraped belongs to a future week (nothing pending for this one), you get
+a standalone "wmdl: Bookshop Pre-Population" notification instead of silence, so a
+successful scrape is never mistaken for a broken one.
+
 ### Browser (chromedp)
 
-Some scrapers (Goodreads, Bookshop, AllMusic) require a Chrome-based browser:
+Some scrapers (Goodreads, Bookshop, AllMusic, FlixPatrol) require a Chrome-based browser:
 
 ```yaml
 browser:
-  binary: "brave"          # brave, google-chrome, chromium, microsoft-edge, vivaldi, opera
+  binary: "chromium"       # chromium, google-chrome, microsoft-edge, vivaldi, opera
   debug_port: 9222
   profile: "wmd-review"
 ```
 
-Pass `--headless` to run without a visible browser window (recommended for cron/systemd).
+- wmdl validates at startup that `binary` resolves in `$PATH` and fails fast with an
+  actionable message if not.
+- **Avoid Brave for now.** Brave currently cannot pass Cloudflare Turnstile challenges
+  (widely reported; Chrome, Chromium, and Firefox pass). FlixPatrol, Bookshop, and
+  AllMusic are all behind Cloudflare, so a Brave-based setup will time out on them.
+- Interactive Turnstile challenges are solved automatically: when a challenge page
+  appears, wmdl locates the challenge widget and clicks its checkbox via the debug
+  protocol. This requires a **headed** browser — do NOT use `--headless` for scheduled
+  runs; Cloudflare blocks headless browsers outright.
 
 ### Prowlarr
 
@@ -389,7 +412,6 @@ Hardcover), save to SQLite, and optionally send a notification.
 
 ```bash
 wmdl discover                              # current week
-wmdl discover --headless                   # cron/systemd (no visible browser)
 wmdl discover --type movie                 # movies only
 wmdl discover --type movie,tv              # movies and TV
 wmdl discover --type movie --type tv       # same, repeatable flag
@@ -399,7 +421,8 @@ wmdl discover --lookback movie:2-8,tv:2-8 # one-shot lookback overrides
 
 Flags:
 - `--week` — target ISO week (see [week formats](#target-a-specific-week))
-- `--headless` — no browser window, for cron/systemd
+- `--headless` — no browser window. Note: Cloudflare blocks headless browsers, so
+  scheduled runs should NOT use this (see [Browser](#browser-chromedp))
 - `--type` — media type filter: `movie`, `tv`, `music`, `anime`, `book`.
   Repeatable and comma-separated, e.g. `--type movie --type tv` or `--type movie,tv`.
 - `--lookback` — one-shot lookback override, format: `type:range[,type:range...]`
