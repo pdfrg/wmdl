@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"github.com/pdfrg/wmdl/internal/model"
 	"github.com/rs/zerolog/log"
@@ -129,6 +130,18 @@ func (p *BookMarksProvider) Scrape() ([]ScrapedItem, error) {
 
 		if slug == "" || title == "" {
 			continue
+		}
+
+		// Bookmarks truncates long titles in the list HTML with an ellipsis
+		// (e.g. "The Jackal: The Rise and Fall of Carlos, the Wor…"). That
+		// truncated text must never be stored or used for enrichment/search —
+		// truncation is purely a display concern. The slug is the canonical,
+		// complete title, so recover the full title from it when the scraped
+		// title is truncated.
+		if isTruncatedTitle(title) {
+			if recovered := titleFromSlug(slug); recovered != "" {
+				title = recovered
+			}
 		}
 
 		entries = append(entries, bmListEntry{
@@ -325,4 +338,34 @@ func extractAuthorFromTags(tags string) string {
 		return last
 	}
 	return ""
+}
+
+// isTruncatedTitle reports whether a scraped title has been truncated for
+// display, which Bookmarks signals by appending an ellipsis character
+// (U+2026 “…” or the HTML entity &hellip; already unescaped to “…”).
+func isTruncatedTitle(title string) bool {
+	return strings.HasSuffix(title, "…") || strings.HasSuffix(title, "...")
+}
+
+// titleFromSlug recovers a human-readable book title from a Bookmarks URL
+// slug. Slugs are kebab-case versions of the full title (e.g.
+// "the-jackal-the-rise-and-fall-of-carlos-the-worlds-first-super-terrorist"
+// → "The Jackal The Rise and Fall of Carlos the Worlds First Super Terrorist").
+// This is used to restore the complete title when the list HTML truncates it.
+// It returns "" if the slug is empty.
+func titleFromSlug(slug string) string {
+	slug = strings.TrimSpace(slug)
+	if slug == "" {
+		return ""
+	}
+	words := strings.Split(slug, "-")
+	for i, w := range words {
+		if w == "" {
+			continue
+		}
+		r := []rune(w)
+		r[0] = unicode.ToUpper(r[0])
+		words[i] = string(r)
+	}
+	return strings.Join(words, " ")
 }

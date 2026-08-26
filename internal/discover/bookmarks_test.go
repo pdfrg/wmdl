@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestExtractAuthorFromTags(t *testing.T) {
@@ -81,6 +82,61 @@ func TestBmDetailPageRegexps(t *testing.T) {
 		assert.Equal(t, "rave", matches[1])
 		assert.Equal(t, "5", matches[2])
 	})
+}
+
+func TestIsTruncatedTitle(t *testing.T) {
+	tests := []struct {
+		in   string
+		want bool
+	}{
+		{"The Jackal: The Rise and Fall of Carlos, the Wor\u2026", true},
+		{"The Great Book", false},
+		{"Short...", true},
+		{"Trailing spaces …", true},
+	}
+	for _, tt := range tests {
+		got := isTruncatedTitle(tt.in)
+		assert.Equal(t, tt.want, got, "isTruncatedTitle(%q)", tt.in)
+	}
+}
+
+func TestTitleFromSlug(t *testing.T) {
+	tests := []struct {
+		slug string
+		want string
+	}{
+		{"the-jackal-the-rise-and-fall-of-carlos-the-worlds-first-super-terrorist",
+			"The Jackal The Rise And Fall Of Carlos The Worlds First Super Terrorist"},
+		{"the-great-book", "The Great Book"},
+		{"", ""},
+	}
+	for _, tt := range tests {
+		got := titleFromSlug(tt.slug)
+		assert.Equal(t, tt.want, got, "titleFromSlug(%q)", tt.slug)
+	}
+}
+
+func TestBmRecoversTruncatedTitleFromSlug(t *testing.T) {
+	html := `<div data-slug="the-jackal-the-rise-and-fall-of-carlos-the-worlds-first-super-terrorist" class="latest_book">
+		<div class="latest_book_title super_clarendon">The Jackal: The Rise and Fall of Carlos, the Wor&hellip;</div>
+		<div class="latest_book_author">Joby Warrick</div>
+	</div>`
+	slugs := bmSlugRe.FindAllStringSubmatch(html, -1)
+	titles := bmTitleRe.FindAllStringSubmatch(html, -1)
+	authors := bmAuthorRe.FindAllStringSubmatch(html, -1)
+	require.Len(t, slugs, 1)
+	require.Len(t, titles, 1)
+
+	slug := strings.TrimSpace(slugs[0][1])
+	title := htmlUnescape(strings.TrimSpace(titles[0][1]))
+	if isTruncatedTitle(title) {
+		if recovered := titleFromSlug(slug); recovered != "" {
+			title = recovered
+		}
+	}
+	assert.False(t, isTruncatedTitle(title), "title should no longer be truncated")
+	assert.Equal(t, "The Jackal The Rise And Fall Of Carlos The Worlds First Super Terrorist", title)
+	_ = authors
 }
 
 func TestBmFullParseLogic(t *testing.T) {
