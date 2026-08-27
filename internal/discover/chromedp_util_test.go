@@ -34,6 +34,14 @@ func launchTestBrowser(t *testing.T) context.Context {
 		chromedp.ExecPath(execPath),
 		chromedp.Headless,
 		chromedp.Flag("disable-gpu", true),
+		// CI runners (and most containers) run as root with unprivileged
+		// user namespaces disabled, so Chromium's sandbox is unusable and the
+		// browser refuses to start. These flags are the standard headless
+		// Chrome workaround for CI/containers and are fine for a throwaway
+		// test browser. Offline dev machines without a browser still skip via
+		// the LookPath check above.
+		chromedp.Flag("no-sandbox", true),
+		chromedp.Flag("disable-dev-shm-usage", true),
 	)
 	dataDir, err := os.MkdirTemp("", "wmdl-chromium-profile")
 	require.NoError(t, err)
