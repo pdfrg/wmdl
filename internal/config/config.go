@@ -680,7 +680,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("media_types.music.mode", "full")
 	v.SetDefault("media_types.music.scrapers", []string{"albumoftheyear", "allmusic"})
 	v.SetDefault("media_types.music.lookback_weeks", 1)
-	v.SetDefault("media_types.music.rpcharts_stations", []string{"all"})
+	v.SetDefault("media_types.music.rpcharts_stations", []string{"main"})
 	v.SetDefault("media_types.music.filter.min_critic_score", 75)
 	v.SetDefault("media_types.music.filter.min_critic_reviews", 5)
 	v.SetDefault("media_types.music.filter.min_user_score", 75)

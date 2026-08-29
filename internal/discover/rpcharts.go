@@ -144,9 +144,11 @@ func (p *RPChartsProvider) fetch() (*rpChartsPayload, error) {
 
 // selectedAlbums returns the weekly top "albums" entries for the configured
 // stations. The "all" slug (or an empty config) selects the All Stations
-// aggregate (channel -1), which avoids per-station lists dominated by
-// Serenity ambient tracks. Specific slugs merge their windows; overlaps are
-// deduplicated by the runner's seenMusic key.
+// aggregate (channel -1), a sum of plays across every feed. That aggregate is
+// itself skewed toward whichever single station plays a track most (e.g.
+// RockIt! leads the majority of the chart), so callers wanting a curated,
+// low-replay view should pick specific station slugs instead. Specific slugs
+// merge their windows; overlaps are deduplicated by the runner's seenMusic key.
 func (p *RPChartsProvider) selectedAlbums(payload *rpChartsPayload) []rpChartsEntry {
 	if len(p.stations) == 0 || containsStr(p.stations, rpChartsStationSlugAll) {
 		for _, st := range payload.Stations {
