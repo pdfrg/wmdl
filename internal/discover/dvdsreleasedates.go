@@ -117,7 +117,10 @@ func extractYear(imgAlt, imgSrc, title string) int {
 }
 
 func (d *DVDReleaseDates) historicalURL() string {
-	t := isoWeekToDate(d.targetYear, d.targetWeek)
+	// Anchor on the week's Tuesday, not its Monday: the site organizes month
+	// pages by Tuesday release dates, and when a month ends on a Monday
+	// (e.g. Aug 31, 2026) the Monday and Tuesday fall in different months.
+	t := tuesdayOfISOWeek(d.targetYear, d.targetWeek)
 	monthNum := int(t.Month())
 	monthName := strings.ToLower(t.Month().String())
 	return fmt.Sprintf("https://www.dvdsreleasedates.com/releases/%d/%d/new-dvd-releases-%s-%d",

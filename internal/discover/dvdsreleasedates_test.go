@@ -144,3 +144,13 @@ func TestDVDHistoricalURL(t *testing.T) {
 	url := d.historicalURL()
 	assert.Equal(t, "https://www.dvdsreleasedates.com/releases/2025/5/new-dvd-releases-may-2025", url)
 }
+
+func TestDVDHistoricalURLMonthBoundary(t *testing.T) {
+	// ISO week 36 of 2026 runs Mon Aug 31 – Sun Sep 6; the release Tuesday
+	// (Sep 1) is in September, so the URL must use the September page.
+	d := &DVDReleaseDates{}
+	d.targetYear = 2026
+	d.targetWeek = 36
+	url := d.historicalURL()
+	assert.Equal(t, "https://www.dvdsreleasedates.com/releases/2026/9/new-dvd-releases-september-2026", url)
+}
