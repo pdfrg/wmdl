@@ -177,7 +177,6 @@ func (p *RPChartsProvider) selectedAlbums(payload *rpChartsPayload) []rpChartsAl
 	// on more than one chart and accumulating their station display names.
 	byAlbum := map[string]*rpChartsAlbumEntry{}
 	var order []string
-	var merged []rpChartsAlbumEntry
 	for _, st := range payload.Stations {
 		if !containsStr(p.stations, st.Slug) {
 			continue
@@ -191,7 +190,6 @@ func (p *RPChartsProvider) selectedAlbums(payload *rpChartsPayload) []rpChartsAl
 			if !ok {
 				existing = &rpChartsAlbumEntry{rpChartsEntry: e}
 				byAlbum[key] = existing
-				merged = append(merged, *existing)
 				order = append(order, key)
 			}
 			if !containsStr(existing.Stations, st.Name) {
