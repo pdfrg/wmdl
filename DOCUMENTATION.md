@@ -11,8 +11,11 @@ Or build locally:
 ```bash
 git clone https://github.com/pdfrg/wmdl
 cd wmdl
-make build
+make install   # builds and installs to ~/.local/bin/wmdl
 ```
+
+Override the destination with `PREFIX` (default `$HOME/.local`); the systemd
+timer in `contrib/` expects the binary at `~/.local/bin/wmdl`.
 
 Pre-built binaries are available on the [releases page](https://github.com/pdfrg/wmdl/releases).
 
@@ -1075,6 +1078,7 @@ Copy and customize these for your setup.
 
 ```bash
 make build   # go build ./cmd/wmdl
+make install # build + copy binary to ~/.local/bin (PREFIX overridable)
 make test    # go test ./...
 make lint    # golangci-lint run ./...
 make check   # fmt + vet + lint + test + build

@@ -2,12 +2,19 @@ BIN  = wmdl
 VERSION ?= $(shell git describe --tags --dirty --always 2>/dev/null || echo dev)
 BUILD = go build -ldflags="-X main.version=$(VERSION)" -o $(BIN) ./cmd/wmdl
 
-.PHONY: all build test test-race test-integration coverage vet fmt lint clean release run-discover run-review run-process run-check
+.PHONY: all build install test test-race test-integration coverage vet fmt lint clean release run-discover run-review run-process run-check
 
 all: fmt vet lint test build
 
 build:
 	$(BUILD)
+
+PREFIX ?= $(HOME)/.local
+
+install: build
+	mkdir -p $(DESTDIR)$(PREFIX)/bin
+	install -m 0755 $(BIN) $(DESTDIR)$(PREFIX)/bin/$(BIN)
+	@echo "installed to $(DESTDIR)$(PREFIX)/bin/$(BIN)"
 
 test:
 	go test ./... -count=1
