@@ -133,6 +133,8 @@ func TestAlbumNotesURL(t *testing.T) {
 		{"rpcharts https url", "https://radioparadise.com/music/album/26434", "https://radioparadise.com/music/album/26434"},
 		{"http url", "http://example.com/album/1", "http://example.com/album/1"},
 		{"url with surrounding space", "  https://radioparadise.com/music/album/26434  ", "https://radioparadise.com/music/album/26434"},
+		{"url with stations segment", "https://radioparadise.com/music/album/26434|stations: Main Mix, RockIt!", "https://radioparadise.com/music/album/26434"},
+		{"stations only", "stations: Main Mix", ""},
 		{"plain text", "AllMusic Editor's Choice", ""},
 		{"key=value notes", "url=https://x.example|ean=123", ""},
 		{"empty", "", ""},
@@ -146,6 +148,29 @@ func TestAlbumNotesURL(t *testing.T) {
 
 	t.Run("nil_event_returns_empty", func(t *testing.T) {
 		assert.Empty(t, albumNotesURL(nil))
+	})
+}
+
+func TestAlbumStations(t *testing.T) {
+	tests := []struct {
+		name  string
+		notes string
+		want  string
+	}{
+		{"url and stations", "https://radioparadise.com/music/album/26434|stations: Main Mix, RockIt!", "Main Mix, RockIt!"},
+		{"stations only", "stations: Serenity", "Serenity"},
+		{"no stations segment", "https://radioparadise.com/music/album/26434", ""},
+		{"empty", "", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ev := &model.AlbumReleaseEvent{Notes: tt.notes}
+			assert.Equal(t, tt.want, albumStations(ev))
+		})
+	}
+
+	t.Run("nil_event_returns_empty", func(t *testing.T) {
+		assert.Empty(t, albumStations(nil))
 	})
 }
 

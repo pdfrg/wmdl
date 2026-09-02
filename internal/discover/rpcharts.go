@@ -108,11 +108,25 @@ func (p *RPChartsProvider) Scrape() ([]ScrapedItem, error) {
 			MediaType:   model.MediaTypeMusic,
 			Source:      "rpcharts",
 			ImageURL:    entry.Cover,
-			Notes:       rpAlbumURL(entry.AlbumID),
+			Notes:       rpChartsNotes(entry),
 		}
 		items = append(items, item)
 	}
 	return items, nil
+}
+
+// rpChartsNotes builds the event notes: the Radio Paradise album URL, plus a
+// "stations:" segment listing the display names of the stations whose charts
+// the album appeared on (shown in `wmdl review`).
+func rpChartsNotes(entry rpChartsAlbumEntry) string {
+	notes := rpAlbumURL(entry.AlbumID)
+	if len(entry.Stations) == 0 {
+		return notes
+	}
+	if notes != "" {
+		notes += "|"
+	}
+	return notes + "stations: " + strings.Join(entry.Stations, ", ")
 }
 
 func (p *RPChartsProvider) fetch() (*rpChartsPayload, error) {
@@ -149,23 +163,62 @@ func (p *RPChartsProvider) fetch() (*rpChartsPayload, error) {
 // RockIt! leads the majority of the chart), so callers wanting a curated,
 // low-replay view should pick specific station slugs instead. Specific slugs
 // merge their windows; overlaps are deduplicated by the runner's seenMusic key.
-func (p *RPChartsProvider) selectedAlbums(payload *rpChartsPayload) []rpChartsEntry {
+func (p *RPChartsProvider) selectedAlbums(payload *rpChartsPayload) []rpChartsAlbumEntry {
 	if len(p.stations) == 0 || containsStr(p.stations, rpChartsStationSlugAll) {
 		for _, st := range payload.Stations {
 			if st.Channel == -1 {
-				return st.Weekly.Albums
+				return withStations(st.Weekly.Albums, st.Name)
 			}
 		}
 		return nil
 	}
 
-	var merged []rpChartsEntry
+	// Merge the selected stations' windows, deduplicating albums that appear
+	// on more than one chart and accumulating their station display names.
+	byAlbum := map[string]*rpChartsAlbumEntry{}
+	var order []string
+	var merged []rpChartsAlbumEntry
 	for _, st := range payload.Stations {
-		if containsStr(p.stations, st.Slug) {
-			merged = append(merged, st.Weekly.Albums...)
+		if !containsStr(p.stations, st.Slug) {
+			continue
+		}
+		for _, e := range st.Weekly.Albums {
+			key := e.AlbumID
+			if key == "" {
+				key = e.Name + "|" + e.Sub
+			}
+			existing, ok := byAlbum[key]
+			if !ok {
+				existing = &rpChartsAlbumEntry{rpChartsEntry: e}
+				byAlbum[key] = existing
+				merged = append(merged, *existing)
+				order = append(order, key)
+			}
+			if !containsStr(existing.Stations, st.Name) {
+				existing.Stations = append(existing.Stations, st.Name)
+			}
 		}
 	}
-	return merged
+	out := make([]rpChartsAlbumEntry, 0, len(order))
+	for _, key := range order {
+		out = append(out, *byAlbum[key])
+	}
+	return out
+}
+
+// rpChartsAlbumEntry is a chart album entry annotated with the display names
+// of the stations whose charts it appeared on.
+type rpChartsAlbumEntry struct {
+	rpChartsEntry
+	Stations []string
+}
+
+func withStations(entries []rpChartsEntry, station string) []rpChartsAlbumEntry {
+	out := make([]rpChartsAlbumEntry, 0, len(entries))
+	for _, e := range entries {
+		out = append(out, rpChartsAlbumEntry{rpChartsEntry: e, Stations: []string{station}})
+	}
+	return out
 }
 
 func rpAlbumURL(albumID string) string {

@@ -51,7 +51,7 @@ func TestRPChartsScrapeAllStations(t *testing.T) {
 	assert.Equal(t, model.MediaTypeMusic, first.MediaType)
 	assert.Equal(t, "rpcharts", first.Source)
 	assert.Equal(t, "https://img.radioparadise.com/covers/l/26434.jpg", first.ImageURL)
-	assert.Equal(t, "https://radioparadise.com/music/album/26434", first.Notes)
+	assert.Equal(t, "https://radioparadise.com/music/album/26434|stations: All Stations", first.Notes)
 
 	// Serenity's Rule 42 entry is excluded by the All Stations selection.
 	for _, item := range items {
@@ -196,6 +196,71 @@ func TestRPChartsScrapeInvalidJSON(t *testing.T) {
 	assert.Contains(t, err.Error(), "decoding rpcharts data")
 }
 
+func TestRPChartsScrapeStationNamesInNotes(t *testing.T) {
+	srv := testRPChartsServer(t, http.StatusOK, loadRPChartsFixture(t))
+	defer srv.Close()
+
+	p := NewRPChartsProvider([]string{"main", "rockit", "serenity"})
+	p.endpoint = srv.URL
+
+	items, err := p.Scrape()
+	require.NoError(t, err)
+
+	// Station display names are appended to the notes after the album URL.
+	byTitle := make(map[string]string)
+	for _, item := range items {
+		byTitle[item.Title] = item.Notes
+	}
+	assert.Equal(t,
+		"https://radioparadise.com/music/album/26434|stations: Main Mix",
+		byTitle["Ensoulment"])
+	assert.Equal(t,
+		"https://radioparadise.com/music/album/26501|stations: Main Mix",
+		byTitle["Curio"])
+	assert.Equal(t,
+		"https://radioparadise.com/music/album/99999|stations: Serenity",
+		byTitle["Rule 42 - Mellow Ambient"])
+}
+
+// TestRPChartsScrapeMergesStationsForDuplicateAlbums verifies that an album
+// appearing on several selected stations is emitted once, with all station
+// display names (deduplicated) in its notes.
+func TestRPChartsScrapeMergesStationsForDuplicateAlbums(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{
+			"version": 1,
+			"stations": [
+				{"channel": 0, "slug": "main", "name": "Main Mix",
+				 "weekly": {"period": "p", "albums": [
+					{"rank": 1, "name": "Shared Album", "sub": "Artist", "year": 2026, "album_id": "1"},
+					{"rank": 2, "name": "Main Only", "sub": "Artist", "year": 2026, "album_id": "2"}]}},
+				{"channel": 2, "slug": "rockit", "name": "RockIt!",
+				 "weekly": {"period": "p", "albums": [
+					{"rank": 1, "name": "Shared Album", "sub": "Artist", "year": 2026, "album_id": "1"}]}}
+			]
+		}`))
+	}))
+	defer srv.Close()
+
+	p := NewRPChartsProvider([]string{"main", "rockit"})
+	p.endpoint = srv.URL
+
+	items, err := p.Scrape()
+	require.NoError(t, err)
+	require.Len(t, items, 2)
+
+	byTitle := make(map[string]string)
+	for _, item := range items {
+		byTitle[item.Title] = item.Notes
+	}
+	assert.Equal(t,
+		"https://radioparadise.com/music/album/1|stations: Main Mix, RockIt!",
+		byTitle["Shared Album"])
+	assert.Equal(t,
+		"https://radioparadise.com/music/album/2|stations: Main Mix",
+		byTitle["Main Only"])
+}
+
 func TestRPMapItemNoAlbumID(t *testing.T) {
 	srv := testRPChartsServer(t, http.StatusOK, loadRPChartsFixture(t))
 	defer srv.Close()
@@ -242,7 +307,7 @@ func TestRPChartsScrapeLiveFixture(t *testing.T) {
 	assert.Equal(t, "Death Cab for Cutie", first.ArtistName)
 	assert.Equal(t, 2026, first.Year)
 	assert.Equal(t, "2026-05-05", first.ReleaseDate)
-	assert.Equal(t, "https://radioparadise.com/music/album/27518", first.Notes)
+	assert.Equal(t, "https://radioparadise.com/music/album/27518|stations: All Stations", first.Notes)
 
 	titles := make([]string, 0, len(items))
 	for _, item := range items {

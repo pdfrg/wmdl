@@ -176,15 +176,36 @@ func (t *TUI) buildReviewContent() string {
 	return b.String()
 }
 
-// albumNotesURL returns the event notes when the source stores a direct URL
-// there (e.g. rpcharts' Radio Paradise album page), else "".
+// albumNotesURL returns the direct URL from an event's notes when the source
+// stores one there (e.g. rpcharts' Radio Paradise album page), else "". The
+// notes may carry additional "|"-separated segments (e.g. "stations: ...")
+// after the URL.
 func albumNotesURL(ev *model.AlbumReleaseEvent) string {
 	if ev == nil {
 		return ""
 	}
 	n := strings.TrimSpace(ev.Notes)
+	if i := strings.IndexByte(n, '|'); i >= 0 {
+		n = strings.TrimSpace(n[:i])
+	}
 	if strings.HasPrefix(n, "http://") || strings.HasPrefix(n, "https://") {
 		return n
+	}
+	return ""
+}
+
+// albumStations returns the comma-separated station display names stored in
+// an event's notes by the rpcharts scraper ("...|stations: RockIt!, Main"),
+// else "".
+func albumStations(ev *model.AlbumReleaseEvent) string {
+	if ev == nil {
+		return ""
+	}
+	for _, part := range strings.Split(ev.Notes, "|") {
+		part = strings.TrimSpace(part)
+		if rest, ok := strings.CutPrefix(part, "stations: "); ok {
+			return strings.TrimSpace(rest)
+		}
 	}
 	return ""
 }
@@ -254,7 +275,11 @@ func (t *TUI) buildMusicContent(ae *db.EventWithAlbumRelease, rw int, maxLines i
 	if isAllMusic {
 		tagParts = append(tagParts, "AllMusic Editor's Choice")
 	} else if ev.Source != "" {
-		tagParts = append(tagParts, ev.Source)
+		if st := albumStations(ev); st != "" && strings.Contains(ev.Source, "rpcharts") {
+			tagParts = append(tagParts, "rpcharts ("+st+")")
+		} else {
+			tagParts = append(tagParts, ev.Source)
+		}
 	}
 	if label := musicDateLabel(ev.Source, rls.ReleaseDate); label != "" {
 		tagParts = append(tagParts, label)

@@ -723,6 +723,8 @@ After adding an item to the library, wmdl checks for gaps:
   Has no historical data, so it ignores `lookback_weeks` and needs no browser. Select stations
   via `media_types.music.rpcharts_stations` (`"all"` = All Stations aggregate, the default;
   otherwise station slugs: `main`, `mellow`, `rockit`, `globe`, `beyond`, `serenity`, `kfat`).
+  The station display names an album charted on (e.g. "RockIt!, Main Mix") are stored with the
+  event and shown in `wmdl review`.
   Items can recur week to week; wmdl dedups repeat events via the existing pending/approved/
   downloaded status. Provides no score data, so it is exempt from the critic/user score filter.
 
