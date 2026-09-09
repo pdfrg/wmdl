@@ -242,11 +242,11 @@ func (p *TenraiAnimeProvider) fetchPage(url string) ([]tenraiAnime, error) {
 		}
 
 		if resp.StatusCode >= 500 {
-			lastErr = fmt.Errorf("tenrai returned %d: %s", resp.StatusCode, string(body[:min(len(body), 200)]))
+			lastErr = newAPIStatusError("tenrai", resp.StatusCode, body)
 			continue
 		}
 		if resp.StatusCode != http.StatusOK {
-			return nil, fmt.Errorf("tenrai returned %d: %s", resp.StatusCode, string(body[:min(len(body), 200)]))
+			return nil, newAPIStatusError("tenrai", resp.StatusCode, body)
 		}
 
 		var result tenraiAnimeResponse

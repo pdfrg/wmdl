@@ -255,11 +255,11 @@ func (p *JikanAnimeProvider) fetchPage(url string) ([]jikanAnime, error) {
 		}
 
 		if resp.StatusCode >= 500 {
-			lastErr = fmt.Errorf("jikan returned %d: %s", resp.StatusCode, string(body[:min(len(body), 200)]))
+			lastErr = newAPIStatusError("jikan", resp.StatusCode, body)
 			continue
 		}
 		if resp.StatusCode != http.StatusOK {
-			return nil, fmt.Errorf("jikan returned %d: %s", resp.StatusCode, string(body[:min(len(body), 200)]))
+			return nil, newAPIStatusError("jikan", resp.StatusCode, body)
 		}
 
 		var result jikanAnimeResponse

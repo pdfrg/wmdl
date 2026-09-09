@@ -281,7 +281,7 @@ func (r *Runner) markScrapeFailures(sourceCounts map[string]int, sourceNotes map
 	}
 	mark := func(scraper string, mt model.MediaType) {
 		if reason, ok := r.failedScrapers[scraper]; ok {
-			sourceNotes[sourceDisplayName(scraper, mt)] = reason
+			sourceNotes[sourceDisplayName(scraper, mt)] = sanitizeFailureReason(reason, maxAPIFailureDetail)
 		}
 	}
 
@@ -298,6 +298,7 @@ func (r *Runner) markScrapeFailures(sourceCounts map[string]int, sourceNotes map
 	if r.cfg.MediaTypes.Anime.Enabled {
 		for _, name := range []string{"anilist", "tenrai"} {
 			if reason, ok := r.failedScrapers[name]; ok {
+				reason = sanitizeFailureReason(reason, maxAPIFailureDetail)
 				sourceNotes[name+" (completed)"] = reason
 				if r.cfg.MediaTypes.Anime.PhaseBEnabled {
 					sourceNotes[name+" (airing)"] = reason

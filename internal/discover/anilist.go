@@ -275,8 +275,7 @@ func (p *AniListProvider) fetchPage(query string, vars map[string]any) ([]anilis
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, false, fmt.Errorf("anilist returned %d: %s",
-			resp.StatusCode, string(body[:min(len(body), 300)]))
+		return nil, false, newAPIStatusError("anilist", resp.StatusCode, body)
 	}
 
 	var gqlResp anilistGraphQLResponse
