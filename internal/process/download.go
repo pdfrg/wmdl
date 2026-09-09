@@ -3,6 +3,7 @@ package process
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/pdfrg/wmdl/internal/download"
 	"github.com/pdfrg/wmdl/internal/quality"
@@ -18,9 +19,23 @@ import (
 // silently fail when the source is slow or overloaded (the "added but nothing
 // landed" failure mode). If the fetch fails and a magnet is available it is used
 // as a fallback. Magnet-only releases use AddMagnet.
+
+// isMagnetURL reports whether s is a magnet: URI. Some Prowlarr indexers
+// return the magnet link in the downloadUrl field instead of magnetUrl,
+// so callers must check both fields before attempting an HTTP fetch.
+func isMagnetURL(s string) bool {
+	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(s)), "magnet:")
+}
+
 func addReleaseToClient(ctx context.Context, log zerolog.Logger, dl download.Client, prowl *search.ProwlarrClient, release quality.ParsedRelease, category string) (string, error) {
 	if dl == nil {
 		return "", fmt.Errorf("download client not configured")
+	}
+	// Some Prowlarr indexers return the magnet link in the downloadUrl field
+	// instead of magnetUrl. A magnet: URI must go to AddMagnet, never to
+	// FetchTorrent (http.Get rejects the magnet: scheme).
+	if isMagnetURL(release.DownloadURL) {
+		return dl.AddMagnet(ctx, strings.TrimSpace(release.DownloadURL), download.WithCategory(category))
 	}
 	if release.DownloadURL != "" {
 		data, err := prowl.FetchTorrent(ctx, release.DownloadURL)

@@ -80,6 +80,19 @@ func TestAddReleaseToClient(t *testing.T) {
 		assert.Error(t, err)
 	})
 
+	t.Run("magnet in download URL uses AddMagnet without fetching", func(t *testing.T) {
+		// Some indexers return the magnet link in Prowlarr's downloadUrl field.
+		prowl := search.NewProwlarrClient("http://127.0.0.1:1", "key", 10, nil)
+		dl := &download.MockClient{}
+		dl.On("AddMagnet", ctx, "magnet:?xt=urn:btih:0597E3EC9C84CF88547DF9C166D749887639DE92&dn=Agrippa", mock.Anything).Return("hash4", nil)
+
+		rel := quality.ParsedRelease{RawTitle: "Agrippa - Robert Harris [M4B]", DownloadURL: "magnet:?xt=urn:btih:0597E3EC9C84CF88547DF9C166D749887639DE92&dn=Agrippa"}
+		tid, err := addReleaseToClient(ctx, log, dl, prowl, rel, "Audiobooks")
+		require.NoError(t, err)
+		assert.Equal(t, "hash4", tid)
+		dl.AssertExpectations(t)
+	})
+
 	t.Run("magnet only uses AddMagnet", func(t *testing.T) {
 		prowl := search.NewProwlarrClient("http://127.0.0.1:1", "key", 10, nil)
 		dl := &download.MockClient{}

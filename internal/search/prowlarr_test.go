@@ -112,6 +112,12 @@ func TestProwlarrFetchTorrent(t *testing.T) {
 		assert.ErrorContains(t, err, "400")
 	})
 
+	t.Run("non-HTTP URL is refused", func(t *testing.T) {
+		c := NewProwlarrClient("http://127.0.0.1:1", "key", 2, nil)
+		_, err := c.FetchTorrent(context.Background(), "magnet:?xt=urn:btih:abc&dn=Agrippa")
+		assert.ErrorContains(t, err, "refusing non-HTTP URL")
+	})
+
 	t.Run("connection error returns error", func(t *testing.T) {
 		c := NewProwlarrClient("http://127.0.0.1:1", "key", 2, nil)
 		_, err := c.FetchTorrent(context.Background(), "http://127.0.0.1:1/x")

@@ -197,6 +197,9 @@ func (p *ProwlarrClient) Ping(ctx context.Context) error {
 // to a torrent client) lets wmdl control retries and detect failures instead of
 // relying on the client's asynchronous URL fetch.
 func (p *ProwlarrClient) FetchTorrent(ctx context.Context, downloadURL string) ([]byte, error) {
+	if u, err := url.Parse(strings.TrimSpace(downloadURL)); err != nil || (u.Scheme != "http" && u.Scheme != "https") {
+		return nil, fmt.Errorf("prowlarr fetch torrent: refusing non-HTTP URL with scheme %q", u.Scheme)
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, downloadURL, nil)
 	if err != nil {
 		return nil, fmt.Errorf("prowlarr fetch torrent: creating request: %w", err)
