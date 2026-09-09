@@ -82,8 +82,8 @@ tmdb:
 #
 # ── Custom script ──
 # hooks:
-#   pre_discover: "/home/mds/scripts/pre-discover.sh"
-#   post_discover: "/home/mds/scripts/post-discover.sh"
+#   pre_discover: "/home/user/scripts/pre-discover.sh"
+#   post_discover: "/home/user/scripts/post-discover.sh"
 # hooks:
 #   pre_discover: ""
 #   post_discover: ""
