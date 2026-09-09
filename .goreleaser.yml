@@ -23,5 +23,12 @@ archives:
       - LICENSE
 checksum:
   name_template: "checksums.txt"
+# NOTE: the default changelog format embeds committer emails — never use it.
+# This format intentionally omits all author fields (solo project; the
+# address in git history must stay private). Verify with:
+#   gh release view <tag> --repo pdfrg/wmdl | grep -i tutanota
 changelog:
-  use: github
+  use: git
+  sort: asc
+  format: "* {{ .Message }} ({{ .SHA }})"
+  abbrev: 7
