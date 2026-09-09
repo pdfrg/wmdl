@@ -89,9 +89,10 @@ browser:
 
 - wmdl validates at startup that `binary` resolves in `$PATH` and fails fast with an
   actionable message if not.
-- **Avoid Brave for now.** Brave currently cannot pass Cloudflare Turnstile challenges
-  (widely reported; Chrome, Chromium, and Firefox pass). FlixPatrol, Bookshop, and
-  AllMusic are all behind Cloudflare, so a Brave-based setup will time out on them.
+- **Brave works.** Brave (including `brave-origin`) passes Cloudflare Turnstile challenges
+  since Cloudflare's change (confirmed Sept 2026), as do Chrome, Chromium, and Firefox.
+  FlixPatrol, Bookshop, and AllMusic are all behind Cloudflare, so any of these
+  browsers is a safe choice.
 - Interactive Turnstile challenges are solved automatically: when a challenge page
   appears, wmdl locates the challenge widget and clicks its checkbox via the debug
   protocol. This requires a **headed** browser — do NOT use `--headless` for scheduled

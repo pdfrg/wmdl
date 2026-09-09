@@ -14,8 +14,10 @@ import (
 )
 
 // launchTestBrowser starts a throwaway headless Chromium for tests that need
-// real CDP input dispatching. Skips when no browser binary is available so
-// offline environments still pass `go test ./...`.
+// real CDP input dispatching. Skips when no browser binary is available — or
+// when the binary is present but cannot actually start (e.g. GitHub runners,
+// where Chromium exists but CDP never connects) — so environments without a
+// usable browser still pass `go test ./...`.
 func launchTestBrowser(t *testing.T) context.Context {
 	t.Helper()
 
@@ -48,6 +50,24 @@ func launchTestBrowser(t *testing.T) context.Context {
 
 	allocCtx, allocCancel := chromedp.NewExecAllocator(context.Background(), opts...)
 	ct, ctCancel := chromedp.NewContext(allocCtx)
+
+	// The allocator starts the browser lazily on first use, so a binary in
+	// PATH is no guarantee it can run here. Probe with a trivial navigation
+	// on a throwaway target and skip the test when the browser fails to
+	// start or connect. The probe must use its own target: cancelling (or
+	// timing out) a context passed to chromedp.Run tears down that target,
+	// so probing on ct itself would poison it for the real test.
+	probeCtx, probeCancel := chromedp.NewContext(allocCtx)
+	probeTimeout, probeTimeoutCancel := context.WithTimeout(probeCtx, 20*time.Second)
+	probeErr := chromedp.Run(probeTimeout, chromedp.Navigate("about:blank"))
+	probeTimeoutCancel()
+	probeCancel()
+	if probeErr != nil {
+		ctCancel()
+		allocCancel()
+		t.Skipf("browser binary present but unusable (%v); skipping browser-backed test", probeErr)
+	}
+
 	t.Cleanup(func() {
 		ctCancel()
 		allocCancel()
