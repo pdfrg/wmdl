@@ -55,9 +55,11 @@ type SonarrSeason struct {
 }
 
 type SonarrSeasonStats struct {
-	EpisodeCount      int `json:"episodeCount"`
-	EpisodeFileCount  int `json:"episodeFileCount"`
-	TotalEpisodeCount int `json:"totalEpisodeCount"`
+	EpisodeCount      int    `json:"episodeCount"`
+	EpisodeFileCount  int    `json:"episodeFileCount"`
+	TotalEpisodeCount int    `json:"totalEpisodeCount"`
+	NextAiring        string `json:"nextAiring,omitempty"`
+	PreviousAiring    string `json:"previousAiring,omitempty"`
 }
 
 type SonarrImage struct {

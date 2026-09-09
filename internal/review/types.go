@@ -168,9 +168,10 @@ func (it *itemState) libraryInfo(dbCache map[string]*db.LibraryCache) libInfo {
 				Seasons []struct {
 					SeasonNumber int `json:"seasonNumber"`
 					Statistics   *struct {
-						EpisodeFileCount  int `json:"episodeFileCount"`
-						EpisodeCount      int `json:"episodeCount"`
-						TotalEpisodeCount int `json:"totalEpisodeCount"`
+						EpisodeFileCount  int    `json:"episodeFileCount"`
+						EpisodeCount      int    `json:"episodeCount"`
+						TotalEpisodeCount int    `json:"totalEpisodeCount"`
+						NextAiring        string `json:"nextAiring,omitempty"`
 					} `json:"statistics,omitempty"`
 				} `json:"seasons"`
 			}
@@ -186,15 +187,31 @@ func (it *itemState) libraryInfo(dbCache map[string]*db.LibraryCache) libInfo {
 					}
 					total := s.Statistics.TotalEpisodeCount
 					aired := s.Statistics.EpisodeCount
-					if aired <= 0 {
+					if aired < 0 {
+						aired = 0
+					}
+					if aired > total {
 						aired = total
 					}
-					if s.Statistics.EpisodeFileCount >= total {
+					unaired := total - aired
+					files := s.Statistics.EpisodeFileCount
+					if files >= total {
 						complete = append(complete, strconv.Itoa(s.SeasonNumber))
 					} else {
-						partial = append(partial, fmt.Sprintf("S%d(%d/%d)", s.SeasonNumber, s.Statistics.EpisodeFileCount, total))
-						if s.Statistics.EpisodeFileCount >= aired {
+						if unaired > 0 {
+							partial = append(partial, fmt.Sprintf("S%d(%d/%d aired, %d unaired)", s.SeasonNumber, files, aired, unaired))
 						} else {
+							partial = append(partial, fmt.Sprintf("S%d(%d/%d)", s.SeasonNumber, files, total))
+						}
+						switch {
+						case aired <= 0:
+							// Nothing aired yet: green only when the premiere is
+							// confirmed in the future. Stale caches predate
+							// nextAiring capture and stay conservative (yellow).
+							if !seasonPremierePending(s.Statistics.NextAiring) {
+								anyMissing = true
+							}
+						case files < aired:
 							anyMissing = true
 						}
 					}
@@ -217,6 +234,21 @@ func (it *itemState) libraryInfo(dbCache map[string]*db.LibraryCache) libInfo {
 		}
 	}
 	return libInfo{status: libNone}
+}
+
+// seasonPremierePending reports whether a season with no aired episodes yet has
+// its premiere in the future. An empty or unparseable nextAiring (e.g. caches
+// written before nextAiring capture) returns false so callers stay conservative
+// and treat the season as missing, as before.
+func seasonPremierePending(nextAiring string) bool {
+	if nextAiring == "" {
+		return false
+	}
+	t, err := time.Parse(time.RFC3339, nextAiring)
+	if err != nil {
+		return false
+	}
+	return t.After(time.Now())
 }
 
 // parseLidarrAlbumStats extracts download statistics from a cached Lidarr

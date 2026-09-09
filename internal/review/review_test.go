@@ -1,6 +1,7 @@
 package review
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -258,4 +259,67 @@ func TestParseLidarrAlbumStats(t *testing.T) {
 
 	assert.Nil(t, parseLidarrAlbumStats(&db.LibraryCache{Details: `{"title":"Sandbox"}`}))
 	assert.Nil(t, parseLidarrAlbumStats(&db.LibraryCache{Details: "not-json"}))
+}
+
+func TestLibraryInfo_SonarrUnairedSeason(t *testing.T) {
+	mkItem := func() *itemState {
+		return &itemState{event: db.EventWithTitle{
+			Event: &model.ReleaseEvent{},
+			Title: &model.Title{Title: "MobLand", MediaType: model.MediaTypeTV, TvdbID: 446831},
+		}}
+	}
+	withSonarr := func(details string) map[string]*db.LibraryCache {
+		return map[string]*db.LibraryCache{
+			"sonarr:446831": {Source: "sonarr", ExtID: "446831", ArrTitle: "MobLand", Details: details},
+		}
+	}
+	season := func(num, aired, files, total int, nextAiring string) string {
+		stats := fmt.Sprintf("{\"episodeCount\":%d,\"episodeFileCount\":%d,\"totalEpisodeCount\":%d}", aired, files, total)
+		if nextAiring != "" {
+			stats = stats[:len(stats)-1] + fmt.Sprintf(",\"nextAiring\":\"%s\"}", nextAiring)
+		}
+		return fmt.Sprintf("{\"seasonNumber\":%d,\"statistics\":%s}", num, stats)
+	}
+
+	t.Run("mobland s1 complete s2 unaired future premiere is green", func(t *testing.T) {
+		details := `{"title":"MobLand","seasons":[` + season(1, 10, 10, 10, "") + `,` + season(2, 0, 0, 10, "2099-09-18T07:00:00Z") + `]}`
+		info := mkItem().libraryInfo(withSonarr(details))
+		assert.Equal(t, libFull, info.status)
+		assert.Contains(t, info.label, "S1")
+		assert.Contains(t, info.label, "S2(0/0 aired, 10 unaired)")
+	})
+	t.Run("unaired stale cache without nextAiring stays yellow", func(t *testing.T) {
+		details := `{"title":"MobLand","seasons":[` + season(2, 0, 0, 10, "") + `]}`
+		info := mkItem().libraryInfo(withSonarr(details))
+		assert.Equal(t, libPartial, info.status)
+		assert.Contains(t, info.label, "S2(0/0 aired, 10 unaired)")
+	})
+	t.Run("unaired past premiere stays yellow", func(t *testing.T) {
+		details := `{"title":"MobLand","seasons":[` + season(2, 0, 0, 10, "2020-09-18T07:00:00Z") + `]}`
+		info := mkItem().libraryInfo(withSonarr(details))
+		assert.Equal(t, libPartial, info.status)
+	})
+	t.Run("unaired unparseable nextAiring stays yellow", func(t *testing.T) {
+		details := `{"title":"MobLand","seasons":[` + season(2, 0, 0, 10, "soon") + `]}`
+		info := mkItem().libraryInfo(withSonarr(details))
+		assert.Equal(t, libPartial, info.status)
+	})
+	t.Run("mid-season caught up is green with aired label", func(t *testing.T) {
+		details := `{"title":"MobLand","seasons":[` + season(1, 3, 3, 10, "2099-09-18T07:00:00Z") + `]}`
+		info := mkItem().libraryInfo(withSonarr(details))
+		assert.Equal(t, libFull, info.status)
+		assert.Contains(t, info.label, "S1(3/3 aired, 7 unaired)")
+	})
+	t.Run("mid-season gap is yellow", func(t *testing.T) {
+		details := `{"title":"MobLand","seasons":[` + season(1, 3, 2, 10, "2099-09-18T07:00:00Z") + `]}`
+		info := mkItem().libraryInfo(withSonarr(details))
+		assert.Equal(t, libPartial, info.status)
+		assert.Contains(t, info.label, "S1(2/3 aired, 7 unaired)")
+	})
+	t.Run("fully aired partial keeps old label", func(t *testing.T) {
+		details := `{"title":"MobLand","seasons":[` + season(1, 10, 9, 10, "") + `]}`
+		info := mkItem().libraryInfo(withSonarr(details))
+		assert.Equal(t, libPartial, info.status)
+		assert.Contains(t, info.label, "S1(9/10)")
+	})
 }
