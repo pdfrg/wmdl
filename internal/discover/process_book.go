@@ -33,15 +33,9 @@ func (r *Runner) processBookItem(ctx context.Context, item ScrapedItem, progYear
 
 	var hcResult *HCBookResult
 	if r.hc != nil {
-		var hcErr error
-		hcResult, hcErr = r.hc.SearchBook(ctx, item.Title, item.ArtistName)
-		if hcErr != nil {
-			if notesISBN != "" {
-				hcResult, hcErr = r.hc.SearchBook(ctx, item.Title+" "+notesISBN, item.ArtistName)
-			}
-		}
-		if hcErr != nil {
-			r.log.Warn().Err(hcErr).Str("book", item.Title).Msg("hardcover search failed, falling back to Open Library")
+		hcResult = r.searchHardcoverWithFallback(ctx, item.Title, item.ArtistName, notesISBN)
+		if hcResult == nil {
+			r.log.Warn().Str("book", item.Title).Msg("hardcover search failed, falling back to Open Library")
 		}
 	}
 
@@ -378,6 +372,58 @@ func (r *Runner) processBookItem(ctx context.Context, item ScrapedItem, progYear
 	return err
 }
 
+// searchHardcoverWithFallback searches Hardcover for a book, retrying with
+// progressively shorter title variants when the full scraped title misses.
+// This matters because SearchBook requires the returned record's title to
+// contain the whole query title, while scraped titles often append the
+// subtitle (sometimes without any delimiter, e.g. slug-recovered bookmarks
+// titles). A miss here means no Hardcover ID, which the book manager needs.
+// A candidate is only accepted when its author matches (when known) and its
+// title is compatible via sameBookTitle, so truncated queries cannot latch
+// onto a different book.
+func (r *Runner) searchHardcoverWithFallback(ctx context.Context, title, author, notesISBN string) *HCBookResult {
+	queries := []string{title}
+	if stripped := strings.TrimSpace(bookSubtitleRe.ReplaceAllString(title, "")); stripped != "" && stripped != title {
+		queries = append(queries, stripped)
+	}
+	// Leading-word prefixes for concatenated subtitles with no delimiter.
+	words := strings.Fields(title)
+	for n := 6; n >= 4; n-- {
+		if len(words) > n {
+			queries = append(queries, strings.Join(words[:n], " "))
+		}
+	}
+	if notesISBN != "" {
+		queries = append(queries, title+" "+notesISBN)
+	}
+	for _, q := range queries {
+		res, err := r.hc.SearchBook(ctx, q, author)
+		if err != nil {
+			r.log.Debug().Err(err).Str("query", q).Msg("hardcover search error, trying shorter title")
+			continue
+		}
+		if res == nil || res.Title == "" {
+			continue
+		}
+		if res.Author != nil && !sameBookAuthor(res.Author.Name, author) {
+			r.log.Debug().Str("query", q).Str("got_author", res.Author.Name).Str("want_author", author).
+				Msg("hardcover candidate author mismatch, trying shorter title")
+			continue
+		}
+		if !sameBookTitle(res.Title, title) {
+			r.log.Debug().Str("query", q).Str("got_title", res.Title).
+				Msg("hardcover candidate title mismatch, trying shorter title")
+			continue
+		}
+		if q != title {
+			r.log.Info().Str("book", title).Str("query", q).Int("hardcover_id", res.ID).
+				Msg("hardcover match via shortened title")
+		}
+		return res
+	}
+	return nil
+}
+
 func mergeBookItems(a, b *ScrapedItem) {
 	aSrc := a.Source
 	bSrc := b.Source
@@ -461,11 +507,80 @@ func (r *Runner) deduplicateBookEvents(ctx context.Context) error {
 			}
 		}
 
+		// Fuzzy title pass: catches same-book editions with different ISBNs
+		// and no Hardcover ID (e.g. US vs UK editions, subtitle formatting
+		// differences). Only pending events from the same release week reach
+		// this point, so a same-author leading-subsequence title match is
+		// treated as the same book.
+		titleEntries, err := r.db.FindPendingBookEventsForTitleMatchTx(ctx, tx)
+		if err != nil {
+			return fmt.Errorf("finding pending book events for title match: %w", err)
+		}
+		for _, group := range groupBookEventsByTitle(titleEntries) {
+			n := r.mergeBookEventGroup(ctx, tx, group)
+			merged += n
+			if n > 0 {
+				r.log.Info().Int("merged", n).Msg("dedup: merged duplicate books by title match")
+			}
+		}
+
 		if merged > 0 {
 			r.log.Info().Int("events_merged", merged).Msg("book deduplication complete")
 		}
 		return nil
 	})
+}
+
+// groupBookEventsByTitle clusters pending book events whose author matches
+// and whose titles match via sameBookTitle. Events already sharing a book
+// ID are skipped (nothing to merge). Each returned group spans at least two
+// distinct books.
+func groupBookEventsByTitle(entries []db.BookTitleEntry) [][]db.BookISBNEntry {
+	// Cluster distinct book IDs by author+title match, then expand each
+	// cluster to all of its events (a book may have several pending events).
+	var clusters [][]int64
+	assigned := make(map[int64]bool)
+	for i := range entries {
+		if assigned[entries[i].BookID] {
+			continue
+		}
+		var cluster []int64
+		for j := range entries {
+			if assigned[entries[j].BookID] || entries[i].BookID == entries[j].BookID {
+				continue
+			}
+			if !sameBookAuthor(entries[i].Author, entries[j].Author) {
+				continue
+			}
+			if !sameBookTitle(entries[i].Title, entries[j].Title) {
+				continue
+			}
+			if len(cluster) == 0 {
+				cluster = append(cluster, entries[i].BookID)
+				assigned[entries[i].BookID] = true
+			}
+			cluster = append(cluster, entries[j].BookID)
+			assigned[entries[j].BookID] = true
+		}
+		if len(cluster) > 0 {
+			clusters = append(clusters, cluster)
+		}
+	}
+	var groups [][]db.BookISBNEntry
+	for _, c := range clusters {
+		wanted := make(map[int64]bool, len(c))
+		for _, id := range c {
+			wanted[id] = true
+		}
+		var group []db.BookISBNEntry
+		for _, e := range entries {
+			if wanted[e.BookID] {
+				group = append(group, db.BookISBNEntry{BookID: e.BookID, EventID: e.EventID})
+			}
+		}
+		groups = append(groups, group)
+	}
+	return groups
 }
 
 func (r *Runner) mergeBookEventGroup(ctx context.Context, tx *sql.Tx, entries []db.BookISBNEntry) int {
@@ -593,6 +708,8 @@ func normalizeBookKey(s string) string {
 	s = strings.ToLower(s)
 	s = bookYearParenRe.ReplaceAllString(s, "")
 	s = bookSubtitleRe.ReplaceAllString(s, "")
+	// Fold hyphens/dashes to spaces so "wine-dark" and "wine dark" match.
+	s = bookDashRe.ReplaceAllString(s, " ")
 	s = strings.TrimSpace(s)
 	t := norm.NFKD.String(s)
 	var out strings.Builder
@@ -602,7 +719,84 @@ func normalizeBookKey(s string) string {
 		}
 		out.WriteRune(r)
 	}
-	return out.String()
+	// Collapse runs of whitespace left by dash folding.
+	return strings.Join(strings.Fields(out.String()), " ")
+}
+
+// bookDashRe matches hyphen and dash variants folded to spaces in book keys.
+var bookDashRe = regexp.MustCompile(`[-–—]`)
+
+// minBookTitleMatchWords is the minimum word count for the shorter title in
+// a leading-subsequence title match. This keeps trivial single-word titles
+// (e.g. "Dune" vs "Dune Messiah") from matching.
+const minBookTitleMatchWords = 3
+
+// sameBookTitle reports whether two raw titles plausibly denote the same
+// book: their normalized forms are equal, or one is a leading
+// word-subsequence of the other. The latter covers subtitles concatenated
+// without a colon delimiter (e.g. slug-recovered bookmarks titles like
+// "Crossing The Wine Dark Sea Journeys Through Ancient Literature" vs
+// bookshop's "Crossing the Wine-Dark Sea"). Callers must also match on
+// author; the pipeline only compares books from the same release week.
+func sameBookTitle(a, b string) bool {
+	na, nb := normalizeBookKey(a), normalizeBookKey(b)
+	if na == nb {
+		return na != ""
+	}
+	wa, wb := strings.Fields(na), strings.Fields(nb)
+	if len(wa) < minBookTitleMatchWords || len(wb) < minBookTitleMatchWords {
+		return false
+	}
+	short, long := wa, wb
+	if len(short) > len(long) {
+		short, long = long, short
+	}
+	for i := range short {
+		if short[i] != long[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// sameBookAuthor reports whether two raw author names normalize equally.
+func sameBookAuthor(a, b string) bool {
+	na := normalizeBookKey(a)
+	return na != "" && na == normalizeBookKey(b)
+}
+
+// dedupeBookItems merges duplicate book items by normalized author+title,
+// merging sources/notes instead of discarding. Besides exact key matches it
+// also merges leading-subsequence title variants (see sameBookTitle).
+func dedupeBookItems(bookItems []ScrapedItem) []ScrapedItem {
+	bookMap := make(map[string]*ScrapedItem)
+	var keys []string
+	for i := range bookItems {
+		key := fmt.Sprintf("%s|%s", normalizeBookKey(bookItems[i].ArtistName), normalizeBookKey(bookItems[i].Title))
+		if existing, ok := bookMap[key]; ok {
+			mergeBookItems(existing, &bookItems[i])
+			continue
+		}
+		var matched *ScrapedItem
+		for _, k := range keys {
+			if e := bookMap[k]; sameBookAuthor(e.ArtistName, bookItems[i].ArtistName) &&
+				sameBookTitle(e.Title, bookItems[i].Title) {
+				matched = e
+				break
+			}
+		}
+		if matched != nil {
+			mergeBookItems(matched, &bookItems[i])
+		} else {
+			bookMap[key] = &bookItems[i]
+			keys = append(keys, key)
+		}
+	}
+	result := make([]ScrapedItem, 0, len(bookMap))
+	for _, k := range keys {
+		result = append(result, *bookMap[k])
+	}
+	return result
 }
 
 func upgradeGoodreadsImage(url string) string {

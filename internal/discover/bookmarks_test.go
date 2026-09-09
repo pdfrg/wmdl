@@ -72,6 +72,16 @@ func TestBmDetailPageRegexps(t *testing.T) {
 		matches := bmDetailDescRe.FindStringSubmatch(`<div class="book_manual_description">A compelling story.</div>`)
 		assert.Equal(t, "A compelling story.", matches[1])
 	})
+	t.Run("description with inline markup", func(t *testing.T) {
+		// Regression: the old [^<]+ capture truncated at the first child tag,
+		// storing just "From the author of" for blurbs containing <em>.
+		html := "<div class=\"book_manual_description\">\nFrom the author of <em>The Psychopath Test</em> and <em>So You’ve Been Publicly Shamed</em>, a darkly comic trip.\n</div>"
+		matches := bmDetailDescRe.FindStringSubmatch(html)
+		assert.Len(t, matches, 2)
+		assert.Equal(t,
+			"From the author of The Psychopath Test and So You’ve Been Publicly Shamed, a darkly comic trip.",
+			cleanBookDescription(matches[1]))
+	})
 	t.Run("tags", func(t *testing.T) {
 		matches := bmDetailTagsRe.FindStringSubmatch(`<meta name="keywords" content="Fiction,Mystery,Stephen King">`)
 		assert.Equal(t, "Fiction,Mystery,Stephen King", matches[1])

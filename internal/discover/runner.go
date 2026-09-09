@@ -419,19 +419,7 @@ func (r *Runner) Run(ctx context.Context) error {
 	}
 
 	// Deduplicate book items by normalized author+title — merge sources instead of discarding
-	bookMap := make(map[string]*ScrapedItem)
-	for i := range bookItems {
-		key := fmt.Sprintf("%s|%s", normalizeBookKey(bookItems[i].ArtistName), normalizeBookKey(bookItems[i].Title))
-		if existing, ok := bookMap[key]; ok {
-			mergeBookItems(existing, &bookItems[i])
-		} else {
-			bookMap[key] = &bookItems[i]
-		}
-	}
-	bookItems = make([]ScrapedItem, 0, len(bookMap))
-	for _, item := range bookMap {
-		bookItems = append(bookItems, *item)
-	}
+	bookItems = dedupeBookItems(bookItems)
 
 	// Filter out FlixPatrol items tagged as "Anime" genre when the MAL API
 	// already tracks them. Items unknown stay in the pipeline as a

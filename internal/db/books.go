@@ -632,6 +632,45 @@ type BookISBNEntry struct {
 	EventID int64
 }
 
+// BookTitleEntry is a pending book release event with its author and title,
+// used for fuzzy title matching across editions (different ISBNs).
+type BookTitleEntry struct {
+	BookID  int64
+	EventID int64
+	Author  string
+	Title   string
+}
+
+// FindPendingBookEventsForTitleMatchTx returns all pending book release
+// events with author names and titles for fuzzy duplicate detection.
+func (d *DB) FindPendingBookEventsForTitleMatchTx(ctx context.Context, tx *sql.Tx) ([]BookTitleEntry, error) {
+	rows, err := tx.QueryContext(ctx, `
+		SELECT b.id, e.id, a.name, b.title
+		FROM books b
+		JOIN authors a ON a.id = b.author_id
+		JOIN book_release_events e ON e.book_id = b.id
+		WHERE e.status = 'pending'
+		ORDER BY b.id, e.id
+	`)
+	if err != nil {
+		return nil, fmt.Errorf("querying pending events for title match: %w", err)
+	}
+	defer rows.Close()
+
+	var entries []BookTitleEntry
+	for rows.Next() {
+		var e BookTitleEntry
+		if err := rows.Scan(&e.BookID, &e.EventID, &e.Author, &e.Title); err != nil {
+			return nil, fmt.Errorf("scanning pending event row: %w", err)
+		}
+		entries = append(entries, e)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return entries, nil
+}
+
 func (d *DB) FindPendingBookEventsByISBN(ctx context.Context) (map[string][]BookISBNEntry, error) {
 	rows, err := d.db.QueryContext(ctx, `
 		SELECT b.isbn13, b.id, e.id

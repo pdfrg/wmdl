@@ -1,6 +1,7 @@
 package discover
 
 import (
+	"github.com/pdfrg/wmdl/internal/db"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -119,4 +120,77 @@ func TestNormalizeAuthorName(t *testing.T) {
 			assert.Equal(t, tt.want, normalizeAuthorName(tt.in))
 		})
 	}
+}
+
+func TestNormalizeBookKey(t *testing.T) {
+	tests := []struct {
+		in   string
+		want string
+	}{
+		{"Crossing the Wine-Dark Sea", "crossing the wine dark sea"},
+		{"Crossing The Wine Dark Sea Journeys Through Ancient Literature",
+			"crossing the wine dark sea journeys through ancient literature"},
+		{"Title: A Subtitle", "title"},
+		{"Title; Another Subtitle", "title"},
+		{"Some Book (2026)", "some book"},
+		{"Café Society", "cafe society"},
+	}
+	for _, tt := range tests {
+		assert.Equal(t, tt.want, normalizeBookKey(tt.in), "normalizeBookKey(%q)", tt.in)
+	}
+}
+
+func TestSameBookTitle(t *testing.T) {
+	tests := []struct {
+		name string
+		a, b string
+		want bool
+	}{
+		{"exact", "Dune", "Dune", true},
+		{"case and hyphen", "Crossing the Wine-Dark Sea", "Crossing The Wine Dark Sea", true},
+		{"colon subtitle stripped", "Crossing the Wine-Dark Sea: Journeys", "Crossing the Wine-Dark Sea", true},
+		{
+			"concatenated subtitle without colon",
+			"Crossing The Wine Dark Sea Journeys Through Ancient Literature",
+			"Crossing the Wine-Dark Sea (2026)",
+			true,
+		},
+		{"different books", "Dune", "Dune Messiah", false},
+		{"short prefix rejected", "It", "It Comes", false},
+		{"unrelated", "The Castle", "Crossing the Wine-Dark Sea", false},
+		{"empty", "", "", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, sameBookTitle(tt.a, tt.b))
+			assert.Equal(t, tt.want, sameBookTitle(tt.b, tt.a), "symmetry")
+		})
+	}
+}
+
+func TestDedupeBookItems(t *testing.T) {
+	items := []ScrapedItem{
+		{Title: "Crossing the Wine-Dark Sea (2026)", ArtistName: "Emily Wilson", Source: "bookshop", Notes: "url=x"},
+		{Title: "Crossing The Wine Dark Sea Journeys Through Ancient Literature", ArtistName: "Emily Wilson", Source: "bookmarks", Notes: "slug=y"},
+		{Title: "The Castle Adventures In A World Of Unraveling Men", ArtistName: "Jon Ronson", Source: "bookmarks"},
+	}
+	got := dedupeBookItems(items)
+	assert.Len(t, got, 2)
+	for _, item := range got {
+		if item.ArtistName == "Emily Wilson" {
+			assert.Contains(t, item.Source, "bookshop")
+			assert.Contains(t, item.Source, "bookmarks")
+		}
+	}
+}
+
+func TestGroupBookEventsByTitle(t *testing.T) {
+	entries := []db.BookTitleEntry{
+		{BookID: 1, EventID: 11, Author: "Emily Wilson", Title: "Crossing the Wine-Dark Sea"},
+		{BookID: 2, EventID: 22, Author: "Emily Wilson", Title: "Crossing The Wine Dark Sea Journeys Through Ancient Literature"},
+		{BookID: 3, EventID: 33, Author: "Jon Ronson", Title: "The Castle Adventures In A World Of Unraveling Men"},
+	}
+	groups := groupBookEventsByTitle(entries)
+	assert.Len(t, groups, 1)
+	assert.Len(t, groups[0], 2)
 }

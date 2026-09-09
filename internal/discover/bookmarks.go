@@ -68,10 +68,14 @@ var (
 	bmImgRe     = regexp.MustCompile(`<img[^>]*src="([^"]+)"[^>]*class="latest_book_image"`)
 
 	// Individual book page patterns
-	bmDetailDateRe    = regexp.MustCompile(`itemprop="datePublished" content="([^"]+)"`)
-	bmDetailISBNRe    = regexp.MustCompile(`bookshop\.org/a/\d+/(\d{13})`)
-	bmDetailPubRe     = regexp.MustCompile(`itemprop="publisher"[^>]*>.*?<span itemprop="name">\s*([^<]+)`)
-	bmDetailDescRe    = regexp.MustCompile(`<div class="book_manual_description">\s*([^<]+)`)
+	bmDetailDateRe = regexp.MustCompile(`itemprop="datePublished" content="([^"]+)"`)
+	bmDetailISBNRe = regexp.MustCompile(`bookshop\.org/a/\d+/(\d{13})`)
+	bmDetailPubRe  = regexp.MustCompile(`itemprop="publisher"[^>]*>.*?<span itemprop="name">\s*([^<]+)`)
+	// Description may contain inline markup (<em>, <strong>, <a>), so capture
+	// the raw inner HTML through the closing div and strip tags afterwards.
+	// A [^<]+ capture would truncate at the first child tag (e.g. yielding
+	// just "From the author of" when the blurb continues inside <em>).
+	bmDetailDescRe    = regexp.MustCompile(`(?s)<div class="book_manual_description">\s*(.*?)</div>`)
 	bmDetailTagsRe    = regexp.MustCompile(`name="keywords"\s*content="([^"]+)"`)
 	bmDetailVerdictRe = regexp.MustCompile(`overall rating of (\w+) based on (\d+)`)
 )
@@ -296,9 +300,9 @@ func (p *BookMarksProvider) fetchBookDetail(ctx context.Context, slug string) (*
 		detail.Publisher = htmlUnescape(strings.TrimSpace(m[1]))
 	}
 
-	// Description
+	// Description (inner HTML, tags stripped)
 	if m := bmDetailDescRe.FindStringSubmatch(html); len(m) > 1 {
-		detail.Description = htmlUnescape(strings.TrimSpace(m[1]))
+		detail.Description = cleanBookDescription(m[1])
 	}
 
 	// Tags from meta keywords
