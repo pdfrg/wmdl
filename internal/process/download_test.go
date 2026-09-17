@@ -80,6 +80,25 @@ func TestAddReleaseToClient(t *testing.T) {
 		assert.Error(t, err)
 	})
 
+	t.Run("fetch redirect to magnet uses AddMagnet without field magnet", func(t *testing.T) {
+		// AudioBook Bay case: HTTP proxy URL redirects to a magnet link and
+		// Prowlarr's magnetUrl field is empty.
+		const magnet = "magnet:?xt=urn:btih:BF9C7BA353A8421B277F37CF70A99BEA1F3C2766&dn=Switzy+-+Emma+Cline"
+		srv, prowl := newSrv(func(w http.ResponseWriter, r *http.Request) {
+			http.Redirect(w, r, magnet, http.StatusFound)
+		})
+		defer srv.Close()
+
+		dl := &download.MockClient{}
+		dl.On("AddMagnet", ctx, magnet, mock.Anything).Return("hash5", nil)
+
+		rel := quality.ParsedRelease{RawTitle: "Switzy - Emma Cline [M4B]", DownloadURL: srv.URL + "/43/download?link=abc"}
+		tid, err := addReleaseToClient(ctx, log, dl, prowl, rel, "Audiobooks")
+		require.NoError(t, err)
+		assert.Equal(t, "hash5", tid)
+		dl.AssertExpectations(t)
+	})
+
 	t.Run("magnet in download URL uses AddMagnet without fetching", func(t *testing.T) {
 		// Some indexers return the magnet link in Prowlarr's downloadUrl field.
 		prowl := search.NewProwlarrClient("http://127.0.0.1:1", "key", 10, nil)

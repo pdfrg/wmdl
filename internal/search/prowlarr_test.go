@@ -112,6 +112,62 @@ func TestProwlarrFetchTorrent(t *testing.T) {
 		assert.ErrorContains(t, err, "400")
 	})
 
+	t.Run("redirect to magnet returns MagnetRedirectError", func(t *testing.T) {
+		const magnet = "magnet:?xt=urn:btih:BF9C7BA353A8421B277F37CF70A99BEA1F3C2766&dn=Switzy"
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			http.Redirect(w, r, magnet, http.StatusFound)
+		}))
+		defer srv.Close()
+
+		c := NewProwlarrClient(srv.URL, "key", 10, nil)
+		_, err := c.FetchTorrent(context.Background(), srv.URL+"/43/download?link=abc")
+		require.Error(t, err)
+		var magnetErr *MagnetRedirectError
+		require.ErrorAs(t, err, &magnetErr)
+		assert.Equal(t, magnet, magnetErr.MagnetURL)
+	})
+
+	t.Run("http redirect chain is followed", func(t *testing.T) {
+		var srv *httptest.Server
+		srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/short" {
+				http.Redirect(w, r, srv.URL+"/real.torrent", http.StatusMovedPermanently)
+				return
+			}
+			w.Header().Set("Content-Type", "application/x-bittorrent")
+			w.Write([]byte("d8:announce"))
+		}))
+		defer srv.Close()
+
+		c := NewProwlarrClient(srv.URL, "key", 10, nil)
+		data, err := c.FetchTorrent(context.Background(), srv.URL+"/short")
+		require.NoError(t, err)
+		assert.Equal(t, "d8:announce", string(data))
+	})
+
+	t.Run("redirect loop returns error", func(t *testing.T) {
+		var srv *httptest.Server
+		srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			http.Redirect(w, r, srv.URL+"/loop", http.StatusFound)
+		}))
+		defer srv.Close()
+
+		c := NewProwlarrClient(srv.URL, "key", 10, nil)
+		_, err := c.FetchTorrent(context.Background(), srv.URL+"/loop")
+		assert.ErrorContains(t, err, "too many redirects")
+	})
+
+	t.Run("redirect without location returns error", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusFound)
+		}))
+		defer srv.Close()
+
+		c := NewProwlarrClient(srv.URL, "key", 10, nil)
+		_, err := c.FetchTorrent(context.Background(), srv.URL+"/odd")
+		assert.ErrorContains(t, err, "no Location")
+	})
+
 	t.Run("non-HTTP URL is refused", func(t *testing.T) {
 		c := NewProwlarrClient("http://127.0.0.1:1", "key", 2, nil)
 		_, err := c.FetchTorrent(context.Background(), "magnet:?xt=urn:btih:abc&dn=Agrippa")

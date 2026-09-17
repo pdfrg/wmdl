@@ -192,35 +192,89 @@ func (p *ProwlarrClient) Ping(ctx context.Context) error {
 	return nil
 }
 
+// MagnetRedirectError is returned by FetchTorrent when the Prowlarr proxy
+// download URL redirects to a magnet: URI. Magnet-only indexers (e.g.
+// AudioBook Bay) expose an HTTP proxy URL whose target is a magnet link, so
+// there are no torrent bytes to fetch — callers should add the magnet to the
+// download client directly via AddMagnet.
+type MagnetRedirectError struct {
+	MagnetURL string
+}
+
+func (e *MagnetRedirectError) Error() string {
+	return "prowlarr fetch torrent: download URL redirects to magnet link"
+}
+
+// maxFetchRedirects caps the redirect chain FetchTorrent will follow before
+// giving up. Prowlarr proxy URLs can bounce through indexer shorteners, but
+// a longer chain is a loop or abuse.
+const maxFetchRedirects = 5
+
 // FetchTorrent downloads the raw .torrent file for a release from Prowlarr's
 // proxy download URL (downloadUrl). Fetching here (rather than handing the URL
 // to a torrent client) lets wmdl control retries and detect failures instead of
 // relying on the client's asynchronous URL fetch.
 func (p *ProwlarrClient) FetchTorrent(ctx context.Context, downloadURL string) ([]byte, error) {
-	if u, err := url.Parse(strings.TrimSpace(downloadURL)); err != nil || (u.Scheme != "http" && u.Scheme != "https") {
+	current := strings.TrimSpace(downloadURL)
+	if u, err := url.Parse(current); err != nil || (u.Scheme != "http" && u.Scheme != "https") {
 		return nil, fmt.Errorf("prowlarr fetch torrent: refusing non-HTTP URL with scheme %q", u.Scheme)
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, downloadURL, nil)
-	if err != nil {
-		return nil, fmt.Errorf("prowlarr fetch torrent: creating request: %w", err)
+	// Never let the shared client follow redirects on our behalf: a Prowlarr
+	// proxy URL may redirect to a magnet: URI, which http.Client reports as
+	// an opaque "unsupported protocol scheme" error with no usable magnet.
+	// Walk the chain manually so a magnet redirect becomes a MagnetRedirectError.
+	fetchClient := *p.http
+	fetchClient.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+		return http.ErrUseLastResponse
 	}
+	for i := 0; i <= maxFetchRedirects; i++ {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, current, nil)
+		if err != nil {
+			return nil, fmt.Errorf("prowlarr fetch torrent: creating request: %w", err)
+		}
 
-	resp, err := p.http.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("prowlarr fetch torrent: %w", err)
-	}
-	defer resp.Body.Close()
+		resp, err := fetchClient.Do(req)
+		if err != nil {
+			return nil, fmt.Errorf("prowlarr fetch torrent: %w", err)
+		}
 
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
-		return nil, fmt.Errorf("prowlarr fetch torrent returned %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
-	}
+		if resp.StatusCode >= 300 && resp.StatusCode < 400 {
+			loc := strings.TrimSpace(resp.Header.Get("Location"))
+			_, _ = io.Copy(io.Discard, resp.Body)
+			resp.Body.Close()
+			if loc == "" {
+				return nil, fmt.Errorf("prowlarr fetch torrent returned redirect %d with no Location header", resp.StatusCode)
+			}
+			if ref, err := url.Parse(current); err == nil {
+				if target, err := url.Parse(loc); err == nil {
+					loc = ref.ResolveReference(target).String()
+				}
+			}
+			loc = strings.TrimSpace(loc)
+			if strings.HasPrefix(strings.ToLower(loc), "magnet:") {
+				return nil, &MagnetRedirectError{MagnetURL: loc}
+			}
+			if i == maxFetchRedirects {
+				return nil, fmt.Errorf("prowlarr fetch torrent: too many redirects")
+			}
+			current = loc
+			continue
+		}
 
-	data, err := io.ReadAll(io.LimitReader(resp.Body, 32<<20)) // 32 MiB cap
-	if err != nil {
-		return nil, fmt.Errorf("prowlarr fetch torrent: reading body: %w", err)
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+			return nil, fmt.Errorf("prowlarr fetch torrent returned %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+		}
+
+		data, err := io.ReadAll(io.LimitReader(resp.Body, 32<<20)) // 32 MiB cap
+		if err != nil {
+			return nil, fmt.Errorf("prowlarr fetch torrent: reading body: %w", err)
+		}
+		return data, nil
 	}
-	return data, nil
+	return nil, fmt.Errorf("prowlarr fetch torrent: too many redirects")
 }
 
 func (p *ProwlarrClient) GetIndexerName(ctx context.Context, id int) string {

@@ -2,6 +2,7 @@ package process
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -40,6 +41,13 @@ func addReleaseToClient(ctx context.Context, log zerolog.Logger, dl download.Cli
 	if release.DownloadURL != "" {
 		data, err := prowl.FetchTorrent(ctx, release.DownloadURL)
 		if err != nil {
+			// Magnet-only indexers expose an HTTP proxy URL that redirects
+			// to a magnet: URI. Add the redirect target directly.
+			var magnetErr *search.MagnetRedirectError
+			if errors.As(err, &magnetErr) {
+				log.Info().Str("release", release.RawTitle).Msg("Prowlarr download redirected to magnet, adding magnet")
+				return dl.AddMagnet(ctx, magnetErr.MagnetURL, download.WithCategory(category))
+			}
 			if release.MagnetURL != "" {
 				log.Warn().Err(err).Str("release", release.RawTitle).Msg("fetching torrent via Prowlarr failed, falling back to magnet")
 				return dl.AddMagnet(ctx, release.MagnetURL, download.WithCategory(category))
