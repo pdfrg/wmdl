@@ -1,16 +1,21 @@
 package discover
 
 import (
+	"bytes"
 	"context"
 	"fmt"
-	"net/http"
+	"image/png"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/PuerkitoBio/goquery"
+	"github.com/chromedp/chromedp"
+	"github.com/rs/zerolog/log"
 
+	"github.com/pdfrg/wmdl/internal/artcache"
 	"github.com/pdfrg/wmdl/internal/config"
 	"github.com/pdfrg/wmdl/internal/model"
 )
@@ -20,13 +25,13 @@ type AOTYProvider struct {
 	targetWeek int
 	hasTarget  bool
 	filter     config.MusicFilterConfig
-	client     *http.Client
+	allocCtx   context.Context // shared headless-browser allocator; nil disables fetching
 }
 
-func NewAOTYProvider(filter config.MusicFilterConfig) *AOTYProvider {
+func NewAOTYProvider(allocCtx context.Context, filter config.MusicFilterConfig) *AOTYProvider {
 	return &AOTYProvider{
-		filter: filter,
-		client: &http.Client{Timeout: 15 * time.Second},
+		filter:   filter,
+		allocCtx: allocCtx,
 	}
 }
 
@@ -108,54 +113,86 @@ func (p *AOTYProvider) Scrape() ([]ScrapedItem, error) {
 		}
 	}
 
-	// Enrich with genres from individual album pages
+	// Enrich genres + cover art from individual album pages. One browser
+	// visit per album provides both; art goes straight into the poster
+	// cache the review TUI reads, keeping review network-free.
 	if len(allItems) > 0 {
-		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-		defer cancel()
-		sem := make(chan struct{}, 5)
-		var wg sync.WaitGroup
-
-		for i := range allItems {
-			if allItems[i].AOTYURL == "" {
-				continue
-			}
-			wg.Add(1)
-			go func(item *ScrapedItem) {
-				defer wg.Done()
-				sem <- struct{}{}
-				defer func() { <-sem }()
-				genres, err := p.fetchAlbumGenres(ctx, item.AOTYURL)
-				if err == nil && genres != "" {
-					item.Genres = genres
-				}
-			}(&allItems[i])
-		}
-		wg.Wait()
+		p.enrichItems(allItems)
 	}
 
 	return allItems, nil
 }
 
-func (p *AOTYProvider) fetchAlbumGenres(ctx context.Context, url string) (string, error) {
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
-	if err != nil {
-		return "", err
-	}
-	req.Header.Set("User-Agent", "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+// enrichItems visits each album's detail page (concurrency 2 so the browser
+// tabs and request pacing don't re-trigger Cloudflare challenges) and
+// extracts genre tags. On the same page it snapshots the cover <img> into
+// the shared poster cache — the AOTY image CDN sits behind the same
+// Cloudflare challenge as the site, so a plain-HTTP fetch from review gets
+// 403; pre-caching during discover avoids that entirely.
+func (p *AOTYProvider) enrichItems(items []ScrapedItem) {
+	sem := make(chan struct{}, 2)
+	var wg sync.WaitGroup
 
-	resp, err := p.client.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
+	fetched, cached, failed := 0, 0, 0
 
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("page returned %d", resp.StatusCode)
-	}
+	for i := range items {
+		if items[i].AOTYURL == "" {
+			continue
+		}
+		wg.Add(1)
+		go func(item *ScrapedItem) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
 
-	doc, err := goquery.NewDocumentFromReader(resp.Body)
+			ct, cancel := chromedp.NewContext(p.allocCtx)
+			defer cancel()
+			pageCtx, pageCancel := context.WithTimeout(ct, 150*time.Second)
+			defer pageCancel()
+
+			if err := chromedp.Run(pageCtx,
+				chromedp.Navigate(item.AOTYURL),
+				chromedp.WaitReady("body"),
+			); err != nil {
+				log.Warn().Str("source", "albumoftheyear").Msgf("album page nav failed %s: %v", item.Title, err)
+				return
+			}
+			if err := waitForRealPage(pageCtx, 120*time.Second); err != nil {
+				log.Warn().Str("source", "albumoftheyear").Msgf("album page challenge timeout %s: %v", item.Title, err)
+				return
+			}
+
+			var html string
+			if err := chromedp.Run(pageCtx, chromedp.OuterHTML("html", &html)); err == nil {
+				item.Genres = extractGenres(html)
+			}
+
+			n, err := p.snapshotCover(pageCtx, item)
+			if err != nil {
+				failed++
+				log.Warn().Err(err).Str("source", "albumoftheyear").Msgf("album art fetch failed: %s — %s", item.ArtistName, item.Title)
+				return
+			}
+			switch n {
+			case coverFetched:
+				fetched++
+			case coverCached:
+				cached++
+			}
+		}(&items[i])
+	}
+	wg.Wait()
+
+	if fetched > 0 || failed > 0 {
+		log.Info().Str("source", "albumoftheyear").Msgf("album art: %d fetched, %d already cached, %d failed", fetched, cached, failed)
+	}
+}
+
+// extractGenres pulls the genre tags out of an album detail page's HTML.
+func extractGenres(html string) string {
+	doc, err := goquery.NewDocumentFromReader(strings.NewReader(html))
 	if err != nil {
-		return "", fmt.Errorf("parsing html: %w", err)
+		return ""
 	}
 
 	var genres []string
@@ -166,7 +203,122 @@ func (p *AOTYProvider) fetchAlbumGenres(ctx context.Context, url string) (string
 		}
 	})
 
-	return strings.Join(genres, ", "), nil
+	return strings.Join(genres, ", ")
+}
+
+const (
+	coverFetched coverResult = iota
+	coverCached
+	coverMissing
+)
+
+type coverResult int
+
+// snapshotCover captures the cover <img> rendered on the album detail page
+// the tab is currently on, writing it to the review poster cache. Returns
+// coverMissing when the item has no art or the img isn't loaded.
+func (p *AOTYProvider) snapshotCover(pageCtx context.Context, item *ScrapedItem) (coverResult, error) {
+	if item.ImageURL == "" {
+		return coverMissing, nil
+	}
+	cachePath, err := artcache.AlbumArtPath(item.ImageURL)
+	if err != nil {
+		return coverMissing, err
+	}
+	if _, err := os.Stat(cachePath); err == nil {
+		return coverCached, nil
+	}
+
+	// The cover <img> on the detail page carries the same filename as the
+	// poster_path we stored, just in a smaller size variant (e.g. 375x0).
+	file := item.ImageURL
+	if i := strings.Index(file, "/album/"); i >= 0 {
+		file = file[i+len("/album/"):]
+	}
+	if q := strings.IndexByte(file, '?'); q >= 0 {
+		file = file[:q]
+	}
+
+	sel := fmt.Sprintf("img[src*=%q]", file)
+	if err := chromedp.Run(pageCtx,
+		chromedp.WaitVisible(sel, chromedp.ByQuery),
+	); err != nil {
+		return coverMissing, fmt.Errorf("cover img %s not loaded on detail page: %w", file, err)
+	}
+
+	var buf []byte
+	if err := chromedp.Run(pageCtx, chromedp.Screenshot(sel, &buf, chromedp.NodeVisible)); err != nil {
+		return coverMissing, fmt.Errorf("screenshotting cover %s: %w", file, err)
+	}
+
+	img, err := png.Decode(bytes.NewReader(buf))
+	if err != nil {
+		return coverMissing, fmt.Errorf("decoding screenshot: %w", err)
+	}
+
+	f, err := os.Create(cachePath)
+	if err != nil {
+		return coverMissing, fmt.Errorf("creating cache file: %w", err)
+	}
+	defer func() { _ = f.Close() }()
+	if err := png.Encode(f, img); err != nil {
+		return coverMissing, fmt.Errorf("encoding cache png: %w", err)
+	}
+	return coverFetched, nil
+}
+
+// fetchPage wraps fetchPageOnce with a single retry on transient errors
+// (WebSocket disconnect, Cloudflare timeout, Varnish 503).
+func (p *AOTYProvider) fetchPage(url string) (string, error) {
+	var lastErr error
+	for attempt := 0; attempt < 2; attempt++ {
+		if attempt > 0 {
+			select {
+			case <-p.allocCtx.Done():
+				return "", p.allocCtx.Err()
+			case <-time.After(2 * time.Second):
+			}
+		}
+		html, err := p.fetchPageOnce(url)
+		if err == nil {
+			return html, nil
+		}
+		lastErr = err
+		if !isTransientError(err) {
+			break
+		}
+	}
+	return "", lastErr
+}
+
+func (p *AOTYProvider) fetchPageOnce(url string) (string, error) {
+	if p.allocCtx == nil {
+		return "", fmt.Errorf("chromedp allocator not available")
+	}
+
+	ct, cancel := chromedp.NewContext(p.allocCtx)
+	defer cancel()
+
+	pageCtx, pageCancel := context.WithTimeout(ct, 120*time.Second)
+	defer pageCancel()
+
+	if err := chromedp.Run(pageCtx,
+		chromedp.Navigate(url),
+		chromedp.WaitReady("body"),
+	); err != nil {
+		return "", fmt.Errorf("navigating to %s: %w", url, err)
+	}
+
+	if err := waitForRealPage(pageCtx, 120*time.Second); err != nil {
+		return "", fmt.Errorf("cloudflare challenge: %w", err)
+	}
+
+	var html string
+	if err := chromedp.Run(pageCtx, chromedp.OuterHTML("html", &html)); err != nil {
+		return "", fmt.Errorf("getting page HTML: %w", err)
+	}
+
+	return html, nil
 }
 
 func (p *AOTYProvider) scrapePage(page int) ([]ScrapedItem, error) {
@@ -175,25 +327,12 @@ func (p *AOTYProvider) scrapePage(page int) ([]ScrapedItem, error) {
 		url = "https://www.albumoftheyear.org/releases/"
 	}
 
-	reqCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	req, err := http.NewRequestWithContext(reqCtx, "GET", url, nil)
+	html, err := p.fetchPage(url)
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("User-Agent", "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
 
-	resp, err := p.client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("fetching page: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("page returned %d", resp.StatusCode)
-	}
-
-	doc, err := goquery.NewDocumentFromReader(resp.Body)
+	doc, err := goquery.NewDocumentFromReader(strings.NewReader(html))
 	if err != nil {
 		return nil, fmt.Errorf("parsing html: %w", err)
 	}

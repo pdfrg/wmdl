@@ -207,7 +207,12 @@ func (r *Runner) buildProviders(wantMovie, wantTV, wantAnime, wantMusic, wantBoo
 			for _, name := range r.cfg.MediaTypes.Music.Scrapers {
 				switch name {
 				case "albumoftheyear":
-					aoty := NewAOTYProvider(r.cfg.MediaTypes.Music.Filter)
+					if r.browserCtx == nil {
+						r.log.Warn().Msg("albumoftheyear: browser unavailable, skipping")
+						r.failedScrapers["albumoftheyear"] = r.browserUnavailable()
+						continue
+					}
+					aoty := NewAOTYProvider(r.browserCtx, r.cfg.MediaTypes.Music.Filter)
 					if r.hasTargetWeek {
 						aoty.SetWeekRange(musicYear, musicWeek)
 					}

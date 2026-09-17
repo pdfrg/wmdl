@@ -3,7 +3,6 @@ package review
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
 	"fmt"
 	"image"
 	"image/png"
@@ -19,6 +18,7 @@ import (
 	"github.com/disintegration/imaging"
 	"github.com/dolmen-go/kittyimg"
 
+	"github.com/pdfrg/wmdl/internal/artcache"
 	"github.com/pdfrg/wmdl/internal/model"
 
 	_ "golang.org/x/image/webp"
@@ -98,13 +98,12 @@ func getAlbumPosterImage(imageURL string) (image.Image, error) {
 		return nil, fmt.Errorf("no album art URL")
 	}
 
-	cacheDir, err := posterCacheDir()
+	// Shared cache with the discover scraper, which pre-warms AOTY art
+	// through the headless browser (the image CDN is behind Cloudflare).
+	cachePath, err := artcache.AlbumArtPath(imageURL)
 	if err != nil {
 		return nil, err
 	}
-	// Use a hash of the URL as the cache key
-	cacheKey := fmt.Sprintf("%x", sha256.Sum256([]byte(imageURL)))[:16]
-	cachePath := filepath.Join(cacheDir, "album_"+cacheKey+".png")
 
 	if img, err := loadCachedPoster(cachePath); err == nil {
 		return img, nil
