@@ -759,10 +759,33 @@ func sameBookTitle(a, b string) bool {
 	return true
 }
 
+// normalizeAuthorKey normalizes an author name for comparison: case, accents,
+// dashes, periods and apostrophes are folded so initial-spacing variants
+// ("R.F. Kuang" vs "R. F. Kuang") and "O'Brien" vs "OBrien" compare equal.
+func normalizeAuthorKey(s string) string {
+	s = strings.ToLower(s)
+	// Periods separate initials with or without spaces: fold to spaces.
+	s = strings.ReplaceAll(s, ".", " ")
+	// Apostrophes are dropped so O'Brien matches OBrien.
+	s = strings.ReplaceAll(s, "'", "")
+	s = strings.ReplaceAll(s, "\u2019", "")
+	s = bookDashRe.ReplaceAllString(s, " ")
+	s = strings.TrimSpace(s)
+	t := norm.NFKD.String(s)
+	var out strings.Builder
+	for _, r := range t {
+		if unicode.Is(unicode.Mn, r) {
+			continue
+		}
+		out.WriteRune(r)
+	}
+	return strings.Join(strings.Fields(out.String()), " ")
+}
+
 // sameBookAuthor reports whether two raw author names normalize equally.
 func sameBookAuthor(a, b string) bool {
-	na := normalizeBookKey(a)
-	return na != "" && na == normalizeBookKey(b)
+	na := normalizeAuthorKey(a)
+	return na != "" && na == normalizeAuthorKey(b)
 }
 
 // dedupeBookItems merges duplicate book items by normalized author+title,
@@ -772,7 +795,7 @@ func dedupeBookItems(bookItems []ScrapedItem) []ScrapedItem {
 	bookMap := make(map[string]*ScrapedItem)
 	var keys []string
 	for i := range bookItems {
-		key := fmt.Sprintf("%s|%s", normalizeBookKey(bookItems[i].ArtistName), normalizeBookKey(bookItems[i].Title))
+		key := fmt.Sprintf("%s|%s", normalizeAuthorKey(bookItems[i].ArtistName), normalizeBookKey(bookItems[i].Title))
 		if existing, ok := bookMap[key]; ok {
 			mergeBookItems(existing, &bookItems[i])
 			continue

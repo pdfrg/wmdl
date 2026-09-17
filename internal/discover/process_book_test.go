@@ -140,6 +140,50 @@ func TestNormalizeBookKey(t *testing.T) {
 	}
 }
 
+func TestNormalizeAuthorKey(t *testing.T) {
+	tests := []struct {
+		in   string
+		want string
+	}{
+		{"R.F. Kuang", "r f kuang"},
+		{"R. F. Kuang", "r f kuang"},
+		{"r.f. kuang", "r f kuang"},
+		{"J.R.R. Tolkien", "j r r tolkien"},
+		{"J. R. R. Tolkien", "j r r tolkien"},
+		{"Ursula K. Le Guin", "ursula k le guin"},
+		{"O'Brien", "obrien"},
+		{"O’Brien", "obrien"},
+		{"Café Author", "cafe author"},
+		{"", ""},
+	}
+	for _, tt := range tests {
+		assert.Equal(t, tt.want, normalizeAuthorKey(tt.in), "normalizeAuthorKey(%q)", tt.in)
+	}
+}
+
+func TestSameBookAuthor(t *testing.T) {
+	tests := []struct {
+		name string
+		a, b string
+		want bool
+	}{
+		{"initial spacing", "R.F. Kuang", "R. F. Kuang", true},
+		{"initial spacing lower", "r.f. kuang", "r. f. kuang", true},
+		{"multi initial", "J.R.R. Tolkien", "J. R. R. Tolkien", true},
+		{"case insensitive", "Emily Wilson", "emily wilson", true},
+		{"different authors", "Emily Wilson", "Jon Ronson", false},
+		{"apostrophe", "O'Brien", "OBrien", true},
+		{"empty", "", "", false},
+		{"empty vs name", "", "Emily Wilson", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, sameBookAuthor(tt.a, tt.b))
+			assert.Equal(t, tt.want, sameBookAuthor(tt.b, tt.a), "symmetry")
+		})
+	}
+}
+
 func TestSameBookTitle(t *testing.T) {
 	tests := []struct {
 		name string
@@ -189,6 +233,18 @@ func TestGroupBookEventsByTitle(t *testing.T) {
 		{BookID: 1, EventID: 11, Author: "Emily Wilson", Title: "Crossing the Wine-Dark Sea"},
 		{BookID: 2, EventID: 22, Author: "Emily Wilson", Title: "Crossing The Wine Dark Sea Journeys Through Ancient Literature"},
 		{BookID: 3, EventID: 33, Author: "Jon Ronson", Title: "The Castle Adventures In A World Of Unraveling Men"},
+	}
+	groups := groupBookEventsByTitle(entries)
+	assert.Len(t, groups, 1)
+	assert.Len(t, groups[0], 2)
+}
+
+func TestGroupBookEventsByTitleInitialSpacing(t *testing.T) {
+	// Regression: Taipei Story dedup failed because "R.F. Kuang" and
+	// "R. F. Kuang" did not compare equal as authors.
+	entries := []db.BookTitleEntry{
+		{BookID: 305, EventID: 314, Author: "R.F. Kuang", Title: "Taipei Story"},
+		{BookID: 349, EventID: 358, Author: "R. F. Kuang", Title: "Taipei Story"},
 	}
 	groups := groupBookEventsByTitle(entries)
 	assert.Len(t, groups, 1)
