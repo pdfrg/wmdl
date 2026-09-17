@@ -169,7 +169,9 @@ func (r *Runner) processItem(ctx context.Context, item ScrapedItem, progYear, pr
 		if rtCritics > 0 || rtAudience > 0 {
 			r.log.Info().Str("url", rtURL).Float64("critics", rtCritics).Float64("audience", rtAudience).Msg("RT scores")
 		} else {
-			r.log.Warn().Str("url", rtURL).Msg("RT scrape: no scores found")
+			// Scorecard fetched fine but carries no scores — the title simply
+			// has no RT ratings yet. Not an error; keep it visible at Info.
+			r.log.Info().Str("url", rtURL).Msg("RT: title not rated yet (no scores in scorecard)")
 		}
 		if rtAudienceReal > 0 {
 			r.log.Info().Str("url", rtURL).Float64("real", rtAudienceReal).Int("votes", rtRealVotes).Msg("RT real audience score")

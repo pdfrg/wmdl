@@ -139,7 +139,11 @@ func tryClickOOPIFCheckbox(ct context.Context, oopifCtx *context.Context, oopifC
 		return false, nil
 	}
 
-	// Build (or reuse) a session attached to the challenge iframe target.
+	// Build (or reuse) a session attached to the challenge iframe target. The
+	// target is sometimes destroyed and re-created when the challenge
+	// re-presents, which kills a cached session — so a click failure drops the
+	// cache and the next attempt attaches fresh instead of hanging on a dead
+	// session.
 	var base = ct
 	if oopifCtx != nil {
 		if *oopifCtx == nil {
@@ -161,9 +165,17 @@ func tryClickOOPIFCheckbox(ct context.Context, oopifCtx *context.Context, oopifC
 			chromedp.MouseClickXY(pt[0], pt[1]),
 		); err != nil {
 			log.Debug().Err(err).Msg("turnstile: OOPIF checkbox click failed")
-		} else {
-			clicked = true
+			// Drop the cached session on failure so the next attempt attaches to
+			// the (possibly re-created) challenge iframe target instead of
+			// timing out repeatedly on a dead session.
+			if oopifCtx != nil && *oopifCtx != nil {
+				(*oopifCancel)()
+				*oopifCtx = nil
+				*oopifCancel = nil
+			}
+			return clicked, nil
 		}
+		clicked = true
 	}
 	if clicked {
 		log.Info().Msg("turnstile: clicked OOPIF challenge checkbox")
