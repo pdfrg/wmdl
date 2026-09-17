@@ -105,6 +105,28 @@ func ScrapeRTRatings(ctx context.Context, rtURL string) *RTRatings {
 }
 
 func fetchScorecard(ctx context.Context, rtURL string) (*rtScorecardJSON, error) {
+	var lastErr error
+	for attempt := 0; attempt < 2; attempt++ {
+		data, err := fetchScorecardOnce(ctx, rtURL)
+		if err == nil {
+			return data, nil
+		}
+		lastErr = err
+		// RT's bot protection intermittently serves non-scorecard pages for an
+		// otherwise valid title URL; one retry usually clears it.
+		if strings.Contains(err.Error(), "transient") {
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(2 * time.Second):
+			}
+			continue
+		}
+	}
+	return nil, lastErr
+}
+
+func fetchScorecardOnce(ctx context.Context, rtURL string) (*rtScorecardJSON, error) {
 	req, err := http.NewRequestWithContext(ctx, "GET", rtURL, nil)
 	if err != nil {
 		return nil, err
@@ -119,6 +141,10 @@ func fetchScorecard(ctx context.Context, rtURL string) (*rtScorecardJSON, error)
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("transient: page returned %d", resp.StatusCode)
+	}
+
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, fmt.Errorf("read body: %w", err)
@@ -126,7 +152,7 @@ func fetchScorecard(ctx context.Context, rtURL string) (*rtScorecardJSON, error)
 
 	m := scorecardRE.FindSubmatch(body)
 	if m == nil {
-		return nil, fmt.Errorf("media-scorecard-json not found")
+		return nil, fmt.Errorf("media-scorecard-json not found (page %d bytes)", len(body))
 	}
 
 	var data rtScorecardJSON

@@ -125,13 +125,6 @@ func (r *Runner) buildProviders(wantMovie, wantTV, wantAnime, wantMusic, wantBoo
 				tenrai.SetWeekRange(animeYear, animeWeek)
 			}
 			providers = append(providers, tenrai)
-
-			jikan := NewJikanAnimeProvider(r.cfg.MediaTypes.Anime)
-			if r.hasTargetWeek {
-				animeYear, animeWeek := addISOWeekOffset(r.targetYear, r.targetWeek, wk)
-				jikan.SetWeekRange(animeYear, animeWeek)
-			}
-			providers = append(providers, jikan)
 		}
 	}
 

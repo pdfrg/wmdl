@@ -814,7 +814,7 @@ category (preserving existing behavior).
 
 ### Scrapers
 
-Three HTTP API providers run in priority order, then FlixPatrol as a supplemental
+Two HTTP API providers run in priority order, then FlixPatrol as a supplemental
 source:
 
 1. **AniList** (`anilist`) — Primary provider. GraphQL API for completed anime
@@ -822,13 +822,20 @@ source:
    a 0-10 scale. Phase A searches by season (Winter/Spring/Summer/Fall),
    Phase B tracks airing shows.
 2. **Tenrai** (`tenrai`) — Secondary provider. MAL-backed API, used when
-   AniList returns fewer results than expected. Same Phase A/B structure.
-3. **Jikan** (`jikan`) — Tertiary fallback. MyAnimeList via Jikan API. Used
-   only for `malAnimeExists` verification checks when AniList has no data.
-   Same two-phase structure:
+   AniList returns fewer results than expected. Same Phase A/B structure:
    - **Phase A:** Recently completed anime meeting score/member thresholds
    - **Phase B:** Currently-airing anime above higher thresholds — added directly
      to Sonarr without Prowlarr search (since episodes are still releasing)
+
+   Also backs the `malAnimeExists` verification check used to dedup FlixPatrol
+   anime against MAL.
+
+   > **Removed: Jikan.** The Jikan public API provider was removed. The
+   > service entered brownout September 1, 2026 and is scheduled to shut down
+   > October 1, 2026 (MyAnimeList blocks its scrapers — most endpoints return
+   > 504). Tenrai is the MAL-backed drop-in and took over both scraping and the
+   > existence checks. Historical DB rows with `source="jikan"`/`"jikan-airing"`
+   > remain readable/labels intact.
 - **FlixPatrol** — also catches some anime; can be deduped against all MAL-backed
   results via `filter_flixpatrol_anime`
 
