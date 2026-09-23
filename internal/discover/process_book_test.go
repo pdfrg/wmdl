@@ -250,3 +250,93 @@ func TestGroupBookEventsByTitleInitialSpacing(t *testing.T) {
 	assert.Len(t, groups, 1)
 	assert.Len(t, groups[0], 2)
 }
+
+func TestNormalizeAuthorNameContributors(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"cramped initials expanded", "R.F. Kuang", "R. F. Kuang"},
+		{"spaced initials unchanged", "R. F. Kuang", "R. F. Kuang"},
+		{"multi initials", "J.R.R. Tolkien", "J. R. R. Tolkien"},
+		{"ampersand folded", "Naomi Klein & Astra Taylor", "Naomi Klein, Astra Taylor"},
+		{"and folded", "Cristina Rivera Garza and Christina MacSweeney", "Cristina Rivera Garza, Christina MacSweeney"},
+		{"translator role stripped", "Cristina Rivera Garza (Translator)", "Cristina Rivera Garza"},
+		{"narrator role stripped", "Elin Hilderbrand [Narrator]", "Elin Hilderbrand"},
+		{"plain name unchanged", "Emily St. John Mandel", "Emily St. John Mandel"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, normalizeAuthorName(tt.in))
+		})
+	}
+}
+
+func TestSamePrimaryAuthor(t *testing.T) {
+	tests := []struct {
+		name string
+		a, b string
+		want bool
+	}{
+		{"narrator suffix", "Elin Hilderbrand", "Elin Hilderbrand, Shelby Cunningham", true},
+		{"translator suffix", "Cristina Rivera Garza", "Cristina Rivera Garza, Christina MacSweeney", true},
+		{"ampersand co-author", "Naomi Klein", "Naomi Klein & Astra Taylor", true},
+		{"different authors", "Emily Wilson", "Jon Ronson", false},
+		{"wrong author rejected", "Suzy Eynon", "Cristina Rivera Garza, Christina MacSweeney", false},
+		{"empty", "", "", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, samePrimaryAuthor(tt.a, tt.b))
+			assert.Equal(t, tt.want, samePrimaryAuthor(tt.b, tt.a), "symmetry")
+		})
+	}
+}
+
+func TestFindSiblingBookID(t *testing.T) {
+	cands := []db.SiblingBookCandidate{
+		{BookID: 305, AuthorName: "R.F. Kuang", Title: "Taipei Story", ReleaseYear: 2026, ISBN13: "9780063473751"},
+		{BookID: 322, AuthorName: "Suzy Eynon", Title: "Terrestrial", ReleaseYear: 0, ISBN13: "9781968523077",
+			EvtNotes: "url=https://bookshop.org/p/books/terrestrial-cristina-rivera-garza/80744946ce0299f6?ean=9780593980088"},
+		{BookID: 341, AuthorName: "Elin Hilderbrand", Title: "The Thoroughbreds", ReleaseYear: 2026, ISBN13: "9781529445282"},
+	}
+	tests := []struct {
+		name     string
+		title    string
+		year     int
+		author   string
+		isbn13   string
+		notesEAN string
+		want     int64
+	}{
+		{"initial-spacing author variant", "Taipei Story", 2026, "R. F. Kuang", "9780063473744", "", 305},
+		{"wrong-author linked by EAN in notes", "Terrestrial", 0, "Cristina Rivera Garza, Christina MacSweeney", "9780593980088", "9780593980088", 322},
+		{"narrator suffix author", "The Thoroughbreds", 0, "Elin Hilderbrand, Shelby Cunningham", "9780316567916", "9780316567916", 341},
+		{"different title no match", "Dune", 2026, "R. F. Kuang", "", "", 0},
+		{"year mismatch no match", "Taipei Story", 2025, "R. F. Kuang", "", "", 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := findSiblingBookID(cands, tt.title, tt.year, tt.author, tt.isbn13, "", tt.notesEAN)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestMergeBookItemsIdempotent(t *testing.T) {
+	a := &ScrapedItem{Source: "bookshop", Notes: "url=https://bookshop.org/p/books/x?ean=9780000000001"}
+	b := &ScrapedItem{Source: "bookshop", Notes: "url=https://bookshop.org/p/books/x?ean=9780000000001"}
+	mergeBookItems(a, b)
+	// Identical re-merge is a no-op.
+	assert.Equal(t, "url=https://bookshop.org/p/books/x?ean=9780000000001", a.Notes)
+	assert.Equal(t, "bookshop", a.Source)
+
+	// Merging a genuinely new source appends exactly once.
+	c := &ScrapedItem{Source: "bookmarks", Notes: "slug=x|isbn=9780000000001"}
+	mergeBookItems(a, c)
+	assert.Contains(t, a.Source, "bookmarks")
+	merged := a.Notes
+	mergeBookItems(a, c)
+	assert.Equal(t, merged, a.Notes)
+}

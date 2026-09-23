@@ -2,9 +2,9 @@ package process
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"strconv"
+	"time"
 
 	"github.com/pdfrg/wmdl/internal/config"
 	"github.com/pdfrg/wmdl/internal/db"
@@ -500,31 +500,26 @@ func (e *Executor) checkCollectionGaps(ctx context.Context, tmdbID int, colTMDBI
 		}
 
 		if c, cErr := e.db.GetLibraryCache(ctx, "tmdb-collection", strconv.Itoa(colTMDBID)); cErr == nil && c != nil {
-			var data struct {
-				Name   string `json:"name"`
-				Movies []struct {
-					TmdbID int    `json:"tmdb_id"`
-					Title  string `json:"title"`
-					Year   int    `json:"year"`
-				} `json:"movies"`
-			}
-			if json.Unmarshal([]byte(c.Details), &data) == nil {
-				for _, cm := range data.Movies {
-					if seen[cm.TmdbID] {
-						continue
-					}
-					if cm.TmdbID == tmdbID {
-						continue
-					}
-					if ex, ok := movieByTMDB[cm.TmdbID]; ok && ex.HasFile {
-						continue
-					}
-					missing = append(missing, library.RadarrMovie{
-						TMDBID: cm.TmdbID,
-						Title:  cm.Title,
-						Year:   cm.Year,
-					})
+			_, movies := parseCachedCollection(c.Details)
+			for _, cm := range movies {
+				if seen[cm.TmdbID] {
+					continue
 				}
+				if cm.TmdbID == tmdbID {
+					continue
+				}
+				if !collectionPartReleased(cm, time.Now()) {
+					e.log.Debug().Str("title", cm.Title).Int("tmdb", cm.TmdbID).Msg("collection movie not released, skipping")
+					continue
+				}
+				if ex, ok := movieByTMDB[cm.TmdbID]; ok && ex.HasFile {
+					continue
+				}
+				missing = append(missing, library.RadarrMovie{
+					TMDBID: cm.TmdbID,
+					Title:  cm.Title,
+					Year:   cm.Year,
+				})
 			}
 		}
 		if len(missing) == 0 {
@@ -542,6 +537,25 @@ func (e *Executor) checkCollectionGaps(ctx context.Context, tmdbID int, colTMDBI
 				addIt = PromptYesNo(ctx, fmt.Sprintf("    Collection %q: Add %s?", col.Name, m.Title))
 			}
 			if addIt {
+				// Already in Radarr (but fileless — file-having entries were
+				// filtered above): re-adding returns 400, so trigger a
+				// Radarr search instead and still queue for pre-search.
+				if ex, ok := movieByTMDB[m.TMDBID]; ok {
+					e.log.Info().Str("title", m.Title).Int("id", ex.ID).Msg("already in Radarr, triggering search instead of re-add")
+					if ex.ID > 0 {
+						if err := e.radarr.TriggerSearch(ctx, ex.ID); err != nil {
+							e.log.Warn().Err(err).Str("title", m.Title).Msg("error triggering Radarr search for collection movie")
+						}
+					}
+					phase3 = append(phase3, Phase3Movie{
+						Title:     m.Title,
+						Year:      m.Year,
+						TMDBID:    m.TMDBID,
+						ProfileID: profileID,
+						RootPath:  e.cfg.Library.Radarr.RootFolder,
+					})
+					continue
+				}
 				if _, err := e.radarr.Add(ctx, m.TMDBID, m.Title, m.Year, library.AddMovieOptions{
 					Monitored:           e.cfg.Library.Radarr.Monitor,
 					MinimumAvailability: "released",

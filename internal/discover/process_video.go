@@ -96,6 +96,31 @@ func (r *Runner) processItem(ctx context.Context, item ScrapedItem, progYear, pr
 		item.Year = enrich.Year
 	}
 
+	// FlixPatrol's "new to streaming" calendar also lists theatrical
+	// premieres (studio label, no platform badge). Verify movie claims
+	// against TMDB home-release dates so theatrical-only titles are not
+	// reported as streaming. Fail-open: any lookup/parsing problem keeps
+	// the item.
+	if item.MediaType == model.MediaTypeMovie && item.ReleaseType == model.ReleaseStreaming &&
+		strings.Contains(item.Source, "flixpatrol") && tmdbID > 0 && item.ReleaseDate != "" {
+		rdCtx, rdCancel := context.WithTimeout(ctx, 15*time.Second)
+		rd, rdErr := r.tmdb.GetMovieReleaseDates(rdCtx, tmdbID)
+		rdCancel()
+		if rdErr != nil {
+			r.log.Debug().Err(rdErr).Str("title", item.Title).Msg("TMDB release dates lookup failed, keeping item")
+		} else if !flixStreamingPlausible(rd, item.ReleaseDate) {
+			if home, ok := earliestHomeRelease(rd); ok {
+				r.log.Info().Str("title", item.Title).Str("claimed", item.ReleaseDate).
+					Str("home_release", home.Format("2006-01-02")).
+					Msg("theatrical-only, no streaming release yet, skipping")
+			} else {
+				r.log.Info().Str("title", item.Title).Str("claimed", item.ReleaseDate).
+					Msg("theatrical-only, no home release listed, skipping")
+			}
+			return nil
+		}
+	}
+
 	var imdbRating float64
 	var metacriticScore float64
 	var imdbVotes int64
@@ -332,9 +357,10 @@ func (r *Runner) processItem(ctx context.Context, item ScrapedItem, progYear, pr
 			coll, err := r.tmdb.GetCollection(ctx, enrich.CollectionID)
 			if err == nil && coll != nil && len(coll.Parts) > 0 {
 				type collPart struct {
-					TmdbID int    `json:"tmdb_id"`
-					Title  string `json:"title"`
-					Year   int    `json:"year"`
+					TmdbID      int    `json:"tmdb_id"`
+					Title       string `json:"title"`
+					Year        int    `json:"year"`
+					ReleaseDate string `json:"release_date"`
 				}
 				parts := make([]collPart, 0, len(coll.Parts))
 				for _, p := range coll.Parts {
@@ -344,7 +370,7 @@ func (r *Runner) processItem(ctx context.Context, item ScrapedItem, progYear, pr
 							year = 0
 						}
 					}
-					parts = append(parts, collPart{TmdbID: p.ID, Title: p.Title, Year: year})
+					parts = append(parts, collPart{TmdbID: p.ID, Title: p.Title, Year: year, ReleaseDate: p.ReleaseDate})
 				}
 				collJSON, _ := json.Marshal(map[string]any{
 					"name":   coll.Name,

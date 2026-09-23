@@ -3,11 +3,11 @@ package process
 import (
 	"bufio"
 	"context"
-	"encoding/json"
 	"fmt"
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/pdfrg/wmdl/internal/config"
 	"github.com/pdfrg/wmdl/internal/db"
@@ -59,29 +59,24 @@ func (e *Executor) ComputePhase3Candidates(ctx context.Context, events []db.Even
 			if existing == nil || existing.Collection == nil || existing.Collection.TMDBID == 0 {
 				if ev.Title.CollectionID > 0 {
 					if c, cErr := e.db.GetLibraryCache(ctx, "tmdb-collection", strconv.Itoa(ev.Title.CollectionID)); cErr == nil && c != nil {
-						var data struct {
-							Name   string `json:"name"`
-							Movies []struct {
-								TmdbID int    `json:"tmdb_id"`
-								Title  string `json:"title"`
-								Year   int    `json:"year"`
-							} `json:"movies"`
-						}
-						if json.Unmarshal([]byte(c.Details), &data) == nil {
-							for _, m := range data.Movies {
-								if m.TmdbID == tmdbID {
-									continue
-								}
-								if ex, ok := movieByTMDB[m.TmdbID]; ok && ex.HasFile {
-									continue
-								}
-								candidates = append(candidates, Phase3Candidate{
-									Title:     m.Title,
-									Year:      m.Year,
-									MediaType: model.MediaTypeMovie,
-									TmdbID:    m.TmdbID,
-								})
+						_, movies := parseCachedCollection(c.Details)
+						for _, m := range movies {
+							if m.TmdbID == tmdbID {
+								continue
 							}
+							if !collectionPartReleased(m, time.Now()) {
+								e.log.Debug().Str("title", m.Title).Int("tmdb", m.TmdbID).Msg("collection movie not released, skipping")
+								continue
+							}
+							if ex, ok := movieByTMDB[m.TmdbID]; ok && ex.HasFile {
+								continue
+							}
+							candidates = append(candidates, Phase3Candidate{
+								Title:     m.Title,
+								Year:      m.Year,
+								MediaType: model.MediaTypeMovie,
+								TmdbID:    m.TmdbID,
+							})
 						}
 					}
 				}

@@ -39,6 +39,119 @@ type TMDBTVSeason struct {
 	EpisodeCount int    `json:"episode_count"`
 }
 
+// TMDB release types from /movie/{id}/release_dates.
+const (
+	tmdbReleasePremiere          = 1
+	tmdbReleaseTheatricalLimited = 2
+	tmdbReleaseTheatrical        = 3
+	tmdbReleaseDigital           = 4
+	tmdbReleasePhysical          = 5
+	tmdbReleaseTV                = 6
+)
+
+// TMDBReleaseDates is a subset of /movie/{id}/release_dates.
+type TMDBReleaseDates struct {
+	Results []struct {
+		ISO31661     string `json:"iso_3166_1"`
+		ReleaseDates []struct {
+			ReleaseDate string `json:"release_date"`
+			Type        int    `json:"type"`
+		} `json:"release_dates"`
+	} `json:"results"`
+}
+
+// GetMovieReleaseDates fetches theatrical/digital/physical release dates.
+func (c *TMDBClient) GetMovieReleaseDates(ctx context.Context, tmdbID int) (*TMDBReleaseDates, error) {
+	if err := c.limiter.Wait(ctx); err != nil {
+		return nil, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("%s/movie/%d/release_dates", tmdbBase, tmdbID), nil)
+	if err != nil {
+		return nil, err
+	}
+	c.setAuth(req)
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("fetching TMDB release dates: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("TMDB release dates returned %d", resp.StatusCode)
+	}
+	var rd TMDBReleaseDates
+	if err := json.NewDecoder(resp.Body).Decode(&rd); err != nil {
+		return nil, err
+	}
+	return &rd, nil
+}
+
+// earliestHomeRelease returns the earliest digital/physical/TV release date
+// across all countries, or false when TMDB lists none.
+func earliestHomeRelease(rd *TMDBReleaseDates) (time.Time, bool) {
+	var best time.Time
+	found := false
+	for _, c := range rd.Results {
+		for _, r := range c.ReleaseDates {
+			if r.Type != tmdbReleaseDigital && r.Type != tmdbReleasePhysical && r.Type != tmdbReleaseTV {
+				continue
+			}
+			ds := r.ReleaseDate
+			if len(ds) < 10 {
+				continue
+			}
+			d, err := time.Parse("2006-01-02", ds[:10])
+			if err != nil {
+				continue
+			}
+			if !found || d.Before(best) {
+				best, found = d, true
+			}
+		}
+	}
+	return best, found
+}
+
+// hasCinemaRelease reports whether TMDB lists any premiere or theatrical
+// release for the movie.
+func hasCinemaRelease(rd *TMDBReleaseDates) bool {
+	for _, c := range rd.Results {
+		for _, r := range c.ReleaseDates {
+			if r.Type == tmdbReleasePremiere || r.Type == tmdbReleaseTheatricalLimited || r.Type == tmdbReleaseTheatrical {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// flixStreamingGrace is how far past FlixPatrol's claimed streaming date a
+// TMDB home release may fall while still counting as corroboration
+// (covers metadata lag and early drops).
+const flixStreamingGrace = 3 * 24 * time.Hour
+
+// flixStreamingPlausible reports whether TMDB release data corroborates a
+// FlixPatrol "new to streaming" claim dated claimedDate (YYYY-MM-DD).
+// Fail-open: unparseable dates, missing TMDB data, or no cinema record all
+// return true so genuinely-streaming titles are never dropped on metadata
+// gaps. Returns false only when TMDB positively shows a cinema release
+// with no home (digital/physical/TV) release within the grace window —
+// i.e. a theatrical-only title like Spider-Man: Brand New Day (listed by
+// FlixPatrol on Jul 28, theatrical Jul 31, digital Sep 29).
+func flixStreamingPlausible(rd *TMDBReleaseDates, claimedDate string) bool {
+	claimed, err := time.Parse("2006-01-02", claimedDate)
+	if err != nil || rd == nil {
+		return true
+	}
+	home, ok := earliestHomeRelease(rd)
+	if ok && !home.After(claimed.Add(flixStreamingGrace)) {
+		return true
+	}
+	if !hasCinemaRelease(rd) {
+		return true
+	}
+	return false
+}
+
 func (s *TMDBTVSeason) AirDatePassed() bool {
 	if s.AirDate == "" {
 		return false

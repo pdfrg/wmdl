@@ -273,40 +273,72 @@ func (r *Runner) processBookItem(ctx context.Context, item ScrapedItem, progYear
 	}
 
 	err := r.db.Transaction(ctx, func(tx *sql.Tx) error {
-		authorID, err := r.db.UpsertAuthorTx(ctx, tx, author)
-		if err != nil {
-			return fmt.Errorf("saving author: %w", err)
+		// Cross-run duplicate check: author strings and edition ISBNs vary
+		// between providers and runs, so look for an existing row for the
+		// same work before inserting a new book/author pair.
+		var bookID int64
+		for _, isbn := range []string{isbn13, isbn10, notesISBN} {
+			if isbn == "" {
+				continue
+			}
+			if eb, err := r.db.GetBookByISBNTx(ctx, tx, isbn); err != nil {
+				return fmt.Errorf("checking existing book by isbn: %w", err)
+			} else if eb != nil {
+				bookID = eb.ID
+				break
+			}
+		}
+		if bookID == 0 {
+			years := []int{releaseYear}
+			if releaseYear != 0 {
+				years = append(years, 0)
+			}
+			if cands, err := r.db.ListSiblingBookCandidatesTx(ctx, tx, years...); err != nil {
+				return fmt.Errorf("checking sibling books: %w", err)
+			} else if sib := findSiblingBookID(cands, title, releaseYear, authorName, isbn13, isbn10, notesISBN); sib != 0 {
+				r.log.Info().Str("book", title).Str("author", authorName).Int64("sibling_id", sib).
+					Msg("reusing existing book row for same work")
+				bookID = sib
+			}
 		}
 
-		book := &model.Book{
-			AuthorID:       authorID,
-			Title:          title,
-			Subtitle:       subtitle,
-			HardcoverID:    hcBookID,
-			HardcoverSlug:  hcSlug,
-			OLID:           olWorkID,
-			ISBN10:         isbn10,
-			ISBN13:         isbn13,
-			ASIN:           asin,
-			Pages:          pages,
-			AudioSeconds:   audioSeconds,
-			Description:    description,
-			ReleaseDate:    releaseDate,
-			ReleaseYear:    releaseYear,
-			Rating:         rating,
-			RatingsCount:   ratingsCount,
-			ShelvingsCount: shelvingsCount,
-			ImageURL:       imageURL,
-			Language:       language,
-			Publisher:      publisher,
-			Tags:           tags,
-			LiteraryType:   literaryType,
-			SeriesID:       seriesID,
-			SeriesName:     seriesName,
-		}
-		bookID, err := r.db.UpsertBookTx(ctx, tx, book)
-		if err != nil {
-			return fmt.Errorf("saving book: %w", err)
+		if bookID == 0 {
+			authorID, err := r.db.UpsertAuthorTx(ctx, tx, author)
+			if err != nil {
+				return fmt.Errorf("saving author: %w", err)
+			}
+
+			book := &model.Book{
+				AuthorID:       authorID,
+				Title:          title,
+				Subtitle:       subtitle,
+				HardcoverID:    hcBookID,
+				HardcoverSlug:  hcSlug,
+				OLID:           olWorkID,
+				ISBN10:         isbn10,
+				ISBN13:         isbn13,
+				ASIN:           asin,
+				Pages:          pages,
+				AudioSeconds:   audioSeconds,
+				Description:    description,
+				ReleaseDate:    releaseDate,
+				ReleaseYear:    releaseYear,
+				Rating:         rating,
+				RatingsCount:   ratingsCount,
+				ShelvingsCount: shelvingsCount,
+				ImageURL:       imageURL,
+				Language:       language,
+				Publisher:      publisher,
+				Tags:           tags,
+				LiteraryType:   literaryType,
+				SeriesID:       seriesID,
+				SeriesName:     seriesName,
+			}
+			var upErr error
+			bookID, upErr = r.db.UpsertBookTx(ctx, tx, book)
+			if upErr != nil {
+				return fmt.Errorf("saving book: %w", upErr)
+			}
 		}
 
 		existing, err := r.db.GetLatestBookReleaseEventTx(ctx, tx, bookID)
@@ -443,15 +475,20 @@ func mergeBookItems(a, b *ScrapedItem) {
 		}
 	}
 
-	var notesParts []string
-	if a.Notes != "" {
-		notesParts = append(notesParts, aSrc+":"+a.Notes)
-	}
+	// Idempotent notes merge: repeated discoveries of the same source must
+	// not duplicate notes (previously every merge re-prefixed the whole
+	// accumulated string, growing notes 2-4x as seen on End Times Fascism).
 	if b.Notes != "" {
-		notesParts = append(notesParts, bSrc+":"+b.Notes)
-	}
-	if len(notesParts) > 0 {
-		a.Notes = strings.Join(notesParts, "||")
+		frag := bSrc + ":" + b.Notes
+		if strings.Contains(a.Notes, frag) || strings.Contains(a.Notes, b.Notes) {
+			// Already merged; leave notes untouched.
+		} else if a.Notes == "" {
+			a.Notes = frag
+		} else if strings.Contains(a.Notes, "||") {
+			a.Notes = a.Notes + "||" + frag
+		} else {
+			a.Notes = aSrc + ":" + a.Notes + "||" + frag
+		}
 	}
 
 	if b.ImdbRating > a.ImdbRating {
@@ -675,10 +712,19 @@ var (
 	htmlBlankRe    = regexp.MustCompile(`\n{3,}`)
 
 	authorSpaceRe = regexp.MustCompile(`\s+`)
+	// authorRoleRe strips bracketed contributor roles: "Name (Translator)".
+	authorRoleRe = regexp.MustCompile(`\s*[\(\[][^\(\)\[\]]*(?:Translator|Narrator|Editor|Illustrator|Foreword|Introduction|Afterword)[^\(\)\[\]]*[\)\]]`)
+	// authorAndRe folds " and " contributor separators to commas.
+	authorAndRe = regexp.MustCompile(`(?i)\s+and\s+`)
+	// authorInitialRe expands cramped initials: "R.F. Kuang" -> "R. F. Kuang".
+	authorInitialRe = regexp.MustCompile(`\.([A-Za-z])`)
 )
 
 // normalizeAuthorName collapses runs of whitespace in an author name to a
-// single space and trims surrounding whitespace. Enrichment sources
+// single space and trims surrounding whitespace. It also normalizes
+// contributor separators (" & " and " and " become ", "), expands
+// initial punctuation ("R.F." becomes "R. F.") and strips bracketed
+// contributor roles (" (Translator)", " [Narrator]"). Enrichment sources
 // (especially the Hardcover API) occasionally return names with embedded
 // runs of spaces; storing them verbatim garbles review/process display and
 // breaks exact-name author dedup.
@@ -687,6 +733,10 @@ func normalizeAuthorName(s string) string {
 	if s == "" {
 		return s
 	}
+	s = authorRoleRe.ReplaceAllString(s, "")
+	s = strings.ReplaceAll(s, " & ", ", ")
+	s = authorAndRe.ReplaceAllString(s, ", ")
+	s = authorInitialRe.ReplaceAllString(s, ". $1")
 	return authorSpaceRe.ReplaceAllString(s, " ")
 }
 
@@ -786,6 +836,77 @@ func normalizeAuthorKey(s string) string {
 func sameBookAuthor(a, b string) bool {
 	na := normalizeAuthorKey(a)
 	return na != "" && na == normalizeAuthorKey(b)
+}
+
+// primaryAuthorName returns the first contributor of a (possibly
+// multi-contributor) author string: "Elin Hilderbrand, Shelby Cunningham"
+// -> "Elin Hilderbrand". Contributor separators are commas, ampersands,
+// semicolons and the word "and".
+func primaryAuthorName(s string) string {
+	s = strings.ReplaceAll(s, "&", ",")
+	s = strings.ReplaceAll(s, ";", ",")
+	s = authorAndRe.ReplaceAllString(s, ",")
+	if i := strings.Index(s, ","); i >= 0 {
+		s = s[:i]
+	}
+	return strings.TrimSpace(s)
+}
+
+// samePrimaryAuthor reports whether two author strings share the same first
+// contributor. This catches translator/narrator/co-author suffix variants
+// ("Elin Hilderbrand" vs "Elin Hilderbrand, Shelby Cunningham") that
+// sameBookAuthor rejects.
+func samePrimaryAuthor(a, b string) bool {
+	pa, pb := normalizeAuthorKey(primaryAuthorName(a)), normalizeAuthorKey(primaryAuthorName(b))
+	return pa != "" && pa == pb
+}
+
+// eventNotesContainEAN reports whether bookshop/bookmarks-style notes carry
+// the given EAN/ISBN (notes use ean=... / isbn=... fragments).
+func eventNotesContainEAN(notes, ean string) bool {
+	ean = strings.TrimSpace(ean)
+	if ean == "" {
+		return false
+	}
+	for _, part := range strings.Fields(notes) {
+		if strings.TrimPrefix(part, "ean=") == ean || strings.TrimPrefix(part, "isbn=") == ean {
+			return true
+		}
+		if strings.Contains(part, ean) && (strings.Contains(part, "ean=") || strings.Contains(part, "isbn=")) {
+			return true
+		}
+	}
+	return false
+}
+
+// findSiblingBookID looks for an existing book row denoting the same work as
+// the incoming scrape. Author strings and edition ISBNs vary between
+// providers and runs (translator/narrator suffixes, "R.F." vs "R. F.",
+// alternate edition ISBNs), so matching is by normalized title plus any of:
+// same author, same primary contributor, same ISBN-13/10, or same
+// bookshop EAN in the existing event notes. Years must match unless either
+// side is unknown (0). Returns 0 when no sibling exists.
+func findSiblingBookID(cands []db.SiblingBookCandidate, title string, releaseYear int, author, isbn13, isbn10, notesEAN string) int64 {
+	for _, c := range cands {
+		if c.ReleaseYear != 0 && releaseYear != 0 && c.ReleaseYear != releaseYear {
+			continue
+		}
+		if !sameBookTitle(c.Title, title) {
+			continue
+		}
+		if sameBookAuthor(c.AuthorName, author) || samePrimaryAuthor(c.AuthorName, author) {
+			return c.BookID
+		}
+		for _, isbn := range []string{isbn13, isbn10, notesEAN} {
+			if isbn == "" {
+				continue
+			}
+			if isbn == c.ISBN13 || isbn == c.ISBN10 || eventNotesContainEAN(c.EvtNotes, isbn) {
+				return c.BookID
+			}
+		}
+	}
+	return 0
 }
 
 // dedupeBookItems merges duplicate book items by normalized author+title,

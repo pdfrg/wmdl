@@ -263,6 +263,97 @@ func (d *DB) GetBookByISBN(ctx context.Context, isbn13 string) (*model.Book, err
 	return d.getBookByISBN(ctx, d.db, isbn13)
 }
 
+// GetBookByISBNTx finds a book by ISBN-13 or ISBN-10 within a transaction.
+// Empty input returns (nil, nil).
+func (d *DB) GetBookByISBNTx(ctx context.Context, tx *sql.Tx, isbn string) (*model.Book, error) {
+	isbn = strings.TrimSpace(isbn)
+	if isbn == "" {
+		return nil, nil
+	}
+	if b, err := d.getBookByISBN(ctx, tx, isbn); err != nil {
+		return nil, err
+	} else if b != nil {
+		return b, nil
+	}
+	var b model.Book
+	err := tx.QueryRowContext(ctx, `
+		SELECT id, author_id, title, subtitle, hardcover_id, hardcover_slug, olid, isbn10, isbn13, asin,
+		       pages, audio_seconds, description, release_date, release_year,
+		       rating, ratings_count, shelvings_count, image_url, language, publisher, tags, literary_type,
+		       series_id, series_name, created_at
+		FROM books WHERE isbn10 = ?
+	`, isbn).Scan(
+		&b.ID, &b.AuthorID, &b.Title, &b.Subtitle, &b.HardcoverID, &b.HardcoverSlug, &b.OLID,
+		&b.ISBN10, &b.ISBN13, &b.ASIN,
+		&b.Pages, &b.AudioSeconds, &b.Description, &b.ReleaseDate, &b.ReleaseYear,
+		&b.Rating, &b.RatingsCount, &b.ShelvingsCount, &b.ImageURL, &b.Language, &b.Publisher, &b.Tags, &b.LiteraryType,
+		&b.SeriesID, &b.SeriesName, &b.CreatedAt)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("querying book by isbn10: %w", err)
+	}
+	return &b, nil
+}
+
+// SiblingBookCandidate is an existing book row with its author name and
+// latest release event, used for cross-run duplicate detection when the
+// author string or edition ISBN varies between scrapes.
+type SiblingBookCandidate struct {
+	BookID      int64
+	AuthorID    int64
+	AuthorName  string
+	Title       string
+	ReleaseYear int
+	ISBN13      string
+	ISBN10      string
+	EvtSource   string
+	EvtNotes    string
+	EvtStatus   string
+}
+
+// ListSiblingBookCandidatesTx lists book rows published in any of the given
+// release years (pass 0 to include year-unknown rows) for duplicate matching.
+// The books table is small; callers filter in Go with sameBookTitle/
+// sameBookAuthor semantics that SQL cannot express.
+func (d *DB) ListSiblingBookCandidatesTx(ctx context.Context, tx *sql.Tx, years ...int) ([]SiblingBookCandidate, error) {
+	if len(years) == 0 {
+		return nil, nil
+	}
+	placeholders := strings.Repeat(",?", len(years)-1)
+	args := make([]any, 0, len(years))
+	for _, y := range years {
+		args = append(args, y)
+	}
+	rows, err := tx.QueryContext(ctx, `
+		SELECT b.id, b.author_id, a.name, b.title, b.release_year, b.isbn13, b.isbn10,
+		       COALESCE(e.source, ''), COALESCE(e.notes, ''), COALESCE(e.status, '')
+		FROM books b
+		JOIN authors a ON a.id = b.author_id
+		LEFT JOIN book_release_events e ON e.id = (
+			SELECT MAX(id) FROM book_release_events WHERE book_id = b.id
+		)
+		WHERE b.release_year IN (?`+placeholders+`)`, args...)
+	if err != nil {
+		return nil, fmt.Errorf("listing sibling book candidates: %w", err)
+	}
+	defer rows.Close()
+	var out []SiblingBookCandidate
+	for rows.Next() {
+		var c SiblingBookCandidate
+		if err := rows.Scan(&c.BookID, &c.AuthorID, &c.AuthorName, &c.Title,
+			&c.ReleaseYear, &c.ISBN13, &c.ISBN10, &c.EvtSource, &c.EvtNotes, &c.EvtStatus); err != nil {
+			return nil, fmt.Errorf("scanning sibling book candidate: %w", err)
+		}
+		out = append(out, c)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterating sibling book candidates: %w", err)
+	}
+	return out, nil
+}
+
 func (d *DB) getBookByHardcoverID(ctx context.Context, q querier, hcID int) (*model.Book, error) {
 	if hcID <= 0 {
 		return nil, nil
