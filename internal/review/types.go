@@ -335,9 +335,19 @@ func (it *itemState) bookSeriesStr(dbCache map[string]*db.LibraryCache) string {
 	return fmt.Sprintf("Series: %s (%d/%d)", label, owned, len(members))
 }
 
+// posterReadyMsg carries the loaded poster together with the poster key it
+// belongs to. The key lets the TUI drop results for items the user has already
+// scrolled past instead of rendering whatever load happened to finish last.
 type posterReadyMsg struct {
+	key string
 	img image.Image
 	err error
+}
+
+// posterDebounceMsg fires after the user stops moving the cursor, so a burst
+// of navigation keys issues a single poster load for the item they settled on.
+type posterDebounceMsg struct {
+	key string
 }
 
 func buildLibraryCacheMap(database *db.DB, events []db.EventWithTitle, albumEvents []db.EventWithAlbumRelease, bookEvents []db.EventWithBook) map[string]*db.LibraryCache {

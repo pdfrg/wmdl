@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os/exec"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -30,6 +31,10 @@ type TUI struct {
 	err               error
 	posterImg         image.Image
 	posterMode        PosterMode
+	posterKey         string                 // key of the poster currently displayed ("" = none)
+	posterPending     string                 // key with a debounce timer or load in flight
+	posterCache       map[string]image.Image // decoded posters, keyed by posterKeyFor
+	posterFailed      map[string]bool        // keys whose load failed, not retried
 	flashMsg          string
 	vpConfirm         viewport.Model
 	filter            model.MediaType // "" = all, "movie" or "tv"
@@ -93,6 +98,8 @@ func NewReviewTUIWithEvents(events []db.EventWithTitle, albumEvents []db.EventWi
 		prevAnimeWeek:     prevAnimeWeek,
 		libraryCache:      buildLibraryCacheMap(database, events, albumEvents, bookEvents),
 		defaultBookFormat: defaultBookFormat,
+		posterCache:       make(map[string]image.Image),
+		posterFailed:      make(map[string]bool),
 	}
 
 	t.rebuildFiltered()
@@ -159,7 +166,7 @@ func (t *TUI) Counts() (approved, rejected, pending, downloaded int) {
 }
 
 func (t *TUI) Init() tea.Cmd {
-	return t.loadCurrentPosterCmd()
+	return t.schedulePosterCmd()
 }
 
 func (t *TUI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -173,13 +180,35 @@ func (t *TUI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return t, t.renderPosterCmd()
 
-	case posterReadyMsg:
-		if msg.err == nil {
-			t.posterImg = msg.img
-			return t, t.renderPosterCmd()
+	case posterDebounceMsg:
+		// The user moved on before the debounce elapsed: let the newer
+		// schedule (which already owns the current item) win.
+		if msg.key != t.currentPosterKey() {
+			return t, nil
 		}
-		t.posterImg = nil
-		return t, t.clearPosterCmd()
+		if t.posterPending == msg.key {
+			t.posterPending = ""
+		}
+		return t, t.loadPosterCmd(msg.key)
+
+	case posterReadyMsg:
+		// Stale result for an item the user has already scrolled past.
+		if msg.key == "" || msg.key != t.currentPosterKey() {
+			return t, nil
+		}
+		if t.posterPending == msg.key {
+			t.posterPending = ""
+		}
+		if msg.err != nil {
+			t.posterFailed[msg.key] = true
+			t.posterKey = msg.key
+			t.posterImg = nil
+			return t, t.clearPosterCmd()
+		}
+		t.posterCache[msg.key] = msg.img
+		t.posterKey = msg.key
+		t.posterImg = msg.img
+		return t, t.renderPosterCmd()
 
 	case tea.KeyPressMsg:
 		switch t.phase {
@@ -193,66 +222,139 @@ func (t *TUI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return t, nil
 }
 
-func (t *TUI) loadCurrentPosterCmd() tea.Cmd {
-	it := t.currentItem()
+// posterDebounceDelay is how long the cursor must rest before a poster load is
+// issued. Rapid scrolling therefore triggers one load (for the settled item)
+// instead of one per keypress.
+const posterDebounceDelay = 120 * time.Millisecond
+
+// currentPosterKey returns the poster key for the item under the cursor, or ""
+// when that item has no poster.
+func (t *TUI) currentPosterKey() string {
+	return posterKeyFor(t.currentItem())
+}
+
+// posterKeyFor builds a stable identity for an item's poster so loads can be
+// matched against the item the cursor is actually on.
+func posterKeyFor(it *itemState) string {
 	if it == nil {
-		return t.clearPosterCmd()
+		return ""
 	}
 	switch {
 	case it.bookEvent != nil:
-		if it.bookEvent.Book.ImageURL == "" {
-			return t.clearPosterCmd()
+		b := it.bookEvent.Book
+		switch {
+		case b.ImageURL != "":
+			return "book:url:" + b.ImageURL
+		case b.ISBN13 != "":
+			return "book:isbn13:" + b.ISBN13
+		case b.ASIN != "":
+			return "book:asin:" + b.ASIN
+		case b.OLID != "":
+			return "book:olid:" + b.OLID
 		}
+		return ""
 	case it.albumEvent != nil:
-		if it.albumEvent.Release.PosterPath == "" {
-			return t.clearPosterCmd()
+		r := it.albumEvent.Release
+		switch {
+		case r.PosterPath != "":
+			return "album:url:" + r.PosterPath
+		case r.MBID != "":
+			return "album:mbid:" + r.MBID
 		}
+		return ""
 	default:
-		if it.event.Title.PosterPath == "" {
-			return t.clearPosterCmd()
+		tl := it.event.Title
+		if tl == nil || tl.PosterPath == "" {
+			return ""
 		}
+		if tl.MalID > 0 {
+			return "anime:mal:" + strconv.Itoa(tl.MalID)
+		}
+		if tl.TmdbID > 0 {
+			return "tmdb:" + strconv.Itoa(tl.TmdbID)
+		}
+		return ""
 	}
-	return t.loadPosterCmd()
 }
 
-func (t *TUI) loadPosterCmd() tea.Cmd {
+// schedulePosterCmd is called after every cursor/filter change. It serves the
+// poster from the in-memory cache when possible, otherwise schedules a
+// debounced load for the item the cursor is on.
+func (t *TUI) schedulePosterCmd() tea.Cmd {
 	if t.posterMode == PosterOff {
 		return nil
 	}
+	if t.posterCache == nil {
+		t.posterCache = make(map[string]image.Image)
+	}
+	if t.posterFailed == nil {
+		t.posterFailed = make(map[string]bool)
+	}
+
+	key := t.currentPosterKey()
+	if key == "" {
+		t.posterPending = ""
+		if t.posterKey == "" && t.posterImg == nil {
+			return nil
+		}
+		t.posterKey = ""
+		t.posterImg = nil
+		return t.clearPosterCmd()
+	}
+
+	if key == t.posterKey {
+		return nil // already showing the right poster
+	}
+
+	t.posterImg = nil // item changed: drop the stale image while we load
+
+	if img, ok := t.posterCache[key]; ok {
+		t.posterKey = key
+		t.posterImg = img
+		return t.renderPosterCmd()
+	}
+	if t.posterFailed[key] {
+		t.posterKey = key
+		return nil
+	}
+	if t.posterPending == key {
+		return nil // debounce timer or load already in flight for this key
+	}
+
+	t.posterPending = key
+	return tea.Tick(posterDebounceDelay, func(time.Time) tea.Msg {
+		return posterDebounceMsg{key: key}
+	})
+}
+
+// loadPosterCmd loads the poster for key, which must be the current item's key.
+// The returned message is stamped with the key so Update can discard it if the
+// user has moved on in the meantime.
+func (t *TUI) loadPosterCmd(key string) tea.Cmd {
+	if t.posterMode == PosterOff || key == "" {
+		return nil
+	}
 	it := t.currentItem()
-	if it == nil {
+	if it == nil || posterKeyFor(it) != key {
 		return nil
 	}
 
-	var imageURL string
+	var fetch func() (image.Image, error)
 	switch {
 	case it.bookEvent != nil:
-		imageURL = it.bookEvent.Book.ImageURL
+		imageURL := it.bookEvent.Book.ImageURL
+		fetch = func() (image.Image, error) { return getAlbumPosterImage(imageURL) }
 	case it.albumEvent != nil:
-		imageURL = it.albumEvent.Release.PosterPath
+		imageURL := it.albumEvent.Release.PosterPath
+		fetch = func() (image.Image, error) { return getAlbumPosterImage(imageURL) }
 	default:
 		tl := it.event.Title
-		if tl.PosterPath != "" {
-			return func() tea.Msg {
-				img, err := getPosterImage(tl)
-				if err != nil {
-					return posterReadyMsg{err: err}
-				}
-				return posterReadyMsg{img: img}
-			}
-		}
-		return t.clearPosterCmd()
+		fetch = func() (image.Image, error) { return getPosterImage(tl) }
 	}
 
-	if imageURL == "" {
-		return t.clearPosterCmd()
-	}
 	return func() tea.Msg {
-		img, err := getAlbumPosterImage(imageURL)
-		if err != nil {
-			return posterReadyMsg{err: err}
-		}
-		return posterReadyMsg{img: img}
+		img, err := fetch()
+		return posterReadyMsg{key: key, img: img, err: err}
 	}
 }
 
@@ -408,42 +510,36 @@ func (t *TUI) updateReview(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case "j", "down":
 		if t.cursor < len(t.filtered)-1 {
 			t.cursor++
-			t.posterImg = nil
-			return t, t.loadCurrentPosterCmd()
+			return t, t.schedulePosterCmd()
 		}
 
 	case "k", "up":
 		if t.cursor > 0 {
 			t.cursor--
-			t.posterImg = nil
-			return t, t.loadCurrentPosterCmd()
+			return t, t.schedulePosterCmd()
 		}
 
 	case "g", "home":
 		t.cursor = 0
-		t.posterImg = nil
-		return t, t.loadCurrentPosterCmd()
+		return t, t.schedulePosterCmd()
 
 	case "G", "end":
 		t.cursor = len(t.filtered) - 1
-		t.posterImg = nil
-		return t, t.loadCurrentPosterCmd()
+		return t, t.schedulePosterCmd()
 
 	case "pgup":
 		t.cursor -= 5
 		if t.cursor < 0 {
 			t.cursor = 0
 		}
-		t.posterImg = nil
-		return t, t.loadCurrentPosterCmd()
+		return t, t.schedulePosterCmd()
 
 	case "pgdown":
 		t.cursor += 5
 		if t.cursor >= len(t.filtered) {
 			t.cursor = len(t.filtered) - 1
 		}
-		t.posterImg = nil
-		return t, t.loadCurrentPosterCmd()
+		return t, t.schedulePosterCmd()
 
 	case "a":
 		return t.approveCurrent()
@@ -462,8 +558,7 @@ func (t *TUI) updateReview(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			t.filter = model.MediaTypeMovie
 		}
 		t.rebuildFiltered()
-		t.posterImg = nil
-		return t, t.loadCurrentPosterCmd()
+		return t, t.schedulePosterCmd()
 
 	case "t":
 		t.filterUndecided = false
@@ -473,8 +568,7 @@ func (t *TUI) updateReview(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			t.filter = model.MediaTypeTV
 		}
 		t.rebuildFiltered()
-		t.posterImg = nil
-		return t, t.loadCurrentPosterCmd()
+		return t, t.schedulePosterCmd()
 
 	case "b":
 		t.filterUndecided = false
@@ -484,8 +578,7 @@ func (t *TUI) updateReview(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			t.filter = model.MediaTypeBook
 		}
 		t.rebuildFiltered()
-		t.posterImg = nil
-		return t, t.loadCurrentPosterCmd()
+		return t, t.schedulePosterCmd()
 
 	case "l":
 		t.filterUndecided = false
@@ -495,8 +588,7 @@ func (t *TUI) updateReview(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			t.filter = model.MediaTypeMusic
 		}
 		t.rebuildFiltered()
-		t.posterImg = nil
-		return t, t.loadCurrentPosterCmd()
+		return t, t.schedulePosterCmd()
 
 	case "e":
 		t.filterUndecided = false
@@ -506,14 +598,12 @@ func (t *TUI) updateReview(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			t.filter = model.MediaTypeAnime
 		}
 		t.rebuildFiltered()
-		t.posterImg = nil
-		return t, t.loadCurrentPosterCmd()
+		return t, t.schedulePosterCmd()
 
 	case "n":
 		t.filterUndecided = !t.filterUndecided
 		t.rebuildFiltered()
-		t.posterImg = nil
-		return t, t.loadCurrentPosterCmd()
+		return t, t.schedulePosterCmd()
 
 	case "o":
 		it := t.currentItem()
@@ -601,9 +691,8 @@ func (t *TUI) updateReview(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 				t.filterUndecided = true
 				t.rebuildFiltered()
 				t.cursor = 0
-				t.posterImg = nil
 				t.flashMsg = fmt.Sprintf("%d title(s) need a decision — make choices, then press Enter again", re)
-				return t, t.loadCurrentPosterCmd()
+				return t, t.schedulePosterCmd()
 			}
 			t.flashMsg = fmt.Sprintf("%d title(s) still need a decision", re)
 			return t, nil
@@ -733,7 +822,7 @@ func (t *TUI) updateConfirm(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 
 	case "n":
 		t.phase = phaseReview
-		return t, t.loadCurrentPosterCmd()
+		return t, t.schedulePosterCmd()
 	}
 
 	return t, nil
