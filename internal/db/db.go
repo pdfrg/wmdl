@@ -88,6 +88,7 @@ func (d *DB) Migrate(ctx context.Context) error {
 		us_rating         TEXT DEFAULT '',
 		original_language TEXT DEFAULT '',
 		origin_country    TEXT DEFAULT '',
+		networks          TEXT DEFAULT '',
 		overview          TEXT DEFAULT '',
 		genres            TEXT DEFAULT '',
 		runtime           INTEGER DEFAULT 0,
@@ -442,6 +443,7 @@ func (d *DB) Migrate(ctx context.Context) error {
 	d.migrateExec(ctx, `ALTER TABLE titles ADD COLUMN poster_path TEXT DEFAULT ''`)
 	d.migrateExec(ctx, `ALTER TABLE titles ADD COLUMN original_language TEXT DEFAULT ''`)
 	d.migrateExec(ctx, `ALTER TABLE titles ADD COLUMN origin_country TEXT DEFAULT ''`)
+	d.migrateExec(ctx, `ALTER TABLE titles ADD COLUMN networks TEXT DEFAULT ''`)
 	d.migrateExec(ctx, `ALTER TABLE titles ADD COLUMN tmdb_title TEXT DEFAULT ''`)
 
 	d.migrateExec(ctx, `ALTER TABLE titles ADD COLUMN anime_type TEXT NOT NULL DEFAULT ''`)

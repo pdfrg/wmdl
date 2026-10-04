@@ -664,6 +664,9 @@ func (t *TUI) buildRightContent(tl *model.Title, ev *model.ReleaseEvent, rw int,
 
 	if hasFirstMeta(tl) {
 		var parts []string
+		if tl.Networks != "" {
+			parts = append(parts, tl.Networks)
+		}
 		if tl.OriginCountry != "" {
 			for _, c := range strings.Split(tl.OriginCountry, ",") {
 				if flag := countryFlag(c); flag != "" {

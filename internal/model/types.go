@@ -63,6 +63,7 @@ type Title struct {
 	USRating            string
 	OriginalLanguage    string
 	OriginCountry       string
+	Networks            string // TV networks / movie studios, comma-separated (max 3)
 	Overview            string
 	Genres              string
 	Runtime             int

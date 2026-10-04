@@ -221,6 +221,7 @@ func (r *Runner) processItem(ctx context.Context, item ScrapedItem, progYear, pr
 	tmdbTitle := ""
 	collectionID := 0
 	collectionName := ""
+	networks := item.Networks
 	if enrich != nil {
 		tvdbID = enrich.TVDBID
 		tmdbTitle = enrich.Title
@@ -232,6 +233,9 @@ func (r *Runner) processItem(ctx context.Context, item ScrapedItem, progYear, pr
 		originCountry = enrich.OriginCountry
 		collectionID = enrich.CollectionID
 		collectionName = enrich.CollectionName
+		if enrich.Networks != "" {
+			networks = enrich.Networks
+		}
 	}
 
 	title := &model.Title{
@@ -266,6 +270,7 @@ func (r *Runner) processItem(ctx context.Context, item ScrapedItem, progYear, pr
 		OriginCountry:       originCountry,
 		CollectionID:        collectionID,
 		CollectionName:      collectionName,
+		Networks:            networks,
 	}
 
 	cf := &r.cfg.MediaTypes.Movies.Filter

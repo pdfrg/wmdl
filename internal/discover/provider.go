@@ -44,6 +44,7 @@ type ScrapedItem struct {
 	Overview        string
 	USRating        string
 	Genres          string
+	Networks        string // TV network(s) / movie studio(s), comma-separated (max 3)
 	MalID           int
 
 	// Book-specific fields (empty for non-book)

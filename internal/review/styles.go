@@ -17,7 +17,7 @@ var reviewMetaParen = regexp.MustCompile(`(?i)\s*\((season\s+\d+|complete\s+.*|s
 
 func hasFirstMeta(tl *model.Title) bool {
 	return tl.USRating != "" || tl.Genres != "" || tl.Runtime > 0 ||
-		tl.OriginalLanguage != "" || tl.OriginCountry != ""
+		tl.OriginalLanguage != "" || tl.OriginCountry != "" || tl.Networks != ""
 }
 
 func fmtRating(v float64) string {

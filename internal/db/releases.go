@@ -106,7 +106,7 @@ func (d *DB) ListPendingWithTitles(ctx context.Context) ([]EventWithTitle, error
 		t.id, t.tmdb_id, t.tvdb_id, t.mal_id, t.title, t.tmdb_title, t.year, t.media_type, t.imdb_id,
 		       t.imdb_rating, t.imdb_votes, t.awards, t.box_office, t.director, t.writer, t.actors, t.rt_url, t.rt_critics_score, t.rt_audience_score, t.rt_audience_real_score, t.rt_real_votes,
 		       t.tmdb_rating, t.metacritic_score, t.us_rating,
-		       t.original_language, t.origin_country,
+		       t.original_language, t.origin_country, t.networks,
 		       t.yt_trailer_views, t.overview, t.genres, t.runtime, t.poster_path, t.created_at,
 		       t.anime_type, t.anime_episodes, t.anime_status, t.anime_members, t.anime_rank,
 		       t.anime_source, t.anime_studio, t.themes, t.demographics, t.streaming, t.collection_id, t.collection_name
@@ -130,7 +130,7 @@ func (d *DB) ListApprovedWithTitles(ctx context.Context) ([]EventWithTitle, erro
 		t.id, t.tmdb_id, t.tvdb_id, t.mal_id, t.title, t.tmdb_title, t.year, t.media_type, t.imdb_id,
 		       t.imdb_rating, t.imdb_votes, t.awards, t.box_office, t.director, t.writer, t.actors, t.rt_url, t.rt_critics_score, t.rt_audience_score, t.rt_audience_real_score, t.rt_real_votes,
 		       t.tmdb_rating, t.metacritic_score, t.us_rating,
-		       t.original_language, t.origin_country,
+		       t.original_language, t.origin_country, t.networks,
 		       t.yt_trailer_views, t.overview, t.genres, t.runtime, t.poster_path, t.created_at,
 		       t.anime_type, t.anime_episodes, t.anime_status, t.anime_members, t.anime_rank,
 		       t.anime_source, t.anime_studio, t.themes, t.demographics, t.streaming, t.collection_id, t.collection_name
@@ -225,7 +225,7 @@ func (d *DB) ListEventsByWeekWithTitles(ctx context.Context, year, week int) ([]
 		t.id, t.tmdb_id, t.tvdb_id, t.mal_id, t.title, t.tmdb_title, t.year, t.media_type, t.imdb_id,
 		       t.imdb_rating, t.imdb_votes, t.awards, t.box_office, t.director, t.writer, t.actors, t.rt_url, t.rt_critics_score, t.rt_audience_score, t.rt_audience_real_score, t.rt_real_votes,
 		       t.tmdb_rating, t.metacritic_score, t.us_rating,
-		       t.original_language, t.origin_country,
+		       t.original_language, t.origin_country, t.networks,
 		       t.yt_trailer_views, t.overview, t.genres, t.runtime, t.poster_path, t.created_at,
 		       t.anime_type, t.anime_episodes, t.anime_status, t.anime_members, t.anime_rank,
 		       t.anime_source, t.anime_studio, t.themes, t.demographics, t.streaming, t.collection_id, t.collection_name
@@ -261,7 +261,7 @@ func (d *DB) ListEventsByWeekAndStatus(ctx context.Context, year, week int, stat
 		t.id, t.tmdb_id, t.tvdb_id, t.mal_id, t.title, t.tmdb_title, t.year, t.media_type, t.imdb_id,
 		       t.imdb_rating, t.imdb_votes, t.awards, t.box_office, t.director, t.writer, t.actors, t.rt_url, t.rt_critics_score, t.rt_audience_score, t.rt_audience_real_score, t.rt_real_votes,
 		       t.tmdb_rating, t.metacritic_score, t.us_rating,
-		       t.original_language, t.origin_country,
+		       t.original_language, t.origin_country, t.networks,
 		       t.yt_trailer_views, t.overview, t.genres, t.runtime, t.poster_path, t.created_at,
 		       t.anime_type, t.anime_episodes, t.anime_status, t.anime_members, t.anime_rank,
 		       t.anime_source, t.anime_studio, t.themes, t.demographics, t.streaming, t.collection_id, t.collection_name
@@ -288,7 +288,7 @@ func (d *DB) GetReleaseEventWithTitle(ctx context.Context, id int64) (*EventWith
 		t.id, t.tmdb_id, t.tvdb_id, t.mal_id, t.title, t.tmdb_title, t.year, t.media_type, t.imdb_id,
 		       t.imdb_rating, t.imdb_votes, t.awards, t.box_office, t.director, t.writer, t.actors, t.rt_url, t.rt_critics_score, t.rt_audience_score, t.rt_audience_real_score, t.rt_real_votes,
 		       t.tmdb_rating, t.metacritic_score, t.us_rating,
-		       t.original_language, t.origin_country,
+		       t.original_language, t.origin_country, t.networks,
 		       t.yt_trailer_views, t.overview, t.genres, t.runtime, t.poster_path, t.created_at,
 		       t.anime_type, t.anime_episodes, t.anime_status, t.anime_members, t.anime_rank,
 		       t.anime_source, t.anime_studio, t.themes, t.demographics, t.streaming, t.collection_id, t.collection_name
@@ -307,7 +307,7 @@ func (d *DB) GetReleaseEventWithTitle(ctx context.Context, id int64) (*EventWith
 		&tl.ID, &tl.TmdbID, &tl.TvdbID, &tl.MalID, &tl.Title, &tl.TmdbTitle, &tl.Year, &tlMediaType,
 		&tl.ImdbID, &tl.ImdbRating, &tl.ImdbVotes, &tl.Awards, &tl.BoxOffice, &tl.Director, &tl.Writer, &tl.Actors, &tl.RTURL, &tl.RTCriticsScore, &tl.RTAudienceScore, &tl.RTAudienceRealScore, &tl.RTRealVotes,
 		&tl.TmdbRating, &tl.MetacriticScore, &tl.USRating,
-		&tl.OriginalLanguage, &tl.OriginCountry,
+		&tl.OriginalLanguage, &tl.OriginCountry, &tl.Networks,
 		&tl.YoutubeViews, &tl.Overview, &tl.Genres, &tl.Runtime, &tl.PosterPath, &tlCreated,
 		&tl.AnimeType, &tl.AnimeEpisodes, &tl.AnimeStatus, &tl.AnimeMembers, &tl.AnimeRank,
 		&tl.AnimeSource, &tl.AnimeStudio, &tl.Themes, &tl.Demographics, &tl.Streaming,
@@ -508,7 +508,7 @@ func scanEventWithTitleRows(rows *sql.Rows) ([]EventWithTitle, error) {
 			&tl.ID, &tl.TmdbID, &tl.TvdbID, &tl.MalID, &tl.Title, &tl.TmdbTitle, &tl.Year, &tlMediaType,
 			&tl.ImdbID, &tl.ImdbRating, &tl.ImdbVotes, &tl.Awards, &tl.BoxOffice, &tl.Director, &tl.Writer, &tl.Actors, &tl.RTURL, &tl.RTCriticsScore, &tl.RTAudienceScore, &tl.RTAudienceRealScore, &tl.RTRealVotes,
 			&tl.TmdbRating, &tl.MetacriticScore, &tl.USRating,
-			&tl.OriginalLanguage, &tl.OriginCountry,
+			&tl.OriginalLanguage, &tl.OriginCountry, &tl.Networks,
 			&tl.YoutubeViews, &tl.Overview, &tl.Genres, &tl.Runtime, &tl.PosterPath, &tlCreated,
 			&tl.AnimeType, &tl.AnimeEpisodes, &tl.AnimeStatus, &tl.AnimeMembers, &tl.AnimeRank,
 			&tl.AnimeSource, &tl.AnimeStudio, &tl.Themes, &tl.Demographics, &tl.Streaming,

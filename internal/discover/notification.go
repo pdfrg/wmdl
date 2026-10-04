@@ -189,6 +189,22 @@ func (r *Runner) sendNotification(ctx context.Context, wantMovie, wantTV, wantAn
 		}
 	}
 
+	// Best-effort: fill in TV network / movie studio from the titles table
+	// (populated during processItem TMDB enrichment). Items without a TMDB
+	// ID (e.g. web-scraped) keep no suffix rather than failing the notify.
+	fillNetworks := func(items []ScrapedItem) {
+		for i, item := range items {
+			if item.Networks != "" || item.TmdbID <= 0 {
+				continue
+			}
+			if t, err := r.db.GetTitleByTmdbID(ctx, item.TmdbID); err == nil && t != nil {
+				items[i].Networks = t.Networks
+			}
+		}
+	}
+	fillNetworks(movieItems)
+	fillNetworks(tvItems)
+
 	appendSection := func(items []ScrapedItem, heading string, includeArtist bool) {
 		if len(items) == 0 {
 			return
@@ -200,10 +216,12 @@ func (r *Runner) sendNotification(ctx context.Context, wantMovie, wantTV, wantAn
 				label = item.ArtistName + " — " + label
 			}
 			if item.Year > 0 {
-				msg += fmt.Sprintf("\n- %s (%d)", label, item.Year)
-			} else {
-				msg += fmt.Sprintf("\n- %s", label)
+				label = fmt.Sprintf("%s (%d)", label, item.Year)
 			}
+			if item.Networks != "" {
+				label += " [" + item.Networks + "]"
+			}
+			msg += "\n- " + label
 		}
 	}
 

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 )
 
@@ -159,13 +160,59 @@ func (s *TMDBTVSeason) AirDatePassed() bool {
 	return s.AirDate <= time.Now().Format("2006-01-02")
 }
 
+// TMDBNetwork is a TV network from /tv/{id} (e.g. Netflix, HBO).
+type TMDBNetwork struct {
+	ID   int    `json:"id"`
+	Name string `json:"name"`
+}
+
+// TMDBCompany is a production company from /movie/{id}
+// (e.g. A24, Warner Bros.).
+type TMDBCompany struct {
+	ID   int    `json:"id"`
+	Name string `json:"name"`
+}
+
+// joinTMDBNames joins up to maxNames names with ", " (cap at 3 keeps
+// review/notification lines readable).
+func joinTMDBNames(names []string, maxNames int) string {
+	if len(names) > maxNames {
+		names = names[:maxNames]
+	}
+	return strings.Join(names, ", ")
+}
+
+// NetworkNames returns the TV network names, capped at 3.
+func (d *TMDBDetails) NetworkNames() string {
+	names := make([]string, 0, len(d.Networks))
+	for _, n := range d.Networks {
+		if n.Name != "" {
+			names = append(names, n.Name)
+		}
+	}
+	return joinTMDBNames(names, 3)
+}
+
+// StudioNames returns the movie production company names, capped at 3.
+func (d *TMDBDetails) StudioNames() string {
+	names := make([]string, 0, len(d.ProductionCompanies))
+	for _, c := range d.ProductionCompanies {
+		if c.Name != "" {
+			names = append(names, c.Name)
+		}
+	}
+	return joinTMDBNames(names, 3)
+}
+
 type TMDBDetails struct {
-	Title        string `json:"title,omitempty"`
-	Name         string `json:"name,omitempty"`
-	ReleaseDate  string `json:"release_date,omitempty"`
-	FirstAirDate string `json:"first_air_date,omitempty"`
-	Overview     string `json:"overview"`
-	Genres       []struct {
+	Title               string        `json:"title,omitempty"`
+	Name                string        `json:"name,omitempty"`
+	ReleaseDate         string        `json:"release_date,omitempty"`
+	FirstAirDate        string        `json:"first_air_date,omitempty"`
+	Overview            string        `json:"overview"`
+	Networks            []TMDBNetwork `json:"networks,omitempty"`
+	ProductionCompanies []TMDBCompany `json:"production_companies,omitempty"`
+	Genres              []struct {
 		ID   int    `json:"id"`
 		Name string `json:"name"`
 	} `json:"genres"`

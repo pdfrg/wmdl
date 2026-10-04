@@ -53,6 +53,7 @@ type TMDBEnrichment struct {
 	PosterPath       string
 	OriginalLanguage string
 	OriginCountry    string
+	Networks         string // TV networks / movie studios, comma-separated (max 3)
 	CollectionID     int
 	CollectionName   string
 }
@@ -260,6 +261,12 @@ func (c *TMDBClient) enrichWithPrefs(ctx context.Context, query string, year int
 			enrich.CollectionID = details.BelongsToCollection.ID
 			enrich.CollectionName = details.BelongsToCollection.Name
 		}
+
+		if enrich.MediaType == "movie" {
+			enrich.Networks = details.StudioNames()
+		} else {
+			enrich.Networks = details.NetworkNames()
+		}
 	}
 
 	return enrich, nil
@@ -302,6 +309,11 @@ func (c *TMDBClient) enrichByID(ctx context.Context, tmdbID int, mediaType strin
 		if mediaType == "movie" && details.BelongsToCollection != nil {
 			enrich.CollectionID = details.BelongsToCollection.ID
 			enrich.CollectionName = details.BelongsToCollection.Name
+		}
+		if mediaType == "movie" {
+			enrich.Networks = details.StudioNames()
+		} else {
+			enrich.Networks = details.NetworkNames()
 		}
 		enrich.PosterPath = details.PosterPath
 	}
