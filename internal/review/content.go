@@ -663,10 +663,14 @@ func (t *TUI) buildRightContent(tl *model.Title, ev *model.ReleaseEvent, rw int,
 	}
 
 	if hasFirstMeta(tl) {
-		var parts []string
+		// Networks/studios get their own line above the rest — the combined
+		// line regularly overflowed the panel (e.g. 3 studio names plus
+		// genres). Wrapped to panel width as a safety net for extreme cases.
 		if tl.Networks != "" {
-			parts = append(parts, tl.Networks)
+			b.WriteString("\n")
+			b.WriteString(rtStyle.Width(rw).Render(tl.Networks))
 		}
+		var parts []string
 		if tl.OriginCountry != "" {
 			for _, c := range strings.Split(tl.OriginCountry, ",") {
 				if flag := countryFlag(c); flag != "" {
@@ -686,8 +690,10 @@ func (t *TUI) buildRightContent(tl *model.Title, ev *model.ReleaseEvent, rw int,
 		if tl.Runtime > 0 {
 			parts = append(parts, fmtRuntime(tl.Runtime))
 		}
-		b.WriteString("\n")
-		b.WriteString(strings.Join(parts, " · "))
+		if len(parts) > 0 {
+			b.WriteString("\n")
+			b.WriteString(strings.Join(parts, " · "))
+		}
 	}
 
 	if tl.MediaType == model.MediaTypeAnime {
