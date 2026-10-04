@@ -323,3 +323,34 @@ func TestLibraryInfo_SonarrUnairedSeason(t *testing.T) {
 		assert.Contains(t, info.label, "S1(9/10)")
 	})
 }
+
+func TestLibraryInfo_TmdbIDCollisionAcrossMediaTypes(t *testing.T) {
+	// TMDB movie IDs and TV IDs share the same number space (e.g. Futurama TV
+	// is 615, The Passion of the Christ movie is 615). A Radarr cache entry
+	// must not match a TV item and vice versa.
+	cache := map[string]*db.LibraryCache{
+		"radarr:615": {Source: "radarr", ExtID: "615", ArrTitle: "The Passion of the Christ"},
+	}
+	tv := &itemState{event: db.EventWithTitle{
+		Event: &model.ReleaseEvent{},
+		Title: &model.Title{Title: "Futurama (season 14)", MediaType: model.MediaTypeTV, TmdbID: 615, TvdbID: 73871},
+	}}
+	info := tv.libraryInfo(cache)
+	assert.Equal(t, libNone, info.status)
+	assert.Empty(t, info.label)
+
+	movie := &itemState{event: db.EventWithTitle{
+		Event: &model.ReleaseEvent{},
+		Title: &model.Title{Title: "The Passion of the Christ", MediaType: model.MediaTypeMovie, TmdbID: 615},
+	}}
+	info = movie.libraryInfo(cache)
+	assert.Equal(t, libFull, info.status)
+	assert.Contains(t, info.label, "The Passion of the Christ")
+
+	// A Sonarr entry must not match a movie that happens to carry a TvdbID.
+	sonarrCache := map[string]*db.LibraryCache{
+		"sonarr:73871": {Source: "sonarr", ExtID: "73871", ArrTitle: "Futurama", Details: `{"title":"Futurama"}`},
+	}
+	info = movie.libraryInfo(sonarrCache)
+	assert.Equal(t, libNone, info.status)
+}

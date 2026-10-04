@@ -152,7 +152,10 @@ func (it *itemState) libraryInfo(dbCache map[string]*db.LibraryCache) libInfo {
 	if tl == nil {
 		return libInfo{status: libNone}
 	}
-	if tl.TmdbID > 0 {
+	// NOTE: TMDB movie IDs and TMDB TV IDs share the same number space
+	// (e.g. Futurama TV is 615, The Passion of the Christ movie is 615),
+	// so Radarr must only be consulted for movies and Sonarr only for TV/anime.
+	if tl.MediaType == model.MediaTypeMovie && tl.TmdbID > 0 {
 		if c := dbCache["radarr:"+strconv.Itoa(tl.TmdbID)]; c != nil {
 			return libInfo{
 				label:  fmt.Sprintf("✓ Radarr — %s", c.ArrTitle),
@@ -160,7 +163,7 @@ func (it *itemState) libraryInfo(dbCache map[string]*db.LibraryCache) libInfo {
 			}
 		}
 	}
-	if tl.TvdbID > 0 {
+	if (tl.MediaType == model.MediaTypeTV || tl.MediaType == model.MediaTypeAnime) && tl.TvdbID > 0 {
 		if c := dbCache["sonarr:"+strconv.Itoa(tl.TvdbID)]; c != nil {
 			label := fmt.Sprintf("✓ Sonarr — %s", c.ArrTitle)
 			status := libFull
@@ -356,7 +359,8 @@ func buildLibraryCacheMap(database *db.DB, events []db.EventWithTitle, albumEven
 	var lookups []struct{ Source, ExtID string }
 	seen := make(map[string]bool)
 	for _, e := range events {
-		if e.Title.TmdbID > 0 {
+		// TMDB movie and TV IDs collide numerically; only look up Radarr for movies.
+		if e.Title.MediaType == model.MediaTypeMovie && e.Title.TmdbID > 0 {
 			key := "radarr:" + strconv.Itoa(e.Title.TmdbID)
 			if !seen[key] {
 				lookups = append(lookups, struct{ Source, ExtID string }{"radarr", strconv.Itoa(e.Title.TmdbID)})
