@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"html"
+	"math/rand"
 	"regexp"
 	"strconv"
 	"strings"
@@ -23,6 +24,12 @@ type FlixPatrolProvider struct {
 	hasTargetWeek   bool
 	mediaTypeFilter model.MediaType
 	fetchPageFn     func(f *FlixPatrolProvider, page int, windowStart, windowEnd time.Time) ([]flixItem, error)
+	// tabCtx is a single browser tab shared across all page fetches in one
+	// Scrape, set up by Scrape when a browser is available. Reusing one tab
+	// (instead of a new tab per page) plus pacing between navigations looks
+	// less like bot activity to Cloudflare.
+	tabCtx context.Context
+	paceFn func(page int)
 }
 
 var (
@@ -89,9 +96,27 @@ func (f *FlixPatrolProvider) Scrape() ([]ScrapedItem, error) {
 	endStr := streamTue.Format("Jan 2")
 	log.Info().Msgf("FlixPatrol target: %s – %s", startStr, endStr)
 
+	// Share one tab across pages so we don't strobe new tabs at the site.
+	// Pacing defaults on only when a real browser is attached (allocCtx
+	// non-nil) so unit tests with stubbed fetchPageFn stay fast.
+	if f.allocCtx != nil {
+		tabCtx, tabCancel := chromedp.NewContext(f.allocCtx)
+		defer tabCancel()
+		f.tabCtx = tabCtx
+		defer func() { f.tabCtx = nil }()
+		if f.paceFn == nil {
+			f.paceFn = paceFlixPage
+		}
+	}
+
 	var allItems []flixItem
+	var rawRows int
 pageLoop:
 	for page := 1; page <= 30; page++ {
+		// Human-like pause between page loads (skipped before page 1).
+		if page > 1 && f.paceFn != nil {
+			f.paceFn(page)
+		}
 		items, err := f.fetchPageFn(f, page, streamStart, streamTue)
 		if err != nil {
 			// A failure on the first page means the site (or our browser
@@ -105,9 +130,25 @@ pageLoop:
 			log.Warn().Err(err).Msgf("FlixPatrol page %d failed", page)
 			continue
 		}
+		// An empty parse on page 1 almost always means the page hadn't
+		// finished rendering (or a challenge page slipped through), not
+		// an empty calendar — retry once before giving up, and fail
+		// loudly rather than reporting a silent zero.
+		if page == 1 && len(items) == 0 {
+			log.Warn().Msg("FlixPatrol page 1 parsed 0 rows, retrying once")
+			retryItems, retryErr := f.fetchPageFn(f, page, streamStart, streamTue)
+			if retryErr != nil {
+				return nil, fmt.Errorf("flixpatrol page %d retry: %w", page, retryErr)
+			}
+			items = retryItems
+			if len(items) == 0 {
+				return nil, fmt.Errorf("flixpatrol page 1: empty parse after retry (0 rows, possible challenge/incomplete load)")
+			}
+		}
 		if len(items) == 0 {
 			break
 		}
+		rawRows += len(items)
 		allItems = append(allItems, items...)
 
 		// Pages go newest-to-oldest. Once we hit any pre-window date,
@@ -131,7 +172,7 @@ pageLoop:
 		filtered = append(filtered, item)
 	}
 
-	log.Info().Msgf("FlixPatrol: %d in target range", len(filtered))
+	log.Info().Msgf("FlixPatrol: %d in target range (%d raw rows)", len(filtered), rawRows)
 
 	var results []ScrapedItem
 	for _, item := range filtered {
@@ -166,18 +207,21 @@ pageLoop:
 }
 
 func (f *FlixPatrolProvider) fetchPage(page int, windowStart, windowEnd time.Time) ([]flixItem, error) {
-	if f.allocCtx == nil {
-		return nil, fmt.Errorf("chromedp allocator not available")
+	// Prefer the shared Scrape tab; fall back to a throwaway tab for direct
+	// calls (e.g. debugging) when Scrape hasn't set one up.
+	ct := f.tabCtx
+	if ct == nil {
+		if f.allocCtx == nil {
+			return nil, fmt.Errorf("chromedp allocator not available")
+		}
+		var cancel context.CancelFunc
+		ct, cancel = chromedp.NewContext(f.allocCtx)
+		defer cancel()
 	}
-
-	url := fmt.Sprintf("https://flixpatrol.com/calendar/new/titles/streaming/right-now/%d/", page)
-
-	ct, cancel := chromedp.NewContext(f.allocCtx)
-	defer cancel()
-
 	pageCtx, pageCancel := context.WithTimeout(ct, 120*time.Second)
 	defer pageCancel()
 
+	url := fmt.Sprintf("https://flixpatrol.com/calendar/new/titles/streaming/right-now/%d/", page)
 	log.Debug().Str("provider", "flixpatrol").Msgf("navigating to page %d", page)
 	if err := chromedp.Run(pageCtx,
 		chromedp.Navigate(url),
@@ -195,7 +239,24 @@ func (f *FlixPatrolProvider) fetchPage(page int, windowStart, windowEnd time.Tim
 		return nil, fmt.Errorf("page %d getting HTML: %w", page, err)
 	}
 
-	return parseFlixRows(html), nil
+	items := parseFlixRows(html)
+	log.Debug().Str("provider", "flixpatrol").Msgf("page %d: %d bytes HTML -> %d rows", page, len(html), len(items))
+	return items, nil
+}
+
+// flixPaceBounds is the randomized pause before each FlixPatrol page load
+// after the first: 2–5s. Enough to break the machine-gun cadence without
+// adding much wall-clock time (worst case ~2min across 30 pages; typical
+// runs stop after far fewer).
+const (
+	flixPaceMin = 2 * time.Second
+	flixPaceJit = 3 * time.Second
+)
+
+func paceFlixPage(page int) {
+	d := flixPaceMin + time.Duration(rand.Int63n(int64(flixPaceJit)))
+	log.Debug().Str("provider", "flixpatrol").Msgf("pacing %v before page %d", d.Round(time.Second), page)
+	time.Sleep(d)
 }
 
 func parseFlixRows(html string) []flixItem {

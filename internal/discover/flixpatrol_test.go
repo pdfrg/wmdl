@@ -1,6 +1,7 @@
 package discover
 
 import (
+	"context"
 	"errors"
 	"strings"
 	"testing"
@@ -109,5 +110,116 @@ func TestFlixPatrolScrapeLaterPageFailureIsTolerated(t *testing.T) {
 	}
 	if len(items) == 0 {
 		t.Fatal("expected partial items from page 1 despite later-page failure")
+	}
+}
+
+func TestFlixPatrolScrapePage1EmptyParseRetriesOnce(t *testing.T) {
+	f := NewFlixPatrolProvider("http://127.0.0.1:9222", nil)
+	f.SetWeekRange(2026, 33)
+
+	streamTue := truncateToDay(tuesdayOfISOWeek(2026, 33))
+	streamStart := truncateToDay(streamTue.AddDate(0, 0, -6))
+	calls := 0
+	f.fetchPageFn = func(_ *FlixPatrolProvider, page int, _, _ time.Time) ([]flixItem, error) {
+		calls++
+		if page == 1 && calls == 1 {
+			return nil, nil // cold-browser empty parse
+		}
+		if page == 1 {
+			return []flixItem{{
+				Title:      "Test",
+				MediaType:  "movie",
+				Date:       streamStart.Format("Jan 2"),
+				IMDbRating: 7.5,
+			}}, nil
+		}
+		return nil, nil
+	}
+
+	items, err := f.Scrape()
+	if err != nil {
+		t.Fatalf("retry should recover from page 1 empty parse: %v", err)
+	}
+	if len(items) == 0 {
+		t.Fatal("expected items after page 1 retry")
+	}
+	if calls != 3 { // page 1, page 1 retry, page 2 (empty → stop)
+		t.Fatalf("expected 3 fetch calls, got %d", calls)
+	}
+}
+
+func TestFlixPatrolScrapePage1PersistentEmptyParseErrors(t *testing.T) {
+	f := NewFlixPatrolProvider("http://127.0.0.1:9222", nil)
+	f.SetWeekRange(2026, 33)
+	f.fetchPageFn = func(_ *FlixPatrolProvider, _ int, _, _ time.Time) ([]flixItem, error) {
+		return nil, nil
+	}
+
+	_, err := f.Scrape()
+	if err == nil {
+		t.Fatal("expected error when page 1 stays empty after retry")
+	}
+	if !strings.Contains(err.Error(), "empty parse") {
+		t.Fatalf("expected empty-parse error, got: %v", err)
+	}
+}
+
+func TestFlixPatrolScrapeRowsOutsideWindowStillSuccess(t *testing.T) {
+	f := NewFlixPatrolProvider("http://127.0.0.1:9222", nil)
+	f.SetWeekRange(2026, 33)
+
+	streamTue := truncateToDay(tuesdayOfISOWeek(2026, 33))
+	streamStart := truncateToDay(streamTue.AddDate(0, 0, -6))
+	f.fetchPageFn = func(_ *FlixPatrolProvider, page int, _, _ time.Time) ([]flixItem, error) {
+		if page > 1 {
+			return nil, nil
+		}
+		// Non-empty page, but every row is pre-window → 0 in range is legit.
+		return []flixItem{{
+			Title:      "Old",
+			MediaType:  "movie",
+			Date:       streamStart.AddDate(0, 0, -1).Format("Jan 2"),
+			IMDbRating: 7.5,
+		}}, nil
+	}
+
+	items, err := f.Scrape()
+	if err != nil {
+		t.Fatalf("out-of-window rows must not error: %v", err)
+	}
+	if len(items) != 0 {
+		t.Fatalf("expected 0 items, got %d", len(items))
+	}
+}
+
+func TestFlixPatrolScrapePacesBetweenPages(t *testing.T) {
+	f := NewFlixPatrolProvider("http://127.0.0.1:9222", context.Background())
+	f.SetWeekRange(2026, 33)
+
+	streamTue := truncateToDay(tuesdayOfISOWeek(2026, 33))
+	streamStart := truncateToDay(streamTue.AddDate(0, 0, -6))
+	var paced []int
+	f.paceFn = func(page int) { paced = append(paced, page) }
+	f.fetchPageFn = func(_ *FlixPatrolProvider, page int, _, _ time.Time) ([]flixItem, error) {
+		if page > 1 {
+			return nil, nil
+		}
+		return []flixItem{{
+			Title:      "Test",
+			MediaType:  "movie",
+			Date:       streamStart.Format("Jan 2"),
+			IMDbRating: 7.5,
+		}}, nil
+	}
+
+	if _, err := f.Scrape(); err != nil {
+		t.Fatalf("Scrape: %v", err)
+	}
+	// Paced once before page 2, never before page 1.
+	if len(paced) != 1 || paced[0] != 2 {
+		t.Fatalf("expected pace before page 2 only, got %v", paced)
+	}
+	if f.tabCtx != nil {
+		t.Fatal("shared tab context should be released after Scrape")
 	}
 }
