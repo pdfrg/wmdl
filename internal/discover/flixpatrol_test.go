@@ -219,7 +219,4 @@ func TestFlixPatrolScrapePacesBetweenPages(t *testing.T) {
 	if len(paced) != 1 || paced[0] != 2 {
 		t.Fatalf("expected pace before page 2 only, got %v", paced)
 	}
-	if f.tabCtx != nil {
-		t.Fatal("shared tab context should be released after Scrape")
-	}
 }

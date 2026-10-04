@@ -24,12 +24,9 @@ type FlixPatrolProvider struct {
 	hasTargetWeek   bool
 	mediaTypeFilter model.MediaType
 	fetchPageFn     func(f *FlixPatrolProvider, page int, windowStart, windowEnd time.Time) ([]flixItem, error)
-	// tabCtx is a single browser tab shared across all page fetches in one
-	// Scrape, set up by Scrape when a browser is available. Reusing one tab
-	// (instead of a new tab per page) plus pacing between navigations looks
-	// less like bot activity to Cloudflare.
-	tabCtx context.Context
-	paceFn func(page int)
+	paceFn          func(page int)
+	// paceFn pauses briefly before each page load after the first so we
+	// don't strobe the site with back-to-back navigations.
 }
 
 var (
@@ -96,17 +93,13 @@ func (f *FlixPatrolProvider) Scrape() ([]ScrapedItem, error) {
 	endStr := streamTue.Format("Jan 2")
 	log.Info().Msgf("FlixPatrol target: %s – %s", startStr, endStr)
 
-	// Share one tab across pages so we don't strobe new tabs at the site.
 	// Pacing defaults on only when a real browser is attached (allocCtx
-	// non-nil) so unit tests with stubbed fetchPageFn stay fast.
-	if f.allocCtx != nil {
-		tabCtx, tabCancel := chromedp.NewContext(f.allocCtx)
-		defer tabCancel()
-		f.tabCtx = tabCtx
-		defer func() { f.tabCtx = nil }()
-		if f.paceFn == nil {
-			f.paceFn = paceFlixPage
-		}
+	// non-nil) so unit tests with stubbed fetchPageFn stay fast. Each page
+	// still gets a fresh tab: sharing one tab across navigations made every
+	// Navigate wait ~2min for the full page load event (Cloudflare
+	// tarpitting the reused session), while fresh tabs load fast.
+	if f.allocCtx != nil && f.paceFn == nil {
+		f.paceFn = paceFlixPage
 	}
 
 	var allItems []flixItem
@@ -207,20 +200,29 @@ pageLoop:
 }
 
 func (f *FlixPatrolProvider) fetchPage(page int, windowStart, windowEnd time.Time) ([]flixItem, error) {
-	// Prefer the shared Scrape tab; fall back to a throwaway tab for direct
-	// calls (e.g. debugging) when Scrape hasn't set one up.
-	ct := f.tabCtx
-	if ct == nil {
-		if f.allocCtx == nil {
-			return nil, fmt.Errorf("chromedp allocator not available")
-		}
-		var cancel context.CancelFunc
-		ct, cancel = chromedp.NewContext(f.allocCtx)
-		defer cancel()
+	// Each page gets a fresh tab: sharing one tab across navigations made
+	// every Navigate wait ~2min for the full page load event, while fresh
+	// tabs load fast. Callers pace navigations via paceFn.
+	if f.allocCtx == nil {
+		return nil, fmt.Errorf("chromedp allocator not available")
 	}
+	ct, cancel := chromedp.NewContext(f.allocCtx)
+	defer cancel()
 	pageCtx, pageCancel := context.WithTimeout(ct, 120*time.Second)
 	defer pageCancel()
 
+	// All CDP work for this page is scoped to pageCtx so no single page
+	// can outlive the per-page timeout. (An earlier version ran
+	// waitForRealPage/OuterHTML on the parent tab ctx, which has no
+	// deadline — a stuck challenge page hung the whole scrape.)
+	// Later pages get a shorter challenge wait: partial data beats a dead
+	// run. Page 1 keeps the full 120s since its failure is fatal.
+	challengeTimeout := 120 * time.Second
+	if page > 1 {
+		challengeTimeout = 60 * time.Second
+	}
+
+	pageStart := time.Now()
 	url := fmt.Sprintf("https://flixpatrol.com/calendar/new/titles/streaming/right-now/%d/", page)
 	log.Debug().Str("provider", "flixpatrol").Msgf("navigating to page %d", page)
 	if err := chromedp.Run(pageCtx,
@@ -229,18 +231,20 @@ func (f *FlixPatrolProvider) fetchPage(page int, windowStart, windowEnd time.Tim
 	); err != nil {
 		return nil, fmt.Errorf("navigating to page %d: %w", page, err)
 	}
+	navElapsed := time.Since(pageStart)
 
-	if err := waitForRealPage(ct, 120*time.Second); err != nil {
-		return nil, fmt.Errorf("page %d cloudflare challenge: %w", page, err)
+	if err := waitForRealPage(pageCtx, challengeTimeout); err != nil {
+		return nil, fmt.Errorf("page %d cloudflare challenge (%v elapsed): %w", page, time.Since(pageStart).Round(time.Second), err)
 	}
+	challengeElapsed := time.Since(pageStart)
 
 	var html string
-	if err := chromedp.Run(ct, chromedp.OuterHTML("html", &html)); err != nil {
+	if err := chromedp.Run(pageCtx, chromedp.OuterHTML("html", &html)); err != nil {
 		return nil, fmt.Errorf("page %d getting HTML: %w", page, err)
 	}
 
 	items := parseFlixRows(html)
-	log.Debug().Str("provider", "flixpatrol").Msgf("page %d: %d bytes HTML -> %d rows", page, len(html), len(items))
+	log.Debug().Str("provider", "flixpatrol").Msgf("page %d done in %v (navigate %v, challenge-cleared %v): %d bytes HTML -> %d rows", page, time.Since(pageStart).Round(time.Second), navElapsed.Round(time.Second), challengeElapsed.Round(time.Second), len(html), len(items))
 	return items, nil
 }
 
