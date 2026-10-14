@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"strconv"
-	"strings"
 
 	"github.com/pdfrg/wmdl/internal/db"
 	"github.com/pdfrg/wmdl/internal/library"
@@ -189,7 +188,7 @@ func (r *Runner) cacheLibraryData(ctx context.Context) error {
 			matchTitle := normalizeAnimeTitle(t.Title)
 			for _, s := range sonarrSeries {
 				seriesTitle := normalizeAnimeTitle(s.Title)
-				if matchTitle == seriesTitle || strings.HasPrefix(seriesTitle, matchTitle) || strings.HasPrefix(matchTitle, seriesTitle) {
+				if matchTitle == seriesTitle {
 					r.log.Info().Str("anime", t.Title).Int("tvdb_id", s.TVDBID).Str("sonarr_title", s.Title).Msg("matched anime to Sonarr series")
 					if err := r.db.UpdateTitleTvdbID(ctx, t.ID, s.TVDBID); err != nil {
 						r.log.Warn().Err(err).Msg("failed to update anime tvdb_id")
