@@ -25,10 +25,11 @@ checksum:
   name_template: "checksums.txt"
 # NOTE: the default changelog format embeds committer emails — never use it.
 # This format intentionally omits all author fields (solo project; the
-# address in git history must stay private). Verify with:
+# address in git history must stay private). goreleaser already prefixes each
+# entry with "* ", so the format must NOT add its own bullet. Verify with:
 #   gh release view <tag> --repo pdfrg/wmdl | grep -i tutanota
 changelog:
   use: git
   sort: asc
-  format: "* {{ .Message }} ({{ .SHA }})"
+  format: "{{ .Message }} ({{ .SHA }})"
   abbrev: 7
