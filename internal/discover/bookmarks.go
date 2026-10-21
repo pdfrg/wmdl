@@ -2,6 +2,7 @@ package discover
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -59,6 +60,47 @@ type bmBookDetail struct {
 	TotalReviews int
 }
 
+// bmLDBook is the subset of a schema.org Book JSON-LD node that we consume.
+type bmLDBook struct {
+	Type          string   `json:"@type"`
+	DatePublished string   `json:"datePublished"`
+	ISBN          string   `json:"isbn"`
+	Description   string   `json:"description"`
+	Genre         []string `json:"genre"`
+	Publisher     struct {
+		Name string `json:"name"`
+	} `json:"publisher"`
+}
+
+// parseBookmarksJSONLD extracts the schema.org Book node from a detail page's
+// JSON-LD blocks. Bookmarks emits an @graph array alongside other nodes
+// (organization, website, image); some pages may expose a bare Book object.
+// Returns nil when no usable Book node is present.
+func parseBookmarksJSONLD(html string) *bmLDBook {
+	for _, m := range bmJSONLDRe.FindAllStringSubmatch(html, -1) {
+		if len(m) < 2 {
+			continue
+		}
+
+		var graph struct {
+			Graph []bmLDBook `json:"@graph"`
+		}
+		if err := json.Unmarshal([]byte(m[1]), &graph); err == nil {
+			for i := range graph.Graph {
+				if graph.Graph[i].Type == "Book" {
+					return &graph.Graph[i]
+				}
+			}
+		}
+
+		var book bmLDBook
+		if err := json.Unmarshal([]byte(m[1]), &book); err == nil && book.Type == "Book" {
+			return &book
+		}
+	}
+	return nil
+}
+
 var (
 	bmSlugRe    = regexp.MustCompile(`data-slug="([^"]+)"`)
 	bmTitleRe   = regexp.MustCompile(`<div class="latest_book_title[^"]*">\s*([^<]+)`)
@@ -67,7 +109,11 @@ var (
 	bmVerdictRe = regexp.MustCompile(`<span class="featured_book_review_index\s+(\w+)">\s*(\w+)`)
 	bmImgRe     = regexp.MustCompile(`<img[^>]*src="([^"]+)"[^>]*class="latest_book_image"`)
 
-	// Individual book page patterns
+	// Individual book page patterns. Bookmarks moved the publication date and
+	// publisher out of HTML microdata into a JSON-LD <script> block (see
+	// bmJSONLDRe / bmLDBook); the itemprop regexes below are kept as a
+	// fallback for pages that still emit microdata.
+	bmJSONLDRe     = regexp.MustCompile(`(?s)<script[^>]*type="application/ld\+json"[^>]*>(.*?)</script>`)
 	bmDetailDateRe = regexp.MustCompile(`itemprop="datePublished" content="([^"]+)"`)
 	bmDetailISBNRe = regexp.MustCompile(`bookshop\.org/a/\d+/(\d{13})`)
 	bmDetailPubRe  = regexp.MustCompile(`itemprop="publisher"[^>]*>.*?<span itemprop="name">\s*([^<]+)`)
@@ -281,28 +327,50 @@ func (p *BookMarksProvider) fetchBookDetail(ctx context.Context, slug string) (*
 	if err != nil {
 		return nil, err
 	}
-	html := string(body)
 
+	return parseBookmarkDetail(string(body)), nil
+}
+
+// parseBookmarkDetail extracts the fields we store from a Bookmarks detail page.
+func parseBookmarkDetail(html string) *bmBookDetail {
 	detail := &bmBookDetail{}
 
+	// JSON-LD is the canonical source on current pages; fall back to the
+	// older HTML microdata regexes for anything it doesn't provide.
+	ld := parseBookmarksJSONLD(html)
+	if ld != nil {
+		detail.ReleaseDate = strings.TrimSpace(ld.DatePublished)
+		detail.ISBN = strings.TrimSpace(ld.ISBN)
+		detail.Publisher = htmlUnescape(strings.TrimSpace(ld.Publisher.Name))
+		detail.Description = htmlUnescape(strings.TrimSpace(ld.Description))
+	}
+
 	// Release date
-	if m := bmDetailDateRe.FindStringSubmatch(html); len(m) > 1 {
-		detail.ReleaseDate = m[1]
+	if detail.ReleaseDate == "" {
+		if m := bmDetailDateRe.FindStringSubmatch(html); len(m) > 1 {
+			detail.ReleaseDate = m[1]
+		}
 	}
 
 	// ISBN
-	if m := bmDetailISBNRe.FindStringSubmatch(html); len(m) > 1 {
-		detail.ISBN = m[1]
+	if detail.ISBN == "" {
+		if m := bmDetailISBNRe.FindStringSubmatch(html); len(m) > 1 {
+			detail.ISBN = m[1]
+		}
 	}
 
 	// Publisher
-	if m := bmDetailPubRe.FindStringSubmatch(html); len(m) > 1 {
-		detail.Publisher = htmlUnescape(strings.TrimSpace(m[1]))
+	if detail.Publisher == "" {
+		if m := bmDetailPubRe.FindStringSubmatch(html); len(m) > 1 {
+			detail.Publisher = htmlUnescape(strings.TrimSpace(m[1]))
+		}
 	}
 
-	// Description (inner HTML, tags stripped)
-	if m := bmDetailDescRe.FindStringSubmatch(html); len(m) > 1 {
-		detail.Description = cleanBookDescription(m[1])
+	// Description (JSON-LD plain text, else inner HTML with tags stripped)
+	if detail.Description == "" {
+		if m := bmDetailDescRe.FindStringSubmatch(html); len(m) > 1 {
+			detail.Description = cleanBookDescription(m[1])
+		}
 	}
 
 	// Tags from meta keywords
@@ -315,6 +383,8 @@ func (p *BookMarksProvider) fetchBookDetail(ctx context.Context, slug string) (*
 			detail.Tags = strings.ReplaceAll(detail.Tags, author, "")
 		}
 		detail.Tags = strings.Trim(detail.Tags, ", ")
+	} else if ld != nil && len(ld.Genre) > 0 {
+		detail.Tags = strings.Join(ld.Genre, ",")
 	}
 
 	// Overall verdict + review count from meta description
@@ -325,7 +395,7 @@ func (p *BookMarksProvider) fetchBookDetail(ctx context.Context, slug string) (*
 		}
 	}
 
-	return detail, nil
+	return detail
 }
 
 // extractAuthorFromTags attempts to find the author name portion from the

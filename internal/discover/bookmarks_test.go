@@ -7,6 +7,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/pdfrg/wmdl/internal/testutil"
 )
 
 func TestExtractAuthorFromTags(t *testing.T) {
@@ -206,4 +208,56 @@ func TestBmFullParseLogic(t *testing.T) {
 	assert.Equal(t, "Fiction,Mystery", tags)
 	assert.Equal(t, "positive", verdict)
 	assert.Equal(t, 3, totalReviews)
+}
+
+func TestParseBookmarksJSONLD(t *testing.T) {
+	html := string(testutil.LoadFixture(t, "testdata", "bookmarks", "queen-of-lombard-street.htm"))
+	ld := parseBookmarksJSONLD(html)
+	require.NotNil(t, ld)
+	assert.Equal(t, "Book", ld.Type)
+	assert.Equal(t, "2026-10-20", ld.DatePublished)
+	assert.Equal(t, "9780063247635", ld.ISBN)
+	assert.Equal(t, "Avon Books", ld.Publisher.Name)
+	assert.Equal(t, []string{"Fiction", "Historical"}, ld.Genre)
+}
+
+// Regression: Bookmarks moved the publication date (and publisher) from HTML
+// microdata into a schema.org JSON-LD block. With only the old itemprop regex
+// the date came back empty for every book, so the scraper found zero books.
+func TestParseBookmarkDetailFromJSONLD(t *testing.T) {
+	html := string(testutil.LoadFixture(t, "testdata", "bookmarks", "queen-of-lombard-street.htm"))
+
+	d := parseBookmarkDetail(html)
+	require.NotNil(t, d)
+	assert.Equal(t, "2026-10-20", d.ReleaseDate)
+	assert.Equal(t, "9780063247635", d.ISBN)
+	assert.Equal(t, "Avon Books", d.Publisher)
+	assert.Equal(t, "Positive", d.Verdict)
+	assert.Equal(t, 3, d.TotalReviews)
+	assert.Contains(t, d.Description, "trailblazing female economist")
+	assert.Equal(t, "Fiction,Historical", d.Tags)
+}
+
+// Pages that still emit microdata (or JSON-LD without a Book node) must keep
+// working through the legacy itemprop fallbacks.
+func TestParseBookmarkDetailMicrodataFallback(t *testing.T) {
+	html := `<html><head>
+		<meta itemprop="datePublished" content="2025-06-15">
+		<meta name="keywords" content="Fiction,Mystery,Stephen King">
+		<meta name="description" content="overall rating of positive based on 3 reviews">
+	</head><body>
+		<a href="https://bookshop.org/a/123/9781234567890">Buy</a>
+		<span itemprop="publisher"><span itemprop="name">Penguin Books</span></span>
+		<div class="book_manual_description">A thrilling mystery novel.</div>
+	</body></html>`
+
+	d := parseBookmarkDetail(html)
+	require.NotNil(t, d)
+	assert.Equal(t, "2025-06-15", d.ReleaseDate)
+	assert.Equal(t, "9781234567890", d.ISBN)
+	assert.Equal(t, "Penguin Books", d.Publisher)
+	assert.Equal(t, "A thrilling mystery novel.", d.Description)
+	assert.Equal(t, "Fiction,Mystery", d.Tags)
+	assert.Equal(t, "positive", d.Verdict)
+	assert.Equal(t, 3, d.TotalReviews)
 }
