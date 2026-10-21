@@ -318,6 +318,11 @@ func (p *AOTYProvider) fetchPageOnce(url string) (string, error) {
 		return "", fmt.Errorf("getting page HTML: %w", err)
 	}
 
+	log.Debug().Str("provider", "albumoftheyear").Str("url", url).
+		Int("bytes", len(html)).Int("album_blocks", strings.Count(html, "albumBlock")).
+		Bool("challenge", strings.Contains(html, "challenges.cloudflare.com") || strings.Contains(html, "Just a moment")).
+		Msg("page fetched")
+
 	return html, nil
 }
 
@@ -345,6 +350,15 @@ func (p *AOTYProvider) scrapePage(page int) ([]ScrapedItem, error) {
 			items = append(items, *item)
 		}
 	})
+
+	log.Debug().Str("provider", "albumoftheyear").Int("page", page).Int("items", len(items)).Msg("page parsed")
+
+	// An empty page 1 is never legitimate: pagination only runs out on later
+	// pages. Treat it as a failure (challenge or layout change) so the run is
+	// reported as a scrape error instead of silently yielding 0 albums.
+	if page == 1 && len(items) == 0 {
+		return nil, fmt.Errorf("page 1: no album blocks found (possible Cloudflare challenge or layout change)")
+	}
 
 	return items, nil
 }

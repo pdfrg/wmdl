@@ -66,6 +66,18 @@ func isChallengeTitle(title string) bool {
 		strings.Contains(title, "Error")
 }
 
+// isCloudflareChallengeHTML reports whether html is still a Cloudflare
+// challenge/interstitial document rather than the target page. The title can
+// flip to the real page's title a moment before the challenge document is
+// replaced, so callers must check the DOM as well (a title-only check raced
+// and returned the challenge page's HTML — 0 album blocks on AOTY).
+func isCloudflareChallengeHTML(html string) bool {
+	return strings.Contains(html, "Just a moment") ||
+		strings.Contains(html, "challenges.cloudflare.com") ||
+		strings.Contains(html, "_cf_chl_opt") ||
+		strings.Contains(html, "cf-chl-widget")
+}
+
 // tryClickTurnstile attempts to dismiss a Cloudflare Turnstile challenge.
 // Two strategies are tried:
 //
@@ -210,7 +222,18 @@ func waitForRealPage(ct context.Context, timeout time.Duration) error {
 		}
 
 		if title != "" && !isChallengeTitle(title) {
-			return nil
+			// The title may already show the target page while the challenge
+			// document is still in the DOM. Only accept it once the HTML no
+			// longer looks like a Cloudflare interstitial.
+			var html string
+			err := retry(3, 500*time.Millisecond, func() error {
+				return chromedp.Run(waitCtx, chromedp.OuterHTML("html", &html))
+			})
+			if err != nil || !isCloudflareChallengeHTML(html) {
+				log.Debug().Str("title", title).Msg("cloudflare: real page ready")
+				return nil
+			}
+			log.Debug().Str("title", title).Msg("cloudflare: title cleared but challenge document still present")
 		}
 
 		if strings.Contains(title, "503") || strings.Contains(title, "Error") {
@@ -228,6 +251,7 @@ func waitForRealPage(ct context.Context, timeout time.Duration) error {
 		// clicking the checkbox while we wait. Paced to at most one attempt
 		// every 3s so repeated polls don't machine-gun the widget.
 		if clicks < maxTurnstileClicks && time.Since(lastClick) >= 3*time.Second {
+			log.Debug().Str("title", title).Int("attempt", i).Int("clicks", clicks).Msg("cloudflare: still challenging")
 			clicked, err := tryClickTurnstile(waitCtx, &oopifCtx, &oopifCancel)
 			if err != nil {
 				log.Debug().Err(err).Msg("turnstile: click attempt failed")

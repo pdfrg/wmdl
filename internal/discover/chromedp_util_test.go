@@ -6,10 +6,12 @@ import (
 	"net/http/httptest"
 	"os"
 	"os/exec"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/chromedp/chromedp"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -87,7 +89,10 @@ const fakeChallengeHTML = `<!DOCTYPE html>
 </div>
 <script>
 document.getElementById('cf-chl-widget-0').addEventListener('mousedown', function () {
-  setTimeout(function () { document.title = 'New Releases | FlixPatrol'; }, 50);
+  setTimeout(function () {
+    document.title = 'New Releases | FlixPatrol';
+    document.body.innerHTML = '<div class="row">real content</div>';
+  }, 50);
 });
 </script>
 </body></html>`
@@ -122,6 +127,79 @@ func TestWaitForRealPageTurnstileAutoClick(t *testing.T) {
 	}
 	if title != "New Releases | FlixPatrol" {
 		t.Errorf("title = %q, want cleared challenge title", title)
+	}
+}
+
+func TestWaitForRealPageWaitsForChallengeDOM(t *testing.T) {
+	// Regression: Cloudflare flips the document title to the target page a
+	// moment before replacing the challenge document. waitForRealPage used to
+	// treat that as success and return the challenge HTML, which for AOTY
+	// parsed as zero albums. It must keep waiting until the DOM is real.
+	const raceHTML = `<!DOCTYPE html>
+<html><head><title>Just a moment...</title></head>
+<body>
+<div id="cf-chl-widget-0" style="position:absolute;left:100px;top:50px;width:300px;height:65px;background:#ddd;">
+  <input type="checkbox" style="margin:24px 0 0 20px;">
+</div>
+<script>
+document.getElementById('cf-chl-widget-0').addEventListener('mousedown', function () {
+  // Title clears right away, but the challenge document lingers for 5s.
+  document.title = 'New Releases | Album of the Year';
+  setTimeout(function () {
+    document.body.innerHTML = '<div class="albumBlock"><div class="albumTitle">Real Album</div></div>';
+  }, 5000);
+});
+</script>
+</body></html>`
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = w.Write([]byte(raceHTML))
+	}))
+	defer srv.Close()
+
+	ct := launchTestBrowser(t)
+
+	if err := chromedp.Run(ct,
+		chromedp.Navigate(srv.URL),
+		chromedp.WaitReady("body"),
+	); err != nil {
+		t.Fatalf("navigate: %v", err)
+	}
+
+	if err := waitForRealPage(ct, 30*time.Second); err != nil {
+		t.Fatalf("waitForRealPage did not clear fake challenge: %v", err)
+	}
+
+	var html string
+	if err := chromedp.Run(ct, chromedp.OuterHTML("html", &html)); err != nil {
+		t.Fatalf("final HTML: %v", err)
+	}
+	if isCloudflareChallengeHTML(html) {
+		t.Error("waitForRealPage returned while the challenge document was still present")
+	}
+	if !strings.Contains(html, "albumBlock") {
+		t.Error("waitForRealPage returned before the real page DOM loaded")
+	}
+}
+
+func TestIsCloudflareChallengeHTML(t *testing.T) {
+	cases := []struct {
+		name string
+		html string
+		want bool
+	}{
+		{"just a moment title", `<html><head><title>Just a moment...</title></head><body></body></html>`, true},
+		{"challenge iframe", `<html><body><iframe src="https://challenges.cloudflare.com/cdn-cgi/challenge-platform/x"></iframe></body></html>`, true},
+		{"challenge options", `<html><head><script>window._cf_chl_opt = {};</script></head></html>`, true},
+		{"turnstile widget", `<html><body><div id="cf-chl-widget-0"></div></body></html>`, true},
+		{"real page", `<html><head><title>New Album Releases 2026</title></head><body><div class="albumBlock">x</div></body></html>`, false},
+		{"empty", ``, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, isCloudflareChallengeHTML(tc.html))
+		})
 	}
 }
 
