@@ -183,23 +183,18 @@ func (r *Runner) processItem(ctx context.Context, item ScrapedItem, progYear, pr
 	}
 	apiCancel()
 
-	rtCritics, rtAudience, rtAudienceReal, rtRealVotes := 0.0, 0.0, 0.0, 0
+	rtCritics, rtAudience := 0.0, 0.0
 	if rtURL != "" && !isRTSearchURL(rtURL) {
 		r.log.Info().Str("url", rtURL).Msg("RT URL found")
 		ratings := ScrapeRTRatings(ctx, rtURL)
 		rtCritics = ratings.CriticsScore
 		rtAudience = ratings.AudienceScore
-		rtAudienceReal = ratings.AudienceRealScore
-		rtRealVotes = ratings.RealVotes
 		if rtCritics > 0 || rtAudience > 0 {
 			r.log.Info().Str("url", rtURL).Float64("critics", rtCritics).Float64("audience", rtAudience).Msg("RT scores")
 		} else {
 			// Scorecard fetched fine but carries no scores — the title simply
 			// has no RT ratings yet. Not an error; keep it visible at Info.
 			r.log.Info().Str("url", rtURL).Msg("RT: title not rated yet (no scores in scorecard)")
-		}
-		if rtAudienceReal > 0 {
-			r.log.Info().Str("url", rtURL).Float64("real", rtAudienceReal).Int("votes", rtRealVotes).Msg("RT real audience score")
 		}
 	} else if isRTSearchURL(rtURL) {
 		r.log.Info().Str("url", rtURL).Msg("RT URL is a search fallback; no scorecard to fetch")
@@ -239,38 +234,36 @@ func (r *Runner) processItem(ctx context.Context, item ScrapedItem, progYear, pr
 	}
 
 	title := &model.Title{
-		TmdbID:              tmdbID,
-		TvdbID:              tvdbID,
-		Title:               item.Title,
-		TmdbTitle:           tmdbTitle,
-		Year:                item.Year,
-		MediaType:           mediaType,
-		ImdbID:              imdbID,
-		ImdbRating:          imdbRating,
-		ImdbVotes:           imdbVotes,
-		Awards:              awards,
-		BoxOffice:           boxOffice,
-		Director:            director,
-		Writer:              writer,
-		Actors:              actors,
-		MetacriticScore:     metacriticScore,
-		RTURL:               rtURL,
-		RTCriticsScore:      rtCritics,
-		RTAudienceScore:     rtAudience,
-		RTAudienceRealScore: rtAudienceReal,
-		RTRealVotes:         rtRealVotes,
-		TmdbRating:          rating,
-		USRating:            usRating,
-		YoutubeViews:        item.YoutubeViews,
-		Overview:            overview,
-		Genres:              genres,
-		Runtime:             runtime,
-		PosterPath:          posterPath,
-		OriginalLanguage:    originalLanguage,
-		OriginCountry:       originCountry,
-		CollectionID:        collectionID,
-		CollectionName:      collectionName,
-		Networks:            networks,
+		TmdbID:           tmdbID,
+		TvdbID:           tvdbID,
+		Title:            item.Title,
+		TmdbTitle:        tmdbTitle,
+		Year:             item.Year,
+		MediaType:        mediaType,
+		ImdbID:           imdbID,
+		ImdbRating:       imdbRating,
+		ImdbVotes:        imdbVotes,
+		Awards:           awards,
+		BoxOffice:        boxOffice,
+		Director:         director,
+		Writer:           writer,
+		Actors:           actors,
+		MetacriticScore:  metacriticScore,
+		RTURL:            rtURL,
+		RTCriticsScore:   rtCritics,
+		RTAudienceScore:  rtAudience,
+		TmdbRating:       rating,
+		USRating:         usRating,
+		YoutubeViews:     item.YoutubeViews,
+		Overview:         overview,
+		Genres:           genres,
+		Runtime:          runtime,
+		PosterPath:       posterPath,
+		OriginalLanguage: originalLanguage,
+		OriginCountry:    originCountry,
+		CollectionID:     collectionID,
+		CollectionName:   collectionName,
+		Networks:         networks,
 	}
 
 	cf := &r.cfg.MediaTypes.Movies.Filter

@@ -664,12 +664,22 @@ External APIs enrich each discovered item:
 
 - **TMDB** — TMDB ID, IMDb ID, overview, genres, runtime, poster, US rating, collection membership
 - **OMDB** — IMDb rating + Metacritic score + votes, awards, box office, credits
-- **Rotten Tomatoes** — HTTP GET extraction of embedded `media-scorecard-json` for critic
-  and audience scores. The headline "Popcornmeter" score is the Fandango-verified (push)
-  rating. An **Audience Real Score** strips the verified push votes out of the all-audience
-  pool to reveal the unverified-only "pull" score — what the score would have been before
-  RT's 2019 push-change (`real = unverified_likes / (unverified_likes + unverified_dislikes)`).
-  Method pioneered by [PopcornGap](https://popcorngap.com). No browser required (HTTP only).
+- **Rotten Tomatoes** — HTTP GET extraction of the embedded `media-scorecard-json` for critic
+  and audience scores. RT renamed the percentage field from `score` to `scorePercent`
+  (e.g. `"95%"`) in late 2026; wmdl reads `scorePercent` and falls back to the legacy
+  `score`. No browser required (HTTP only).
+
+  **Dropped feature — Audience Real Score.** Until November 2026 the same JSON also
+  published verified and all-audience vote counts (`likedCount`/`notLikedCount`), which let
+  wmdl subtract the Fandango-verified (push) pool from the all-audience pool to isolate the
+  unverified-only (pull) score — what the score would have been before RT's 2019
+  push-change (`real = unverified_likes / (unverified_likes + unverified_dislikes)`). Method
+  pioneered by [PopcornGap](https://popcorngap.com). RT replaced those counts with geometric
+  `bandedRatingCount` buckets (`"2,500+ Verified Ratings"`, `"5,000+ Ratings"`), which cannot
+  be subtracted — the same loss stops PopcornGap's tracking at its last snapshots. wmdl's
+  real-score calculation and its review-TUI indicator were removed; the
+  `titles.rt_audience_real_score` / `rt_real_votes` columns are kept for historical rows
+  only and are no longer populated.
 - **MusicBrainz** — release group ID, artist details, ratings, genres
 - **Hardcover** — book metadata (ISBN, pages, ratings, descriptions)
 - **OpenLibrary** — book metadata fallback

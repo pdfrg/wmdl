@@ -39,8 +39,10 @@ ntfy, or generic webhook.
   in gaps.
 - **Ad-hoc commands** — `wmdl search` for one-off Prowlarr searches, `wmdl add` to inject titles
   into the pipeline, `wmdl mark-downloaded` for manual bookkeeping.
-- **Real audience scores** — RT ratings strip out Fandango push-votes to reveal what the
-  pre-2019 "pull" crowd really thought (method pioneered by [PopcornGap](https://popcorngap.com)).
+- **Rotten Tomatoes scores** — Tomatometer + Popcornmeter scraped straight from RT's page
+  JSON. The pre-2019 "pull" (unverified-only) score pioneered by
+  [PopcornGap](https://popcorngap.com) is no longer computable: RT stopped publishing
+  audience vote counts in November 2026, so wmdl dropped that indicator.
 - **Automation** — Run `wmdl discover --headless` via systemd timer or cron. Example scripts
   for qBittorrent completion hooks and Gotify notifications in [scripts/](scripts/).
 

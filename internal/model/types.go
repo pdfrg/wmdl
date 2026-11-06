@@ -36,25 +36,29 @@ const (
 )
 
 type Title struct {
-	ID                  int64
-	TmdbID              int
-	TvdbID              int
-	MalID               int // MyAnimeList ID (anime)
-	Title               string
-	TmdbTitle           string // TMDB-matched title (may differ from scraped Title)
-	Year                int
-	MediaType           MediaType
-	ImdbID              string
-	ImdbRating          float64
-	ImdbVotes           int64
-	Awards              string
-	BoxOffice           string
-	Director            string
-	Writer              string
-	Actors              string
-	RTURL               string
-	RTCriticsScore      float64
-	RTAudienceScore     float64
+	ID              int64
+	TmdbID          int
+	TvdbID          int
+	MalID           int // MyAnimeList ID (anime)
+	Title           string
+	TmdbTitle       string // TMDB-matched title (may differ from scraped Title)
+	Year            int
+	MediaType       MediaType
+	ImdbID          string
+	ImdbRating      float64
+	ImdbVotes       int64
+	Awards          string
+	BoxOffice       string
+	Director        string
+	Writer          string
+	Actors          string
+	RTURL           string
+	RTCriticsScore  float64
+	RTAudienceScore float64
+	// RTAudienceRealScore/RTRealVotes are no longer populated: RT stopped
+	// publishing audience vote counts, so the unverified-only ("real")
+	// audience score can no longer be computed. Kept for DB schema
+	// compatibility and historical rows only.
 	RTAudienceRealScore float64
 	RTRealVotes         int
 	TmdbRating          float64

@@ -1,6 +1,13 @@
 package discover
 
-import "testing"
+import (
+	"context"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+
+	"github.com/pdfrg/wmdl/internal/testutil"
+)
 
 func TestSignificantWords(t *testing.T) {
 	tests := []struct {
@@ -120,6 +127,98 @@ func TestScoreSearchResult(t *testing.T) {
 		if !tt.wantNeg && got <= 0 {
 			t.Errorf("%s: scoreSearchResult = %d, want positive", tt.desc, got)
 		}
+	}
+}
+
+// rtPage wraps a scorecard script blob in minimal HTML so it can be served by
+// an httptest server.
+func rtPage(scorecard string) string {
+	return "<html><head><title>RT</title></head><body><rt-text>hi</rt-text>" +
+		`<script id="media-scorecard-json" data-json="mediaScorecard" type="application/json">` +
+		scorecard + "</script></body></html>"
+}
+
+func TestParsePct(t *testing.T) {
+	tests := []struct {
+		in   string
+		want float64
+	}{
+		{"97", 97},
+		{"97%", 97},
+		{" 89% ", 89},
+		{"1,234", 1234},
+		{"0%", 0},
+		{"", 0},
+		{"- -", 0},
+		{"garbage", 0},
+	}
+	for _, tt := range tests {
+		if got := parsePct(tt.in); got != tt.want {
+			t.Errorf("parsePct(%q) = %v, want %v", tt.in, got, tt.want)
+		}
+	}
+}
+
+func TestScrapeRTRatingsCurrentSchema(t *testing.T) {
+	body := testutil.LoadFixture(t, "testdata", "rt_scorecard_the_incomer.json")
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(rtPage(string(body))))
+	}))
+	defer srv.Close()
+
+	r := ScrapeRTRatings(context.Background(), srv.URL+"/m/the_incomer")
+	if r.CriticsScore != 95 {
+		t.Errorf("CriticsScore = %v, want 95", r.CriticsScore)
+	}
+	if r.AudienceScore != 89 {
+		t.Errorf("AudienceScore = %v, want 89", r.AudienceScore)
+	}
+}
+
+func TestScrapeRTRatingsLegacySchema(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		scorecard := `{"audienceScore":{"score":"77","scoreType":"ALL"},` +
+			`"criticsScore":{"score":"88"}}`
+		w.Write([]byte(rtPage(scorecard)))
+	}))
+	defer srv.Close()
+
+	r := ScrapeRTRatings(context.Background(), srv.URL+"/m/legacy")
+	if r.CriticsScore != 88 {
+		t.Errorf("CriticsScore = %v, want 88", r.CriticsScore)
+	}
+	if r.AudienceScore != 77 {
+		t.Errorf("AudienceScore = %v, want 77", r.AudienceScore)
+	}
+}
+
+func TestScrapeRTRatingsOverlayFallback(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Headline audience score hidden; only the overlay pool carries a score.
+		scorecard := `{"audienceScore":{"title":"Popcornmeter"},` +
+			`"overlay":{"audienceAll":{"scorePercent":"64%"},"criticsAll":{"scorePercent":"71%"}}}`
+		w.Write([]byte(rtPage(scorecard)))
+	}))
+	defer srv.Close()
+
+	r := ScrapeRTRatings(context.Background(), srv.URL+"/m/overlay")
+	if r.CriticsScore != 71 {
+		t.Errorf("CriticsScore = %v, want 71", r.CriticsScore)
+	}
+	if r.AudienceScore != 64 {
+		t.Errorf("AudienceScore = %v, want 64", r.AudienceScore)
+	}
+}
+
+func TestScrapeRTRatingsNoScorecard(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("<html><body>nope</body></html>"))
+	}))
+	defer srv.Close()
+
+	r := ScrapeRTRatings(context.Background(), srv.URL+"/m/missing")
+	if r.CriticsScore != 0 || r.AudienceScore != 0 {
+		t.Errorf("scores = %v/%v, want 0/0", r.CriticsScore, r.AudienceScore)
 	}
 }
 

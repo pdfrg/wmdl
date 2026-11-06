@@ -17,19 +17,35 @@ import (
 )
 
 type RTRatings struct {
-	URL               string
-	CriticsScore      float64
-	AudienceScore     float64
-	AudienceRealScore float64
-	RealVotes         int
+	URL           string
+	CriticsScore  float64
+	AudienceScore float64
 }
 
-// rtPool is a pool of audience ratings from the RT media-scorecard JSON.
+// rtPool is a pool of audience/critic ratings from the RT media-scorecard JSON.
+//
+// RT renamed the headline percentage field from "score" ("97") to
+// "scorePercent" ("97%") and dropped the audience vote counts
+// (likedCount/notLikedCount) for audience pools. The legacy fields are kept as
+// fallbacks so older/edge payloads still parse.
 type rtPool struct {
-	ScoreType     string `json:"scoreType"` // "VERIFIED" or "ALL"
-	Score         string `json:"score"`     // percentage as string, e.g. "97"
+	ScoreType     string `json:"scoreType"`    // "VERIFIED" or "ALL" (legacy)
+	ScorePercent  string `json:"scorePercent"` // current, e.g. "97%"
+	Score         string `json:"score"`        // legacy, e.g. "97"
 	LikedCount    *int   `json:"likedCount"`
 	NotLikedCount *int   `json:"notLikedCount"`
+}
+
+// pct returns the pool's percentage, preferring the current scorePercent field
+// and falling back to the legacy score field. Returns 0 when absent.
+func (p *rtPool) pct() float64 {
+	if p == nil {
+		return 0
+	}
+	if s := parsePct(p.ScorePercent); s > 0 {
+		return s
+	}
+	return parsePct(p.Score)
 }
 
 type rtScorecardJSON struct {
@@ -55,8 +71,8 @@ func isRTSearchURL(u string) bool {
 	return strings.Contains(u, "/search?search=")
 }
 
-// ScrapeRTRatings fetches an RT movie/TV page, extracts the embedded
-// media-scorecard-json, and returns headline + real audience scores.
+// ScrapeRTRatings fetches an RT movie/TV page and extracts the embedded
+// media-scorecard-json to return headline critics + audience scores.
 func ScrapeRTRatings(ctx context.Context, rtURL string) *RTRatings {
 	ratings := &RTRatings{URL: rtURL}
 
@@ -67,39 +83,28 @@ func ScrapeRTRatings(ctx context.Context, rtURL string) *RTRatings {
 	}
 
 	// --- Critics score ---
-	if data.CriticsScore != nil {
-		if s := parsePct(data.CriticsScore.Score); s > 0 {
-			ratings.CriticsScore = s
-		}
+	if s := data.CriticsScore.pct(); s > 0 {
+		ratings.CriticsScore = s
 	}
 
 	// --- Audience score ---
-	if data.AudienceScore != nil {
-		if s := parsePct(data.AudienceScore.Score); s > 0 {
+	if s := data.AudienceScore.pct(); s > 0 {
+		ratings.AudienceScore = s
+	}
+
+	// --- Fallback: overlay audience (ALL pool) ---
+	if ratings.AudienceScore == 0 && data.Overlay != nil {
+		if s := data.Overlay.AudienceAll.pct(); s > 0 {
 			ratings.AudienceScore = s
 		}
 	}
 
-	// --- Fallback: overlay audience (ALL pool) ---
-	if ratings.AudienceScore == 0 {
-		if ov := data.Overlay; ov != nil && ov.AudienceAll != nil {
-			if s := parsePct(ov.AudienceAll.Score); s > 0 {
-				ratings.AudienceScore = s
-			}
-		}
-	}
-
 	// --- Fallback: overlay critics ---
-	if ratings.CriticsScore == 0 {
-		if ov := data.Overlay; ov != nil && ov.CriticsAll != nil {
-			if s := parsePct(ov.CriticsAll.Score); s > 0 {
-				ratings.CriticsScore = s
-			}
+	if ratings.CriticsScore == 0 && data.Overlay != nil {
+		if s := data.Overlay.CriticsAll.pct(); s > 0 {
+			ratings.CriticsScore = s
 		}
 	}
-
-	// --- Real audience score ---
-	computeRealScore(ratings, data)
 
 	return ratings
 }
@@ -150,6 +155,12 @@ func fetchScorecardOnce(ctx context.Context, rtURL string) (*rtScorecardJSON, er
 		return nil, fmt.Errorf("read body: %w", err)
 	}
 
+	return parseScorecard(body)
+}
+
+// parseScorecard extracts and unmarshals the embedded media-scorecard-json
+// blob from a raw RT title page body.
+func parseScorecard(body []byte) (*rtScorecardJSON, error) {
 	m := scorecardRE.FindSubmatch(body)
 	if m == nil {
 		return nil, fmt.Errorf("media-scorecard-json not found (page %d bytes)", len(body))
@@ -162,52 +173,11 @@ func fetchScorecardOnce(ctx context.Context, rtURL string) (*rtScorecardJSON, er
 	return &data, nil
 }
 
-// computeRealScore computes the unverified-only audience score from the
-// verified push pool subtracted from the all-audience pool. Only computed
-// when the headline score type is VERIFIED — meaning there IS a push pool
-// to strip out.
-func computeRealScore(r *RTRatings, data *rtScorecardJSON) {
-	ov := data.Overlay
-	if ov == nil {
-		return
-	}
-
-	// Only meaningful when the headline represents a VERIFIED (push) pool.
-	// For ALL-type headlines the headline IS the real score already.
-	if data.AudienceScore == nil || data.AudienceScore.ScoreType != "VERIFIED" {
-		return
-	}
-
-	aa := ov.AudienceAll
-	av := ov.AudienceVerified
-
-	hasAll := aa != nil && aa.LikedCount != nil && aa.NotLikedCount != nil
-	hasVer := av != nil && av.LikedCount != nil && av.NotLikedCount != nil
-
-	if !hasAll || !hasVer {
-		return
-	}
-
-	allLikes := *aa.LikedCount
-	allDislikes := *aa.NotLikedCount
-	verLikes := *av.LikedCount
-	verDislikes := *av.NotLikedCount
-
-	unvLikes := allLikes - verLikes
-	unvDislikes := allDislikes - verDislikes
-	unvTotal := unvLikes + unvDislikes
-
-	if unvTotal < 30 {
-		return
-	}
-
-	realScore := float64(unvLikes) / float64(unvTotal) * 100
-
-	r.AudienceRealScore = realScore
-	r.RealVotes = unvTotal
-}
-
+// parsePct parses an RT percentage string such as "97", "97%" or "1,234".
 func parsePct(s string) float64 {
+	s = strings.TrimSpace(s)
+	s = strings.TrimSuffix(s, "%")
+	s = strings.ReplaceAll(s, ",", "")
 	if s == "" {
 		return 0
 	}

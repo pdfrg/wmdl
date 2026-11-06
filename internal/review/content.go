@@ -5,8 +5,6 @@ import (
 	"strings"
 	"time"
 
-	"charm.land/lipgloss/v2"
-
 	"github.com/pdfrg/wmdl/internal/db"
 	"github.com/pdfrg/wmdl/internal/model"
 )
@@ -801,19 +799,7 @@ func (t *TUI) buildRightContent(tl *model.Title, ev *model.ReleaseEvent, rw int,
 			fmtViews(tl.YoutubeViews),
 		)
 
-		audiencePart := fmt.Sprintf("🍿 %s", fmtPct(tl.RTAudienceScore))
-		if tl.RTAudienceRealScore > 0 && tl.RTRealVotes >= 30 {
-			gap := tl.RTAudienceRealScore - tl.RTAudienceScore
-			gapColor := "46"
-			if gap < 0 {
-				gapColor = "196"
-			}
-			gapStyled := lipgloss.NewStyle().Foreground(lipgloss.Color(gapColor)).Render(fmt.Sprintf("%+.0f%%", gap))
-			audiencePart = fmt.Sprintf("%s (real %s, %s) · %s pull votes",
-				audiencePart, fmtPct(tl.RTAudienceRealScore), gapStyled, fmtViews(int64(tl.RTRealVotes)))
-		}
-
-		rtLine := fmt.Sprintf("🍅 %s · %s", fmtPct(tl.RTCriticsScore), audiencePart)
+		rtLine := fmt.Sprintf("🍅 %s · 🍿 %s", fmtPct(tl.RTCriticsScore), fmtPct(tl.RTAudienceScore))
 		b.WriteString("\n\n")
 		b.WriteString(ratingsLine.Render(ratings))
 		b.WriteString("\n")
