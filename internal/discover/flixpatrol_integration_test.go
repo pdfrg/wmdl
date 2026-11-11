@@ -26,7 +26,7 @@ func TestFlixPatrolLiveTurnstile(t *testing.T) {
 	}
 
 	const testPort = 9223
-	kill, err := browser.EnsureRunning(binary, testPort, "wmd-review", false)
+	kill, err := browser.EnsureRunning(binary, testPort, "wmd-review", false, false)
 	require.NoError(t, err)
 	defer func() { _ = kill() }()
 

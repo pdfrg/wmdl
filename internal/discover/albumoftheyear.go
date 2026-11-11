@@ -310,7 +310,7 @@ func (p *AOTYProvider) fetchPageOnce(url string) (string, error) {
 	}
 
 	if err := waitForRealPage(pageCtx, 120*time.Second); err != nil {
-		return "", fmt.Errorf("cloudflare challenge: %w", err)
+		return "", fmt.Errorf("waiting for real page: %w", err)
 	}
 
 	var html string

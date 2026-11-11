@@ -85,6 +85,7 @@ browser:
   binary: "chromium"       # chromium, google-chrome, microsoft-edge, vivaldi, opera
   debug_port: 9222
   profile: "wmd-review"
+  exclude_vpn: false       # launch the scraper browser outside the Mullvad tunnel
 ```
 
 - wmdl validates at startup that `binary` resolves in `$PATH` and fails fast with an
@@ -97,6 +98,16 @@ browser:
   appears, wmdl locates the challenge widget and clicks its checkbox via the debug
   protocol. This requires a **headed** browser — do NOT use `--headless` for scheduled
   runs; Cloudflare blocks headless browsers outright.
+- **VPN:** some Cloudflare-protected sites refuse VPN exit IPs outright with a
+  *"Sorry, you have been blocked / Unable to access"* page. That is not a challenge —
+  there is no checkbox to click, and retrying with the same IP never succeeds.
+  AllMusic is the usual offender with Mullvad. wmdl detects this page and reports the
+  scraper as failed (with a hint) instead of silently returning 0 items. Two ways out:
+  disable the VPN for the scraping host, or set `browser.exclude_vpn: true`, which
+  launches the scraper browser through `mullvad-exclude` so it uses your normal
+  connection while the rest of the system stays on the VPN. The scrape browser
+  process and all its children inherit the exclusion. `mullvad-exclude` must be in
+  `$PATH` (it ships with the Mullvad app); wmdl fails with a clear message if not.
 
 ### Prowlarr
 

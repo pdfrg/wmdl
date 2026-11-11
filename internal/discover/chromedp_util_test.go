@@ -249,6 +249,83 @@ func TestTryClickTurnstileAbsentWidget(t *testing.T) {
 	}
 }
 
+func TestIsCloudflareBlockHTML(t *testing.T) {
+	cases := []struct {
+		name string
+		html string
+		want bool
+	}{
+		{
+			"block page",
+			`<html><head><title>Attention Required! | Cloudflare</title></head><body><h1>Sorry, you have been blocked</h1><h2>You are unable to access allmusic.com</h2></body></html>`,
+			true,
+		},
+		{
+			"block page without full heading",
+			`<html><head><title>Attention Required! | Cloudflare</title></head><body>Cloudflare Ray ID: abc</body></html>`,
+			true,
+		},
+		{
+			"cloudflare error details",
+			`<html><body><div id="cf-error-details">Something went wrong</div></body></html>`,
+			true,
+		},
+		{
+			"turnstile challenge is not a block",
+			`<html><head><title>Just a moment...</title></head><body><div id="cf-chl-widget-0"></div></body></html>`,
+			false,
+		},
+		{
+			"real page",
+			`<html><head><title>Editors' Choice | AllMusic</title></head><body><article class="editorsChoiceItem">x</article></body></html>`,
+			false,
+		},
+		{"empty", ``, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, isCloudflareBlockHTML(tc.html))
+		})
+	}
+}
+
+// TestWaitForRealPageBlockPageFailsFast guards the AllMusic silent-zero bug:
+// Cloudflare's firewall block page carries none of the challenge markers, so
+// waitForRealPage used to accept it as the real page and the scraper reported
+// a successful scrape with 0 items.
+func TestWaitForRealPageBlockPageFailsFast(t *testing.T) {
+	const blockHTML = `<!DOCTYPE html>
+<html><head><title>Attention Required! | Cloudflare</title></head>
+<body><h1>Sorry, you have been blocked</h1><h2>You are unable to access allmusic.com</h2></body></html>`
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte(blockHTML))
+	}))
+	defer srv.Close()
+
+	ct := launchTestBrowser(t)
+
+	if err := chromedp.Run(ct,
+		chromedp.Navigate(srv.URL),
+		chromedp.WaitReady("body"),
+	); err != nil {
+		t.Fatalf("navigate: %v", err)
+	}
+
+	start := time.Now()
+	err := waitForRealPage(ct, 60*time.Second)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, errCloudflareBlock)
+	assert.Contains(t, err.Error(), "exclude_vpn")
+	if elapsed := time.Since(start); elapsed > 15*time.Second {
+		t.Errorf("waitForRealPage took %v on a hard block; it should fail fast", elapsed)
+	}
+	// A hard block is permanent for the current IP — retrying is pointless.
+	assert.False(t, isTransientError(err))
+}
+
 func TestIsChallengeTitle(t *testing.T) {
 	cases := []struct {
 		title string

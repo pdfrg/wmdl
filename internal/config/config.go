@@ -58,6 +58,10 @@ type BrowserConfig struct {
 	DebugPort int    `mapstructure:"debug_port"`
 	Profile   string `mapstructure:"profile"`
 	Binary    string `mapstructure:"binary"`
+	// ExcludeVPN launches the scraping browser outside the Mullvad tunnel via
+	// `mullvad-exclude`. Some sites (AllMusic) hard-block VPN exit IPs with a
+	// Cloudflare block page that cannot be solved like a challenge.
+	ExcludeVPN bool `mapstructure:"exclude_vpn"`
 }
 
 type ProwlarrConfig struct {
@@ -623,6 +627,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("browser.debug_port", 9222)
 	v.SetDefault("browser.profile", "wmd-review")
 	v.SetDefault("browser.binary", "brave")
+	v.SetDefault("browser.exclude_vpn", false)
 	v.SetDefault("downloader.type", "qbittorrent")
 	v.SetDefault("downloader.categories.movies", "Movies")
 	v.SetDefault("downloader.categories.tv", "TV")

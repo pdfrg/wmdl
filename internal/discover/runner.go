@@ -244,14 +244,14 @@ func (r *Runner) Run(ctx context.Context) error {
 			if _, lookErr := exec.LookPath(r.cfg.Browser.Binary); lookErr != nil {
 				return nil, fmt.Errorf("browser %q not found in $PATH: install it or set browser.binary (e.g. chromium)", r.cfg.Browser.Binary)
 			}
-			return browser.EnsureRunning(r.cfg.Browser.Binary, r.cfg.Browser.DebugPort, r.cfg.Browser.Profile, r.headless)
+			return browser.EnsureRunning(r.cfg.Browser.Binary, r.cfg.Browser.DebugPort, r.cfg.Browser.Profile, r.headless, r.cfg.Browser.ExcludeVPN)
 		}()
 		if err != nil {
 			r.browserErr = err
 			r.log.Warn().Err(err).Msg("browser unavailable, some features disabled")
 		} else if killBrave != nil {
 			r.killBrave = killBrave
-			r.log.Info().Int("port", r.cfg.Browser.DebugPort).Str("profile", r.cfg.Browser.Profile).Msg("launched Brave")
+			r.log.Info().Int("port", r.cfg.Browser.DebugPort).Str("profile", r.cfg.Browser.Profile).Bool("exclude_vpn", r.cfg.Browser.ExcludeVPN).Msg("launched Brave")
 		} else {
 			r.log.Info().Int("port", r.cfg.Browser.DebugPort).Msg("connected to Brave")
 		}

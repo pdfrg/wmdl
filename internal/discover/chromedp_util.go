@@ -2,6 +2,7 @@ package discover
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"strings"
@@ -76,6 +77,33 @@ func isCloudflareChallengeHTML(html string) bool {
 		strings.Contains(html, "challenges.cloudflare.com") ||
 		strings.Contains(html, "_cf_chl_opt") ||
 		strings.Contains(html, "cf-chl-widget")
+}
+
+// errCloudflareBlock is returned when Cloudflare serves its firewall block page
+// ("Sorry, you have been blocked") instead of the target page. This is not a
+// challenge — there is nothing to click and retrying will not help. It almost
+// always means the site refuses the current egress IP, which is common for VPN
+// and datacenter exit nodes.
+var errCloudflareBlock = errors.New(
+	`blocked by Cloudflare ("Sorry, you have been blocked") — ` +
+		"if a VPN is active, disable it or set browser.exclude_vpn: true")
+
+// isCloudflareBlockHTML reports whether html is Cloudflare's firewall block
+// page rather than a challenge or the real page. Unlike a challenge it carries
+// no Turnstile markers (no "Just a moment", no _cf_chl_opt), so it previously
+// passed the challenge checks and was parsed as a successful but empty page.
+func isCloudflareBlockHTML(html string) bool {
+	for _, marker := range []string{
+		"Sorry, you have been blocked",
+		"You are unable to access",
+		"Attention Required",
+		"cf-error-details",
+	} {
+		if strings.Contains(html, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 // tryClickTurnstile attempts to dismiss a Cloudflare Turnstile challenge.
@@ -229,6 +257,12 @@ func waitForRealPage(ct context.Context, timeout time.Duration) error {
 			err := retry(3, 500*time.Millisecond, func() error {
 				return chromedp.Run(waitCtx, chromedp.OuterHTML("html", &html))
 			})
+			if err == nil && isCloudflareBlockHTML(html) {
+				// A hard block: no challenge to solve, so fail fast instead of
+				// waiting out the timeout and parsing the block page as empty.
+				log.Warn().Str("title", title).Msg("cloudflare: block page, IP refused")
+				return errCloudflareBlock
+			}
 			if err != nil || !isCloudflareChallengeHTML(html) {
 				log.Debug().Str("title", title).Msg("cloudflare: real page ready")
 				return nil

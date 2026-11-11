@@ -16,7 +16,15 @@ import (
 	"github.com/chromedp/chromedp"
 )
 
-func EnsureRunning(binary string, debugPort int, profile string, headless bool) (func() error, error) {
+// EnsureRunning makes sure a browser is listening on debugPort, launching one
+// if necessary, and returns a kill function for the process it started.
+//
+// When excludeVPN is true the browser is launched through `mullvad-exclude`, so
+// its traffic (and every child process it spawns) bypasses the Mullvad tunnel
+// and egresses via the host's normal connection. Some sites — AllMusic most
+// visibly — hard-block Mullvad exit IPs with a Cloudflare "Sorry, you have been
+// blocked" page that no amount of challenge clicking can clear.
+func EnsureRunning(binary string, debugPort int, profile string, headless, excludeVPN bool) (func() error, error) {
 	addr := fmt.Sprintf("127.0.0.1:%d", debugPort)
 
 	// Kill any existing browser on the debug port (stale compositor state causes
@@ -72,7 +80,21 @@ func EnsureRunning(binary string, debugPort int, profile string, headless bool) 
 	)
 	args = append(args, "--new-window", "about:blank")
 
-	cmd := exec.Command(binary, args...)
+	// Run the browser outside the VPN tunnel when requested. mullvad-exclude
+	// places itself in the split-tunnel cgroup and then execs the real binary,
+	// so the browser and every process it forks inherit the exclusion.
+	launcher := binary
+	launchArgs := args
+	if excludeVPN {
+		excludePath, err := exec.LookPath("mullvad-exclude")
+		if err != nil {
+			return nil, fmt.Errorf("browser.exclude_vpn is enabled but mullvad-exclude was not found in $PATH: install the Mullvad app or disable browser.exclude_vpn")
+		}
+		launcher = excludePath
+		launchArgs = append([]string{binary}, args...)
+	}
+
+	cmd := exec.Command(launcher, launchArgs...)
 	cmd.Stdout = io.Discard
 	cmd.Stderr = io.Discard
 

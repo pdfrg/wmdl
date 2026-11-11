@@ -26,6 +26,10 @@ browser:
   binary: "brave"          # google-chrome, chromium, brave, microsoft-edge, vivaldi, opera
   debug_port: 9222
   profile: "wmd-review"
+  # Launch the scraping browser outside the Mullvad tunnel (via mullvad-exclude).
+  # AllMusic hard-blocks VPN exit IPs with a Cloudflare "Sorry, you have been
+  # blocked" page that cannot be clicked through, so scraping yields 0 items.
+  exclude_vpn: false
 
 # ─── Prowlarr ──────────────────────────────────────────────
 prowlarr:
