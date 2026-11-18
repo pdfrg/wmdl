@@ -61,15 +61,22 @@ to respect the user's time and attention.
 A custom Go template can override the JSON payload via `custom_template` with fields
 `{{.Title}}`, `{{.Message}}`, `{{.Priority}}`.
 
-The discover notification lists pending items per source — these are what
-`wmdl review` will show for the target week. Bookshop works differently: it can only
-see the current week's new releases, so its finds are stored under their timeshifted
-review week ("future week pre-population") and surface in a later review cycle. The
-notification reflects this with an indented line under `bookshop`, e.g.:
+The discover notification is split into two blocks, separated by a blank line.
+The first lists pending events per source; the second lists the titles themselves
+under `Movies`, `TV`, `Anime`, `Music`, and `Books` headings.
+
+Both blocks are built from the persisted **pending** events for the target week —
+the same set `wmdl review` shows. Releases dropped by quality/content filters,
+outside the lookback window, or filed under a different week never appear.
+
+Bookshop works differently: it can only see the current week's new releases, so
+its finds are stored under their timeshifted review week ("future week
+pre-population") and surface in a later review cycle. The notification reflects
+this with an indented line under `bookshop`, e.g.:
 
 ```
-	bookshop: 0
-		14 scraped today, stored under 2026-W36 (reviewable in a future week)
+- bookshop: 0
+  14 scraped today, stored under 2026-W36 (reviewable in a future week)
 ```
 
 If everything scraped belongs to a future week (nothing pending for this one), you get

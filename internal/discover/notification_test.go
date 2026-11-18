@@ -102,7 +102,7 @@ func TestSendNotificationAllFailAlert(t *testing.T) {
 		failedScrapers: map[string]string{"bookshop": "scrape failed"},
 	}
 
-	r.sendNotification(ctx, true, true, true, true, true, nil, nil, nil, nil, 2026, 33, 0)
+	r.sendNotification(ctx, true, true, true, true, true, nil, 2026, 33)
 
 	msg := mockNotifier.Calls[0].Arguments.String(1)
 	assert.Contains(t, msg, "bookshop: scrape failed")
@@ -135,7 +135,7 @@ func TestSendNotificationNormalPathAnnotation(t *testing.T) {
 		failedScrapers: map[string]string{"bookshop": "browser unavailable"},
 	}
 
-	r.sendNotification(ctx, true, true, true, true, true, nil, nil, nil, nil, 2026, 33, 1)
+	r.sendNotification(ctx, true, true, true, true, true, nil, 2026, 33)
 
 	msg := mockNotifier.Calls[0].Arguments.String(1)
 	assert.Contains(t, msg, "bookshop: 0 (browser unavailable)")
@@ -155,7 +155,7 @@ func TestSendNotificationNoPendingNoFailures(t *testing.T) {
 		notify: mockNotifier,
 	}
 
-	r.sendNotification(ctx, true, true, true, true, true, nil, nil, nil, nil, 2026, 33, 0)
+	r.sendNotification(ctx, true, true, true, true, true, nil, 2026, 33)
 
 	assert.Len(t, mockNotifier.Calls, 0)
 }
@@ -237,12 +237,16 @@ func TestSendNotificationBookshopPrePopWithPending(t *testing.T) {
 		{Source: "bookshop", Title: "Book A", ArtistName: "Author A", ReleaseDate: "August 25, 2026"},
 		{Source: "bookshop", Title: "Book B", ArtistName: "Author B", ReleaseDate: "August 25, 2026"},
 	}
-	r.sendNotification(ctx, true, true, true, true, true, nil, nil, nil, books, 2026, 35, 3)
+	r.sendNotification(ctx, true, true, true, true, true, books, 2026, 35)
 
 	msg := mockNotifier.Calls[0].Arguments.String(1)
 	assert.Contains(t, msg, "tmdb movie: 1")
 	assert.Contains(t, msg, "bookshop:")
 	assert.Contains(t, msg, "2 scraped today, stored under 2026-W36")
+	// Future-week bookshop finds have no pending event this week, so they must
+	// not leak into the per-title Books list.
+	assert.NotContains(t, msg, "Book A")
+	assert.NotContains(t, msg, "Books:")
 	mockNotifier.AssertExpectations(t)
 }
 
@@ -263,10 +267,111 @@ func TestSendNotificationPrePopOnlyStillNotifies(t *testing.T) {
 	books := []ScrapedItem{
 		{Source: "bookshop", Title: "Book A", ArtistName: "Author A", ReleaseDate: "August 25, 2026"},
 	}
-	r.sendNotification(ctx, true, true, true, true, true, nil, nil, nil, books, 2026, 35, 0)
+	r.sendNotification(ctx, true, true, true, true, true, books, 2026, 35)
 
 	msg := mockNotifier.Calls[0].Arguments.String(1)
 	assert.Contains(t, msg, "No releases pending for 2026-W35")
 	assert.Contains(t, msg, "1 scraped today, stored under 2026-W36")
+	mockNotifier.AssertExpectations(t)
+}
+
+// TestSendNotificationSectionsFromPendingEvents verifies that the per-title
+// lists are built from persisted pending events (what `wmdl review` shows),
+// not the raw scrape batch. Rejected/filtered events must be omitted, and each
+// section must be separated by a blank line.
+func TestSendNotificationSectionsFromPendingEvents(t *testing.T) {
+	d := openTestDB(t)
+	ctx := context.Background()
+
+	movieID, err := d.UpsertTitle(ctx, &model.Title{
+		TmdbID: 301, Title: "Pending Movie", Year: 2026,
+		MediaType: model.MediaTypeMovie, Networks: "A24",
+	})
+	require.NoError(t, err)
+	_, err = d.CreateReleaseEvent(ctx, &model.ReleaseEvent{
+		TitleID: movieID, Source: "tmdb-discover", Status: model.StatusPending,
+		ISOYear: 2026, ISOWeek: 40,
+	})
+	require.NoError(t, err)
+
+	tvID, err := d.UpsertTitle(ctx, &model.Title{
+		TmdbID: 302, Title: "Pending Show", Year: 2026,
+		MediaType: model.MediaTypeTV, Networks: "HBO",
+	})
+	require.NoError(t, err)
+	_, err = d.CreateReleaseEvent(ctx, &model.ReleaseEvent{
+		TitleID: tvID, Source: "flixpatrol", Status: model.StatusPending,
+		ISOYear: 2026, ISOWeek: 40,
+	})
+	require.NoError(t, err)
+
+	animeID, err := d.UpsertTitle(ctx, &model.Title{
+		MalID: 303, Title: "Pending Anime", Year: 2026, MediaType: model.MediaTypeAnime,
+	})
+	require.NoError(t, err)
+	_, err = d.CreateReleaseEvent(ctx, &model.ReleaseEvent{
+		TitleID: animeID, Source: "anilist", Status: model.StatusPending,
+		ISOYear: 2026, ISOWeek: 40,
+	})
+	require.NoError(t, err)
+
+	// Below quality threshold / dropped by content filter: excluded from review,
+	// so it must not appear in the notification either.
+	rejectedID, err := d.UpsertTitle(ctx, &model.Title{
+		TmdbID: 304, Title: "Rejected Movie", Year: 2026, MediaType: model.MediaTypeMovie,
+	})
+	require.NoError(t, err)
+	_, err = d.CreateReleaseEvent(ctx, &model.ReleaseEvent{
+		TitleID: rejectedID, Source: "tmdb-discover", Status: model.StatusRejected,
+		ISOYear: 2026, ISOWeek: 40,
+	})
+	require.NoError(t, err)
+
+	albumID, err := d.UpsertAlbumRelease(ctx, &model.AlbumRelease{
+		ArtistName: "Test Artist", Title: "Test Album", Year: 2026, MBID: "mbid-notify-1",
+	})
+	require.NoError(t, err)
+	_, err = d.CreateAlbumReleaseEvent(ctx, &model.AlbumReleaseEvent{
+		ReleaseID: albumID, Source: "albumoftheyear", Status: model.StatusPending,
+		ISOYear: 2026, ISOWeek: 40,
+	})
+	require.NoError(t, err)
+
+	authorID, err := d.UpsertAuthor(ctx, &model.Author{Name: "Test Author"})
+	require.NoError(t, err)
+	bookID, err := d.UpsertBook(ctx, &model.Book{
+		AuthorID: authorID, Title: "Test Book", ISBN13: "9780000000099", ReleaseYear: 2026,
+	})
+	require.NoError(t, err)
+	_, err = d.CreateBookReleaseEvent(ctx, &model.BookReleaseEvent{
+		BookID: bookID, Source: "goodreads_blog", Status: model.StatusPending,
+		FormatPref: model.BookFormatBoth, ISOYear: 2026, ISOWeek: 40,
+	})
+	require.NoError(t, err)
+
+	mockNotifier := &notifier.MockNotifier{}
+	mockNotifier.On("Send", "wmdl: New Releases", mock.Anything, 5).Return(nil).Once()
+
+	r := &Runner{
+		log:    zerolog.Nop(),
+		cfg:    notificationTestConfig(),
+		db:     d,
+		notify: mockNotifier,
+	}
+	r.sendNotification(ctx, true, true, true, true, true, nil, 2026, 40)
+
+	msg := mockNotifier.Calls[0].Arguments.String(1)
+	assert.Contains(t, msg, "**5 new releases** ready for review:")
+	assert.Contains(t, msg, "**Movies:**\n- Pending Movie (2026) [A24]")
+	assert.Contains(t, msg, "**TV:**\n- Pending Show (2026) [HBO]")
+	assert.Contains(t, msg, "**Anime:**\n- Pending Anime (2026)")
+	assert.Contains(t, msg, "**Music:**\n- Test Artist — Test Album (2026)")
+	assert.Contains(t, msg, "**Books:**\n- Test Author — Test Book (2026)")
+	assert.NotContains(t, msg, "Rejected Movie")
+
+	// Blank line between the source breakdown and each section.
+	for _, heading := range []string{"**Movies:**", "**TV:**", "**Anime:**", "**Music:**", "**Books:**"} {
+		assert.Contains(t, msg, "\n\n"+heading)
+	}
 	mockNotifier.AssertExpectations(t)
 }

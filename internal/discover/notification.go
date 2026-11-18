@@ -35,7 +35,7 @@ func sourceDisplayName(source string, mt model.MediaType) string {
 	}
 }
 
-func (r *Runner) sendNotification(ctx context.Context, wantMovie, wantTV, wantAnime, wantMusic, wantBooks bool, uniqueVideos, uniqueAnime, uniqueMusic, bookItems []ScrapedItem, progYear, progWeek, totalEvents int) {
+func (r *Runner) sendNotification(ctx context.Context, wantMovie, wantTV, wantAnime, wantMusic, wantBooks bool, bookItems []ScrapedItem, progYear, progWeek int) {
 	if r.notify == nil {
 		return
 	}
@@ -159,7 +159,8 @@ func (r *Runner) sendNotification(ctx context.Context, wantMovie, wantTV, wantAn
 		return
 	}
 
-	msg := fmt.Sprintf("**%d new release%s** ready for review:\n",
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "**%d new release%s** ready for review:\n",
 		pendingTotal, map[bool]string{true: "s", false: ""}[pendingTotal != 1])
 
 	labels := make([]string, 0, len(sourceCounts))
@@ -170,70 +171,121 @@ func (r *Runner) sendNotification(ctx context.Context, wantMovie, wantTV, wantAn
 
 	for _, l := range labels {
 		if note, ok := sourceNotes[l]; ok {
-			msg += fmt.Sprintf("\n\t%s: %d (%s)", l, sourceCounts[l], note)
+			fmt.Fprintf(&sb, "\n- %s: %d (%s)", l, sourceCounts[l], note)
 		} else {
-			msg += fmt.Sprintf("\n\t%s: %d", l, sourceCounts[l])
+			fmt.Fprintf(&sb, "\n- %s: %d", l, sourceCounts[l])
 		}
 		if l == "bookshop" && bsNote != "" {
-			msg += fmt.Sprintf("\n\t\t%s", bsNote)
+			fmt.Fprintf(&sb, "\n  %s", bsNote)
 		}
 	}
 
-	var movieItems, tvItems []ScrapedItem
-	for _, item := range uniqueVideos {
-		switch item.MediaType {
-		case model.MediaTypeTV:
-			tvItems = append(tvItems, item)
-		default:
-			movieItems = append(movieItems, item)
+	// Item lists come from the persisted pending events for this week, not the
+	// raw scrape batch: items dropped by quality/content filters, filed under a
+	// different lookback week, or pre-populated for a future week (bookshop)
+	// never become pending events here, so they must not appear below.
+	for _, sec := range r.pendingNotificationSections(ctx, progYear, progWeek) {
+		if len(sec.lines) == 0 {
+			continue
+		}
+		sb.WriteString("\n\n**")
+		sb.WriteString(sec.heading)
+		sb.WriteString(":**")
+		for _, line := range sec.lines {
+			sb.WriteString("\n- ")
+			sb.WriteString(line)
 		}
 	}
 
-	// Best-effort: fill in TV network / movie studio from the titles table
-	// (populated during processItem TMDB enrichment). Items without a TMDB
-	// ID (e.g. web-scraped) keep no suffix rather than failing the notify.
-	fillNetworks := func(items []ScrapedItem) {
-		for i, item := range items {
-			if item.Networks != "" || item.TmdbID <= 0 {
-				continue
-			}
-			if t, err := r.db.GetTitleByTmdbID(ctx, item.TmdbID); err == nil && t != nil {
-				items[i].Networks = t.Networks
-			}
-		}
-	}
-	fillNetworks(movieItems)
-	fillNetworks(tvItems)
-
-	appendSection := func(items []ScrapedItem, heading string, includeArtist bool) {
-		if len(items) == 0 {
-			return
-		}
-		msg += fmt.Sprintf("\n**%s:**", heading)
-		for _, item := range items {
-			label := item.Title
-			if includeArtist {
-				label = item.ArtistName + " — " + label
-			}
-			if item.Year > 0 {
-				label = fmt.Sprintf("%s (%d)", label, item.Year)
-			}
-			if item.Networks != "" {
-				label += " [" + item.Networks + "]"
-			}
-			msg += "\n- " + label
-		}
-	}
-
-	appendSection(movieItems, "Movies", false)
-	appendSection(tvItems, "TV", false)
-	appendSection(uniqueAnime, "Anime", false)
-	appendSection(uniqueMusic, "Music", true)
-	appendSection(bookItems, "Books", true)
-
-	if err := r.notify.Send("wmdl: New Releases", msg, 5); err != nil {
+	if err := r.notify.Send("wmdl: New Releases", sb.String(), 5); err != nil {
 		r.log.Warn().Err(err).Msg("notification failed")
 	}
+}
+
+// notifySection is one heading + item list in a discover notification.
+type notifySection struct {
+	heading string
+	lines   []string
+}
+
+// pendingNotificationSections renders the per-title lists for a week from the
+// persisted pending events, so the notification matches what `wmdl review`
+// will show. This intentionally ignores the raw scrape batch passed to
+// sendNotification: those items may have been rejected by quality/content
+// filters or filed under a different week.
+func (r *Runner) pendingNotificationSections(ctx context.Context, year, week int) []notifySection {
+	var sections []notifySection
+
+	events, err := r.db.ListEventsByWeekAndStatus(ctx, year, week, model.StatusPending)
+	if err != nil {
+		r.log.Warn().Err(err).Msg("loading pending events for notification")
+	}
+	var movieLines, tvLines, animeLines []string
+	for _, ev := range events {
+		if ev.Title == nil {
+			continue
+		}
+		label := notifyTitleLabel(ev.Title.Title, ev.Title.Year, ev.Title.Networks)
+		switch ev.Title.MediaType {
+		case model.MediaTypeTV:
+			tvLines = append(tvLines, label)
+		case model.MediaTypeAnime:
+			animeLines = append(animeLines, label)
+		default:
+			movieLines = append(movieLines, label)
+		}
+	}
+	sections = append(sections,
+		notifySection{"Movies", movieLines},
+		notifySection{"TV", tvLines},
+		notifySection{"Anime", animeLines},
+	)
+
+	albumEvents, err := r.db.ListAlbumReleaseEventsByWeekAndStatus(ctx, year, week, model.StatusPending)
+	if err != nil {
+		r.log.Warn().Err(err).Msg("loading pending albums for notification")
+	}
+	var musicLines []string
+	for _, ae := range albumEvents {
+		if ae.Release == nil {
+			continue
+		}
+		musicLines = append(musicLines, notifyTitleLabel(
+			ae.Release.ArtistName+" — "+ae.Release.Title, ae.Release.Year, ""))
+	}
+	sections = append(sections, notifySection{"Music", musicLines})
+
+	bookEvents, err := r.db.ListBookEventsByWeekAndStatus(ctx, year, week, model.StatusPending)
+	if err != nil {
+		r.log.Warn().Err(err).Msg("loading pending books for notification")
+	}
+	var bookLines []string
+	for _, be := range bookEvents {
+		if be.Book == nil {
+			continue
+		}
+		label := be.Book.Title
+		if be.Author != nil && be.Author.Name != "" {
+			label = be.Author.Name + " — " + label
+		}
+		bookLines = append(bookLines, notifyTitleLabel(label, be.Book.ReleaseYear, ""))
+	}
+	sections = append(sections, notifySection{"Books", bookLines})
+
+	return sections
+}
+
+// notifyTitleLabel appends the year and network/studio suffixes used in the
+// per-title notification lists.
+func notifyTitleLabel(title string, year int, networks string) string {
+	label := title
+	if year > 0 {
+		label = fmt.Sprintf("%s (%d)", label, year)
+	}
+	if networks != "" {
+		label += " [" + networks + "]"
+	}
+	return label
 }
 
 // bookshopPrePopSummary summarizes where this run's bookshop finds will be

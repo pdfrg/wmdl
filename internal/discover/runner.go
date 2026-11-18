@@ -361,7 +361,7 @@ func (r *Runner) Run(ctx context.Context) error {
 			if !r.hasTargetWeek {
 				py, pw = time.Now().ISOWeek()
 			}
-			r.sendNotification(ctx, wantMovie, wantTV, wantAnime, wantMusic, wantBooks, nil, nil, nil, nil, py, pw, 0)
+			r.sendNotification(ctx, wantMovie, wantTV, wantAnime, wantMusic, wantBooks, nil, py, pw)
 		}
 		return nil
 	}
@@ -404,18 +404,6 @@ func (r *Runner) Run(ctx context.Context) error {
 		}
 		seenMusic[key] = true
 		uniqueMusic = append(uniqueMusic, item)
-	}
-
-	// Deduplicate anime items by title+year
-	seenAnime := make(map[string]bool)
-	var uniqueAnime []ScrapedItem
-	for _, item := range animeItems {
-		key := fmt.Sprintf("%s|%d", item.Title, item.Year)
-		if seenAnime[key] {
-			continue
-		}
-		seenAnime[key] = true
-		uniqueAnime = append(uniqueAnime, item)
 	}
 
 	// Deduplicate book items by normalized author+title — merge sources instead of discarding
@@ -643,7 +631,7 @@ func (r *Runner) Run(ctx context.Context) error {
 		r.log.Warn().Err(err).Msg("library cache failed (will be fetched during process)")
 	}
 
-	r.sendNotification(ctx, wantMovie, wantTV, wantAnime, wantMusic, wantBooks, uniqueVideos, uniqueAnime, uniqueMusic, bookItems, progYear, progWeek, totalEvents)
+	r.sendNotification(ctx, wantMovie, wantTV, wantAnime, wantMusic, wantBooks, bookItems, progYear, progWeek)
 
 	return nil
 }
