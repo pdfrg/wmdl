@@ -17,6 +17,10 @@ const (
 	StatusApproved   ReleaseStatus = "approved"
 	StatusRejected   ReleaseStatus = "rejected"
 	StatusDownloaded ReleaseStatus = "downloaded"
+	// StatusFiltered marks a scraped item that failed a quality/content
+	// cutoff. It is kept in the DB so review can show it on demand, but it is
+	// never counted as pending, notified, or processed automatically.
+	StatusFiltered ReleaseStatus = "filtered"
 )
 
 type ReleaseType string
@@ -100,9 +104,12 @@ type ReleaseEvent struct {
 	Status         ReleaseStatus
 	PreviousStatus ReleaseStatus
 	Notes          string
-	CreatedAt      string
-	ISOYear        int
-	ISOWeek        int
+	// FilterReason explains why a filtered item was below a cutoff. Populated
+	// by review's reason loader; empty for non-filtered events.
+	FilterReason string
+	CreatedAt    string
+	ISOYear      int
+	ISOWeek      int
 }
 
 type Download struct {
@@ -188,6 +195,7 @@ type AlbumReleaseEvent struct {
 	Status         ReleaseStatus
 	PreviousStatus ReleaseStatus
 	Notes          string
+	FilterReason   string
 	CreatedAt      string
 	ISOYear        int
 	ISOWeek        int
@@ -253,6 +261,7 @@ type BookReleaseEvent struct {
 	Status             ReleaseStatus
 	PreviousStatus     ReleaseStatus
 	Notes              string
+	FilterReason       string
 	CreatedAt          string
 	ISOYear            int
 	ISOWeek            int

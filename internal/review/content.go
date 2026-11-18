@@ -52,6 +52,11 @@ func (t *TUI) buildReviewContent() string {
 			return fmt.Sprintf("No new anime items for W%d.\nPreviously-reviewed anime items are in %s.\nRun: wmdl review --week %s",
 				t.week, t.prevAnimeWeek, t.prevAnimeWeek)
 		}
+		if !t.showFiltered {
+			if n := t.filteredUndecided(); n > 0 {
+				return fmt.Sprintf("no pending items match the current filter\n%d below-cutoff item(s) hidden — press f to show", n)
+			}
+		}
 		return "no items match the current filter"
 	}
 
@@ -264,6 +269,11 @@ func (t *TUI) buildMusicContent(ae *db.EventWithAlbumRelease, rw int, maxLines i
 	b.WriteString(decorationStyle.Render(decoration))
 	b.WriteString(titleStyle.Width(avail - 2).Render(title))
 
+	if banner := it.filteredBanner(); banner != "" {
+		b.WriteString("\n")
+		b.WriteString(banner)
+	}
+
 	b.WriteString("\n\n")
 
 	isAllMusic := ev.Source == "allmusic"
@@ -416,6 +426,11 @@ func (t *TUI) buildBookContent(be *db.EventWithBook, rw int, maxLines int) strin
 	b.WriteString(" ")
 	b.WriteString(decorationStyle.Render(decoration))
 	b.WriteString(titleStyle.Width(avail - 2).Render(title))
+
+	if banner := it.filteredBanner(); banner != "" {
+		b.WriteString("\n")
+		b.WriteString(banner)
+	}
 
 	b.WriteString("\n\n")
 
@@ -651,6 +666,13 @@ func (t *TUI) buildRightContent(tl *model.Title, ev *model.ReleaseEvent, rw int,
 	b.WriteString(" ")
 	b.WriteString(decorationStyle.Render(decoration))
 	b.WriteString(titleStyle.Width(avail - 2).Render(title + extra))
+
+	if it != nil {
+		if banner := it.filteredBanner(); banner != "" {
+			b.WriteString("\n")
+			b.WriteString(banner)
+		}
+	}
 
 	b.WriteString("\n\n")
 	b.WriteString(tagStyle.Render(fmt.Sprintf("[%s] %s", mediaType, releaseType)))
@@ -927,14 +949,26 @@ func (t *TUI) buildConfirmContent() string {
 	b.WriteString("\n")
 
 	undecided := 0
+	filteredHidden := 0
 	for _, it := range t.items {
-		if it.decision == decisionNone {
-			undecided++
+		if it.decision != decisionNone {
+			continue
 		}
+		if it.isFiltered() {
+			filteredHidden++
+			continue
+		}
+		undecided++
 	}
 	if undecided > 0 {
 		b.WriteString(confirmEmptyStyle.Render(fmt.Sprintf("  %d item(s) still undecided — will be skipped", undecided)))
 		b.WriteString("\n")
+	}
+	if filteredHidden > 0 {
+		b.WriteString(confirmEmptyStyle.Render(fmt.Sprintf("  %d below-cutoff item(s) left filtered — use f to show", filteredHidden)))
+		b.WriteString("\n")
+	}
+	if undecided > 0 || filteredHidden > 0 {
 		b.WriteString("\n")
 	}
 

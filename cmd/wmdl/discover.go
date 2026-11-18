@@ -108,7 +108,7 @@ Notes:
 			if discovered && !headless && term.IsTerminal(int(os.Stdin.Fd())) {
 				fmt.Fprintln(os.Stderr)
 				if process.PromptYesNo(cmd.Context(), "Review this week now?") {
-					approved, err := runReviewForWeek(cmd.Context(), database, cfg, targetYear, targetWeek)
+					approved, err := runReviewForWeek(cmd.Context(), database, cfg, targetYear, targetWeek, false)
 					if err != nil {
 						return err
 					}

@@ -153,6 +153,33 @@ func FilterBook(f *config.ContentFilter, b *model.Book) FilterResult {
 	return FilterResult{Passed: true}
 }
 
+// matchesFavorite reports whether name appears in a case-insensitive favorite
+// list. Entries are compared as whole trimmed names (not substrings) so a
+// favorite "Nile" does not accidentally match "Nile Rodgers".
+func matchesFavorite(list []string, name string) bool {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return false
+	}
+	for _, entry := range list {
+		if strings.EqualFold(strings.TrimSpace(entry), name) {
+			return true
+		}
+	}
+	return false
+}
+
+// matchesFavoriteArtist handles collaboration strings like "A / B" by
+// checking each credited artist independently.
+func matchesFavoriteArtist(list []string, artist string) bool {
+	for _, a := range strings.Split(artist, " / ") {
+		if matchesFavorite(list, a) {
+			return true
+		}
+	}
+	return false
+}
+
 func HasOverrideGenre(f *config.ContentFilter, genres string) bool {
 	if len(f.OverrideGenres) == 0 || genres == "" {
 		return false

@@ -113,6 +113,7 @@ func (r *Runner) buildProviders(wantMovie, wantTV, wantAnime, wantMusic, wantBoo
 		lo, hi := r.lookbackRange("anime", r.cfg.MediaTypes.Anime.LookbackWeeks)
 		for wk := lo; wk <= hi; wk++ {
 			anilist := NewAniListProvider(r.cfg.MediaTypes.Anime)
+			anilist.SetStoreFiltered(r.cfg.Filtered.Store)
 			if r.hasTargetWeek {
 				animeYear, animeWeek := addISOWeekOffset(r.targetYear, r.targetWeek, wk)
 				anilist.SetWeekRange(animeYear, animeWeek)
@@ -120,6 +121,7 @@ func (r *Runner) buildProviders(wantMovie, wantTV, wantAnime, wantMusic, wantBoo
 			providers = append(providers, anilist)
 
 			tenrai := NewTenraiAnimeProvider(r.cfg.MediaTypes.Anime)
+			tenrai.SetStoreFiltered(r.cfg.Filtered.Store)
 			if r.hasTargetWeek {
 				animeYear, animeWeek := addISOWeekOffset(r.targetYear, r.targetWeek, wk)
 				tenrai.SetWeekRange(animeYear, animeWeek)
@@ -206,6 +208,7 @@ func (r *Runner) buildProviders(wantMovie, wantTV, wantAnime, wantMusic, wantBoo
 						continue
 					}
 					aoty := NewAOTYProvider(r.browserCtx, r.cfg.MediaTypes.Music.Filter)
+					aoty.SetStoreFiltered(r.cfg.Filtered.Store)
 					if r.hasTargetWeek {
 						aoty.SetWeekRange(musicYear, musicWeek)
 					}

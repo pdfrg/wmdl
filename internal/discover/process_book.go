@@ -212,21 +212,35 @@ func (r *Runner) processBookItem(ctx context.Context, item ScrapedItem, progYear
 	rating := item.ImdbRating
 	ratingsCount := item.RatingsCount
 
-	if HasOverrideGenre(&r.cfg.MediaTypes.Books.Filter.ContentFilter, tags) {
-		r.log.Info().Str("book", item.Title).Msg("override genre matched, skipping score filter")
-	} else {
-		minRating := r.cfg.MediaTypes.Books.Filter.MinRating
-		minRatings := r.cfg.MediaTypes.Books.Filter.MinRatings
+	filterStatus := model.StatusPending
+	filterReason := ""
+	storeFiltered := func(reason string) bool {
+		if !r.cfg.Filtered.Store {
+			r.log.Info().Str("book", item.Title).Str("reason", reason).Msg("below filter, skipping")
+			return false
+		}
+		filterStatus = model.StatusFiltered
+		filterReason = reason
+		r.log.Info().Str("book", item.Title).Str("reason", reason).Msg("below filter, storing as filtered")
+		return true
+	}
 
-		if ratingsCount > 0 {
-			if minRatings > 0 && ratingsCount < minRatings {
-				r.log.Info().Str("book", item.Title).Int("ratings", ratingsCount).Int("min", minRatings).Msg("below min_ratings filter, skipping")
+	bookFilter := r.cfg.MediaTypes.Books.Filter
+	if HasOverrideGenre(&bookFilter.ContentFilter, tags) {
+		r.log.Info().Str("book", item.Title).Msg("override genre matched, skipping score filter")
+	} else if matchesFavorite(bookFilter.FavoriteAuthors, authorName) {
+		r.log.Info().Str("book", item.Title).Str("author", authorName).Msg("favorite author matched, skipping score filter")
+	} else {
+		minRating := bookFilter.MinRating
+		minRatings := bookFilter.MinRatings
+
+		if ratingsCount > 0 && minRatings > 0 && ratingsCount < minRatings {
+			if !storeFiltered(fmt.Sprintf("%d ratings below min %d", ratingsCount, minRatings)) {
 				return nil
 			}
 		}
-		if rating > 0 {
-			if minRating > 0 && rating < minRating {
-				r.log.Info().Str("book", item.Title).Float64("rating", rating).Float64("min", minRating).Msg("below min_rating filter, skipping")
+		if rating > 0 && minRating > 0 && rating < minRating {
+			if !storeFiltered(fmt.Sprintf("rating %.1f below min %.1f (%d ratings)", rating, minRating, ratingsCount)) {
 				return nil
 			}
 		}
@@ -273,8 +287,9 @@ func (r *Runner) processBookItem(ctx context.Context, item ScrapedItem, progYear
 		Tags:     tags,
 	}
 	if result := FilterBook(&r.cfg.MediaTypes.Books.Filter.ContentFilter, filterBook); !result.Passed {
-		r.log.Info().Str("book", title).Str("reason", result.Reason).Msg("content filter: skipping")
-		return nil
+		if !storeFiltered(result.Reason) {
+			return nil
+		}
 	}
 
 	err := r.db.Transaction(ctx, func(tx *sql.Tx) error {
@@ -352,28 +367,41 @@ func (r *Runner) processBookItem(ctx context.Context, item ScrapedItem, progYear
 		}
 
 		if existing != nil {
+			mergeSources := func() error {
+				if existing.Source == item.Source {
+					return nil
+				}
+				existingSrcSet := make(map[string]bool)
+				for _, s := range strings.Split(existing.Source, ",") {
+					existingSrcSet[strings.TrimSpace(s)] = true
+				}
+				for _, s := range strings.Split(item.Source, ",") {
+					if existingSrcSet[strings.TrimSpace(s)] {
+						continue
+					}
+					a := &ScrapedItem{Source: existing.Source, Notes: existing.Notes}
+					b := &ScrapedItem{Source: item.Source, Notes: item.Notes}
+					mergeBookItems(a, b)
+					return r.db.UpdateBookReleaseEventSourceAndNotesTx(ctx, tx, existing.ID, a.Source, a.Notes)
+				}
+				return nil
+			}
+
 			switch existing.Status {
 			case model.StatusPending:
-				if existing.Source != item.Source {
-					existingSrcSet := make(map[string]bool)
-					for _, s := range strings.Split(existing.Source, ",") {
-						existingSrcSet[strings.TrimSpace(s)] = true
+				if err := mergeSources(); err != nil {
+					return fmt.Errorf("updating event source: %w", err)
+				}
+				return nil
+			case model.StatusFiltered:
+				if err := mergeSources(); err != nil {
+					return fmt.Errorf("updating event source: %w", err)
+				}
+				if filterStatus == model.StatusPending {
+					if err := r.db.UpdateBookReleaseEventStatusAndFilterReasonTx(ctx, tx, existing.ID, model.StatusPending, ""); err != nil {
+						return fmt.Errorf("promoting filtered book event: %w", err)
 					}
-					needsMerge := false
-					for _, s := range strings.Split(item.Source, ",") {
-						if !existingSrcSet[strings.TrimSpace(s)] {
-							needsMerge = true
-							break
-						}
-					}
-					if needsMerge {
-						a := &ScrapedItem{Source: existing.Source, Notes: existing.Notes}
-						b := &ScrapedItem{Source: item.Source, Notes: item.Notes}
-						mergeBookItems(a, b)
-						if err := r.db.UpdateBookReleaseEventSourceAndNotesTx(ctx, tx, existing.ID, a.Source, a.Notes); err != nil {
-							return fmt.Errorf("updating event source: %w", err)
-						}
-					}
+					r.log.Info().Str("book", title).Msg("previously filtered book now passes filters, re-queued")
 				}
 				return nil
 			case model.StatusApproved, model.StatusDownloaded:
@@ -390,14 +418,15 @@ func (r *Runner) processBookItem(ctx context.Context, item ScrapedItem, progYear
 			evtYear, evtWeek = r.bookshopStorageWeek(storeYear, storeWeek)
 		}
 		evt := &model.BookReleaseEvent{
-			BookID:      bookID,
-			Source:      item.Source,
-			ReleaseDate: releaseDate,
-			FormatPref:  formatPref,
-			Notes:       item.Notes,
-			Status:      model.StatusPending,
-			ISOYear:     evtYear,
-			ISOWeek:     evtWeek,
+			BookID:       bookID,
+			Source:       item.Source,
+			ReleaseDate:  releaseDate,
+			FormatPref:   formatPref,
+			Notes:        item.Notes,
+			Status:       filterStatus,
+			FilterReason: filterReason,
+			ISOYear:      evtYear,
+			ISOWeek:      evtWeek,
 		}
 		if _, err := r.db.CreateBookReleaseEventTx(ctx, tx, evt); err != nil {
 			return fmt.Errorf("saving book release event: %w", err)

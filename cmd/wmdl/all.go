@@ -45,7 +45,7 @@ skipping the intermediate chain prompts.`,
 			if _, err := runDiscoverForWeek(ctx, database, cfg, targetYear, targetWeek, false, nil, nil); err != nil {
 				return err
 			}
-			if _, err := runReviewForWeek(ctx, database, cfg, targetYear, targetWeek); err != nil {
+			if _, err := runReviewForWeek(ctx, database, cfg, targetYear, targetWeek, false); err != nil {
 				return err
 			}
 			if err := runProcessForWeek(ctx, database, cfg, targetYear, targetWeek, ""); err != nil {

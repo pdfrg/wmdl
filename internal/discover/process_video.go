@@ -270,9 +270,16 @@ func (r *Runner) processItem(ctx context.Context, item ScrapedItem, progYear, pr
 	if mediaType == model.MediaTypeTV {
 		cf = &r.cfg.MediaTypes.TV.Filter
 	}
+	filterStatus := model.StatusPending
+	filterReason := ""
 	if result := FilterTitle(cf, title); !result.Passed {
-		r.log.Info().Str("title", item.Title).Str("reason", result.Reason).Msg("content filter: skipping")
-		return nil
+		if !r.cfg.Filtered.Store {
+			r.log.Info().Str("title", item.Title).Str("reason", result.Reason).Msg("content filter: skipping")
+			return nil
+		}
+		filterStatus = model.StatusFiltered
+		filterReason = result.Reason
+		r.log.Info().Str("title", item.Title).Str("reason", result.Reason).Msg("content filter: storing as filtered")
 	}
 
 	var titleID int64
@@ -310,6 +317,17 @@ func (r *Runner) processItem(ctx context.Context, item ScrapedItem, progYear, pr
 				if evtNotes == "" {
 					return nil
 				}
+			case model.StatusFiltered:
+				// A filtered item that now passes the filters (e.g. the user
+				// lowered a cutoff) is promoted back to pending. Otherwise it
+				// stays filtered and hidden from the normal review list.
+				if filterStatus == model.StatusPending {
+					if err := r.db.UpdateReleaseEventStatusAndFilterReasonTx(ctx, tx, existing.ID, model.StatusPending, ""); err != nil {
+						return fmt.Errorf("promoting filtered event: %w", err)
+					}
+					r.log.Info().Str("title", item.Title).Msg("previously filtered item now passes filters, re-queued")
+				}
+				return nil
 			case model.StatusRejected:
 				// Re-queue only when the release type changes
 				// (e.g. streaming → physical upgrade).
@@ -326,9 +344,10 @@ func (r *Runner) processItem(ctx context.Context, item ScrapedItem, progYear, pr
 			Source:         item.Source,
 			ReleaseType:    item.ReleaseType,
 			ReleaseDate:    item.ReleaseDate,
-			Status:         model.StatusPending,
+			Status:         filterStatus,
 			PreviousStatus: evtPrev,
 			Notes:          evtNotes,
+			FilterReason:   filterReason,
 			ISOYear:        progYear,
 			ISOWeek:        progWeek,
 		}

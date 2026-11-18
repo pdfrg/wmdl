@@ -72,6 +72,43 @@ func (it *itemState) isDownloaded() bool {
 	}
 }
 
+// isFiltered reports whether the item was persisted with status "filtered"
+// (below a quality/content cutoff). Hidden from the normal list unless the
+// user toggles the filtered view.
+func (it *itemState) isFiltered() bool {
+	switch {
+	case it.bookEvent != nil:
+		return it.bookEvent.Event.Status == model.StatusFiltered
+	case it.albumEvent != nil:
+		return it.albumEvent.Event.Status == model.StatusFiltered
+	default:
+		return it.event.Event.Status == model.StatusFiltered
+	}
+}
+
+func (it *itemState) filterReason() string {
+	switch {
+	case it.bookEvent != nil:
+		return it.bookEvent.Event.FilterReason
+	case it.albumEvent != nil:
+		return it.albumEvent.Event.FilterReason
+	default:
+		return it.event.Event.FilterReason
+	}
+}
+
+// filteredBanner renders the reason a below-cutoff item was hidden.
+func (it *itemState) filteredBanner() string {
+	if !it.isFiltered() {
+		return ""
+	}
+	reason := it.filterReason()
+	if reason == "" {
+		reason = "below quality cutoff"
+	}
+	return warnStyle.Render("⊘ Filtered: " + reason)
+}
+
 func (it *itemState) mediaType() model.MediaType {
 	if it.bookEvent != nil {
 		return model.MediaTypeBook

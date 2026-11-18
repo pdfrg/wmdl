@@ -30,7 +30,8 @@ ntfy, or generic webhook.
   scoring, and library management in a single tool.
 - **Processing modes** — From fully automatic (`yolo`, cron-friendly) to fully manual (`full`).
   Or use `arr`, `auto`, or `prowlarr-grab` modes to fine-tune how wmdl and your *arr divide the work.
-- **Smart filtering** — Content filters (blocked languages/countries/genres), release scoring
+- **Smart filtering** — Content filters (blocked languages/countries/genres), release scoring,
+  favorite-artist/author bypass, and a below-cutoff archive you can reveal with `f` in review
   (resolution, codec, source, preferred groups), minimum seeders.
 - **Phase 3 gap detection** — When you add a movie in a TMDB collection, wmdl checks if you're
   missing others. Add a TV season > 1? It offers to backfill. Book series? Same.

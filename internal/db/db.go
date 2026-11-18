@@ -116,9 +116,10 @@ func (d *DB) Migrate(ctx context.Context) error {
 		                CHECK(release_type IN ('physical','streaming','')),
 		release_date    TEXT NOT NULL DEFAULT '',
 		status          TEXT NOT NULL DEFAULT 'pending'
-		                CHECK(status IN ('pending','approved','rejected','downloaded')),
+		                CHECK(status IN ('pending','approved','rejected','downloaded','filtered')),
 		previous_status TEXT DEFAULT '',
 		notes           TEXT DEFAULT '',
+		filter_reason   TEXT NOT NULL DEFAULT '',
 		created_at      TEXT NOT NULL DEFAULT (datetime('now'))
 	);
 
@@ -193,9 +194,10 @@ func (d *DB) Migrate(ctx context.Context) error {
 		source          TEXT NOT NULL,
 		release_date    TEXT NOT NULL DEFAULT '',
 		status          TEXT NOT NULL DEFAULT 'pending'
-		                CHECK(status IN ('pending','approved','rejected','downloaded')),
+		                CHECK(status IN ('pending','approved','rejected','downloaded','filtered')),
 		previous_status TEXT DEFAULT '',
 		notes           TEXT DEFAULT '',
+		filter_reason   TEXT NOT NULL DEFAULT '',
 		created_at      TEXT DEFAULT (datetime('now')),
 		iso_year        INTEGER DEFAULT 0,
 		iso_week        INTEGER DEFAULT 0
@@ -268,9 +270,10 @@ func (d *DB) Migrate(ctx context.Context) error {
 		format_pref       TEXT NOT NULL DEFAULT 'both'
 		                  CHECK(format_pref IN ('ebook','audiobook','both')),
 		status            TEXT NOT NULL DEFAULT 'pending'
-		                  CHECK(status IN ('pending','approved','rejected','downloaded')),
+		                  CHECK(status IN ('pending','approved','rejected','downloaded','filtered')),
 		previous_status   TEXT DEFAULT '',
 		notes             TEXT DEFAULT '',
+		filter_reason     TEXT NOT NULL DEFAULT '',
 		created_at        TEXT DEFAULT (datetime('now')),
 		iso_year          INTEGER DEFAULT 0,
 		iso_week          INTEGER DEFAULT 0,
@@ -433,6 +436,17 @@ func (d *DB) Migrate(ctx context.Context) error {
 	d.migrateExec(ctx, `ALTER TABLE release_events ADD COLUMN iso_year INTEGER DEFAULT 0`)
 	d.migrateExec(ctx, `ALTER TABLE release_events ADD COLUMN iso_week INTEGER DEFAULT 0`)
 	d.migrateExec(ctx, `ALTER TABLE release_events ADD COLUMN notes TEXT DEFAULT ''`)
+
+	// Add the "filtered" status (and its reason column) to the event tables.
+	// SQLite cannot alter CHECK constraints, so each table is rebuilt once.
+	// Foreign keys are disabled for the rebuild: download rows reference these
+	// event tables and must not block DROP TABLE. SQLite has FKs off by
+	// default, so this is a no-op on a fresh connection and only guards
+	// environments that enabled them.
+	d.migrateExec(ctx, `PRAGMA foreign_keys=OFF`)
+	d.rebuildEventTablesForFiltered(ctx)
+	d.migrateExec(ctx, `CREATE INDEX IF NOT EXISTS idx_release_events_title_id ON release_events(title_id)`)
+	d.migrateExec(ctx, `CREATE INDEX IF NOT EXISTS idx_release_events_status ON release_events(status)`)
 	d.migrateExec(ctx, `ALTER TABLE titles ADD COLUMN overview TEXT DEFAULT ''`)
 	d.migrateExec(ctx, `ALTER TABLE titles ADD COLUMN genres TEXT DEFAULT ''`)
 	d.migrateExec(ctx, `ALTER TABLE titles ADD COLUMN runtime INTEGER DEFAULT 0`)

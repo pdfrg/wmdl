@@ -24,9 +24,9 @@ func (d *DB) CreateReleaseEventTx(ctx context.Context, tx *sql.Tx, e *model.Rele
 
 func (d *DB) createReleaseEvent(ctx context.Context, q querier, e *model.ReleaseEvent) (int64, error) {
 	res, err := q.ExecContext(ctx, `
-		INSERT INTO release_events (title_id, source, release_type, release_date, status, previous_status, notes, iso_year, iso_week)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`, e.TitleID, e.Source, string(e.ReleaseType), e.ReleaseDate, string(e.Status), string(e.PreviousStatus), e.Notes, e.ISOYear, e.ISOWeek)
+		INSERT INTO release_events (title_id, source, release_type, release_date, status, previous_status, notes, filter_reason, iso_year, iso_week)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, e.TitleID, e.Source, string(e.ReleaseType), e.ReleaseDate, string(e.Status), string(e.PreviousStatus), e.Notes, e.FilterReason, e.ISOYear, e.ISOWeek)
 	if err != nil {
 		return 0, fmt.Errorf("creating release event: %w", err)
 	}

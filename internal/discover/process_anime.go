@@ -34,9 +34,20 @@ func (r *Runner) processAnimeItem(ctx context.Context, item ScrapedItem, progYea
 		Streaming:     item.Streaming,
 	}
 
+	filterStatus := model.StatusPending
+	filterReason := ""
+	if item.Filtered {
+		filterStatus = model.StatusFiltered
+		filterReason = item.FilterReason
+	}
 	if result := FilterTitle(&r.cfg.MediaTypes.Anime.Filter, title); !result.Passed {
-		r.log.Info().Str("title", item.Title).Str("reason", result.Reason).Msg("content filter: skipping")
-		return nil
+		if !r.cfg.Filtered.Store {
+			r.log.Info().Str("title", item.Title).Str("reason", result.Reason).Msg("content filter: skipping")
+			return nil
+		}
+		filterStatus = model.StatusFiltered
+		filterReason = result.Reason
+		r.log.Info().Str("title", item.Title).Str("reason", result.Reason).Msg("content filter: storing as filtered")
 	}
 
 	var titleID int64
@@ -56,17 +67,24 @@ func (r *Runner) processAnimeItem(ctx context.Context, item ScrapedItem, progYea
 
 		if existing != nil {
 			existingEvent = existing
+			if existing.Status == model.StatusFiltered && filterStatus == model.StatusPending {
+				if err := r.db.UpdateReleaseEventStatusAndFilterReasonTx(ctx, tx, existing.ID, model.StatusPending, ""); err != nil {
+					return fmt.Errorf("promoting filtered anime event: %w", err)
+				}
+				r.log.Info().Str("title", item.Title).Msg("previously filtered anime now passes filters, re-queued")
+			}
 			return nil
 		}
 
 		evt := &model.ReleaseEvent{
-			TitleID:     titleID,
-			Source:      item.Source,
-			ReleaseType: model.ReleaseStreaming,
-			Status:      model.StatusPending,
-			Notes:       item.Notes,
-			ISOYear:     progYear,
-			ISOWeek:     progWeek,
+			TitleID:      titleID,
+			Source:       item.Source,
+			ReleaseType:  model.ReleaseStreaming,
+			Status:       filterStatus,
+			Notes:        item.Notes,
+			FilterReason: filterReason,
+			ISOYear:      progYear,
+			ISOWeek:      progWeek,
 		}
 
 		if _, err := r.db.CreateReleaseEventTx(ctx, tx, evt); err != nil {

@@ -39,6 +39,7 @@ type TUI struct {
 	vpConfirm         viewport.Model
 	filter            model.MediaType // "" = all, "movie" or "tv"
 	filtered          []int           // indices into items matching current filter
+	showFiltered      bool            // include below-cutoff items in the list
 	pendingQuit       bool
 	filterUndecided   bool
 	year              int
@@ -102,8 +103,48 @@ func NewReviewTUIWithEvents(events []db.EventWithTitle, albumEvents []db.EventWi
 		posterFailed:      make(map[string]bool),
 	}
 
+	t.attachFilterReasons()
 	t.rebuildFiltered()
 	return t, nil
+}
+
+// attachFilterReasons loads filter_reason for any filtered events so the
+// detail pane can explain why an item is hidden. Kept separate from the event
+// queries to avoid widening every SELECT in the DB layer.
+func (t *TUI) attachFilterReasons() {
+	if t.database == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	reasons, err := t.database.FilteredReasonsForWeek(ctx, t.year, t.week)
+	if err != nil {
+		return
+	}
+	for i := range t.items {
+		it := &t.items[i]
+		switch {
+		case it.bookEvent != nil:
+			if it.bookEvent.Event.Status == model.StatusFiltered {
+				it.bookEvent.Event.FilterReason = reasons.Book[it.bookEvent.Event.ID]
+			}
+		case it.albumEvent != nil:
+			if it.albumEvent.Event.Status == model.StatusFiltered {
+				it.albumEvent.Event.FilterReason = reasons.Album[it.albumEvent.Event.ID]
+			}
+		default:
+			if it.event.Event != nil && it.event.Event.Status == model.StatusFiltered {
+				it.event.Event.FilterReason = reasons.Video[it.event.Event.ID]
+			}
+		}
+	}
+}
+
+// SetShowFiltered toggles whether below-cutoff items are visible and rebuilds
+// the navigation list.
+func (t *TUI) SetShowFiltered(v bool) {
+	t.showFiltered = v
+	t.rebuildFiltered()
 }
 
 func NewReviewTUI(database *db.DB, posterMode string, defaultBookFormat model.BookFormat) (*TUI, error) {
@@ -159,10 +200,25 @@ func (t *TUI) Counts() (approved, rejected, pending, downloaded int) {
 		case decisionDownloaded:
 			downloaded++
 		default:
-			pending++
+			// Undecided filtered items stay filtered; they must not block
+			// the week from being considered fully reviewed.
+			if !it.isFiltered() {
+				pending++
+			}
 		}
 	}
 	return
+}
+
+// filteredUndecided counts filtered items the user has not acted on.
+func (t *TUI) filteredUndecided() int {
+	n := 0
+	for _, it := range t.items {
+		if it.isFiltered() && it.decision == decisionNone {
+			n++
+		}
+	}
+	return n
 }
 
 func (t *TUI) Init() tea.Cmd {
@@ -386,6 +442,11 @@ func (t *TUI) rebuildFiltered() {
 		if t.filter != "" && it.mediaType() != t.filter {
 			continue
 		}
+		// Decided filtered items stay visible: the user acted on them, so
+		// hiding them again after toggling would be confusing.
+		if it.isFiltered() && it.decision == decisionNone && !t.showFiltered {
+			continue
+		}
 		if t.filterUndecided && it.decision != decisionNone {
 			continue
 		}
@@ -605,6 +666,20 @@ func (t *TUI) updateReview(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		t.rebuildFiltered()
 		return t, t.schedulePosterCmd()
 
+	case "f":
+		t.showFiltered = !t.showFiltered
+		t.rebuildFiltered()
+		if t.showFiltered {
+			n := t.filteredUndecided()
+			t.flashMsg = fmt.Sprintf("Showing below-cutoff items (%d)", n)
+			if n == 0 {
+				t.flashMsg = "No below-cutoff items for this week"
+			}
+		} else {
+			t.flashMsg = "Hiding below-cutoff items"
+		}
+		return t, t.schedulePosterCmd()
+
 	case "o":
 		it := t.currentItem()
 		if it == nil {
@@ -679,7 +754,9 @@ func (t *TUI) updateReview(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		firstUndecided := -1
 		re := 0
 		for idx, f := range t.filtered {
-			if t.items[f].decision == decisionNone {
+			// Filtered items may stay undecided: leaving them hidden is a
+			// valid outcome, so they never block confirmation.
+			if t.items[f].decision == decisionNone && !t.items[f].isFiltered() {
 				if firstUndecided == -1 {
 					firstUndecided = idx
 				}
@@ -853,6 +930,7 @@ func (t *TUI) View() tea.View {
 			keyStyle.Render("e") + helpStyle.Render(" 🌸  ") +
 			keyStyle.Render("b") + helpStyle.Render(" 📚️  ") +
 			keyStyle.Render("l") + helpStyle.Render(" 💿️  ") +
+			keyStyle.Render("f") + helpStyle.Render(" ⊘ filtered  ") +
 			keyStyle.Render("enter") + helpStyle.Render(" confirm  ") +
 			keyStyle.Render("o") + helpStyle.Render(" open  ") +
 			keyStyle.Render("q") + helpStyle.Render(" quit")
@@ -883,19 +961,28 @@ func (t *TUI) View() tea.View {
 
 	pending := 0
 	for _, it := range t.items {
-		if it.decision == decisionNone {
+		if it.decision == decisionNone && !it.isFiltered() {
 			pending++
 		}
 	}
+	filteredHidden := t.filteredUndecided()
+	filteredLabel := ""
+	if filteredHidden > 0 {
+		marker := ""
+		if t.showFiltered {
+			marker = " shown"
+		}
+		filteredLabel = fmt.Sprintf(", %d filtered%s", filteredHidden, marker)
+	}
 
 	if t.phase == phaseConfirm {
-		b.WriteString(headerStyle.Render(fmt.Sprintf("wmdl review — %d pending%s — confirm decisions",
-			pending, filterLabel)))
+		b.WriteString(headerStyle.Render(fmt.Sprintf("wmdl review — %d pending%s%s — confirm decisions",
+			pending, filteredLabel, filterLabel)))
 		b.WriteString("\n\n")
 		b.WriteString(t.vpConfirm.View())
 	} else {
-		b.WriteString(headerStyle.Render(fmt.Sprintf("wmdl review — %d pending%s       [%d/%d]",
-			pending, filterLabel, t.cursor+1, len(t.filtered))))
+		b.WriteString(headerStyle.Render(fmt.Sprintf("wmdl review — %d pending%s%s       [%d/%d]",
+			pending, filteredLabel, filterLabel, t.cursor+1, len(t.filtered))))
 		b.WriteString("\n\n")
 		b.WriteString(content)
 

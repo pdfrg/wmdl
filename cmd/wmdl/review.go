@@ -21,7 +21,9 @@ func newReviewCmd() *cobra.Command {
 		Use:     "review",
 		Aliases: []string{"r"},
 		Short:   "Review pending releases in TUI",
-		Long:    "Open interactive TUI to approve/reject pending releases.",
+		Long: "Open interactive TUI to approve/reject pending releases.\n\n" +
+			"Below-cutoff items are stored as 'filtered' and hidden by default; " +
+			"press f in the TUI (or pass --show-filtered) to reveal them.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := config.Load()
 			if err != nil {
@@ -77,7 +79,8 @@ func newReviewCmd() *cobra.Command {
 				}
 			}
 
-			approved, err := runReviewForWeek(cmd.Context(), database, cfg, targetYear, targetWeek)
+			showFiltered, _ := cmd.Flags().GetBool("show-filtered")
+			approved, err := runReviewForWeek(cmd.Context(), database, cfg, targetYear, targetWeek, showFiltered)
 			if err != nil {
 				return err
 			}
@@ -93,6 +96,7 @@ func newReviewCmd() *cobra.Command {
 		},
 	}
 	addWeekFlag(cmd)
+	cmd.Flags().Bool("show-filtered", false, "start with below-cutoff (filtered) releases visible")
 	return cmd
 }
 

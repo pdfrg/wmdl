@@ -321,9 +321,9 @@ func (d *DB) GetAlbumReleaseByAllMusicURL(ctx context.Context, url string) (*mod
 
 func (d *DB) CreateAlbumReleaseEvent(ctx context.Context, e *model.AlbumReleaseEvent) (int64, error) {
 	res, err := d.db.ExecContext(ctx, `
-		INSERT INTO album_release_events (release_id, source, release_date, status, previous_status, notes, iso_year, iso_week)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-	`, e.ReleaseID, e.Source, e.ReleaseDate, string(e.Status), string(e.PreviousStatus), e.Notes, e.ISOYear, e.ISOWeek)
+		INSERT INTO album_release_events (release_id, source, release_date, status, previous_status, notes, filter_reason, iso_year, iso_week)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, e.ReleaseID, e.Source, e.ReleaseDate, string(e.Status), string(e.PreviousStatus), e.Notes, e.FilterReason, e.ISOYear, e.ISOWeek)
 	if err != nil {
 		return 0, fmt.Errorf("creating album release event: %w", err)
 	}

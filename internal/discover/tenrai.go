@@ -22,12 +22,19 @@ var _ WeekSettable = (*TenraiAnimeProvider)(nil)
 const tenraiBaseURL = "https://api.tenrai.org/v1"
 
 type TenraiAnimeProvider struct {
-	targetYear int
-	targetWeek int
-	hasTarget  bool
-	cfg        config.AnimeConfig
-	client     *http.Client
-	limiter    *rate.Limiter
+	targetYear    int
+	targetWeek    int
+	hasTarget     bool
+	storeFiltered bool
+	cfg           config.AnimeConfig
+	client        *http.Client
+	limiter       *rate.Limiter
+}
+
+// SetStoreFiltered controls whether below-cutoff anime are kept with a
+// filtered marker instead of being discarded during scraping.
+func (p *TenraiAnimeProvider) SetStoreFiltered(v bool) {
+	p.storeFiltered = v
 }
 
 type tenraiAnimeResponse struct {
@@ -160,14 +167,22 @@ func (p *TenraiAnimeProvider) scrapePhaseA(weekStart, weekEnd time.Time) ([]Scra
 				continue
 			}
 
-			if a.Score <= 0 || a.Score < p.cfg.MinScore {
-				continue
+			item := p.toScrapedItem(a, "tenrai")
+			switch {
+			case a.Score <= 0 || a.Score < p.cfg.MinScore:
+				if !p.storeFiltered {
+					continue
+				}
+				item.Filtered = true
+				item.FilterReason = fmt.Sprintf("MAL score %.1f below min %.1f", a.Score, p.cfg.MinScore)
+			case a.Members < p.cfg.MinMembers:
+				if !p.storeFiltered {
+					continue
+				}
+				item.Filtered = true
+				item.FilterReason = fmt.Sprintf("%d MAL members below min %d", a.Members, p.cfg.MinMembers)
 			}
-			if a.Members < p.cfg.MinMembers {
-				continue
-			}
-
-			phaseA = append(phaseA, p.toScrapedItem(a, "tenrai"))
+			phaseA = append(phaseA, item)
 		}
 
 		page++
@@ -191,17 +206,35 @@ func (p *TenraiAnimeProvider) scrapePhaseB() ([]ScrapedItem, error) {
 		if a.Type != "TV" {
 			continue
 		}
+		item := p.toScrapedItemB(a)
 		if a.Score <= 0 {
+			if !p.storeFiltered {
+				continue
+			}
+			item.Filtered = true
+			item.FilterReason = fmt.Sprintf("no MAL score (min %.1f)", p.cfg.PhaseBMinScore)
+			phaseB = append(phaseB, item)
 			continue
 		}
 		if a.Score < p.cfg.PhaseBMinScore {
+			if p.storeFiltered {
+				item.Filtered = true
+				item.FilterReason = fmt.Sprintf("MAL score %.1f below airing min %.1f", a.Score, p.cfg.PhaseBMinScore)
+				phaseB = append(phaseB, item)
+			}
 			break
 		}
 		if a.Members < p.cfg.PhaseBMinMembers {
+			if !p.storeFiltered {
+				continue
+			}
+			item.Filtered = true
+			item.FilterReason = fmt.Sprintf("%d MAL members below airing min %d", a.Members, p.cfg.PhaseBMinMembers)
+			phaseB = append(phaseB, item)
 			continue
 		}
 
-		phaseB = append(phaseB, p.toScrapedItemB(a))
+		phaseB = append(phaseB, item)
 	}
 
 	return phaseB, nil

@@ -264,6 +264,38 @@ func TestHasOverrideGenre(t *testing.T) {
 	})
 }
 
+func TestMatchesFavorite(t *testing.T) {
+	t.Run("case insensitive exact match", func(t *testing.T) {
+		if !matchesFavorite([]string{"Nile"}, "nile") {
+			t.Error("expected case-insensitive match")
+		}
+	})
+
+	t.Run("whitespace trimmed", func(t *testing.T) {
+		if !matchesFavorite([]string{"  Nile  "}, "Nile") {
+			t.Error("expected trimmed match")
+		}
+	})
+
+	t.Run("substring does not match", func(t *testing.T) {
+		if matchesFavorite([]string{"Nile"}, "Nile Rodgers") {
+			t.Error("whole-name comparison should not match a longer name")
+		}
+	})
+
+	t.Run("collaboration credits checked individually", func(t *testing.T) {
+		if !matchesFavoriteArtist([]string{"Nile"}, "Nile / Someone") {
+			t.Error("expected collaboration artist match")
+		}
+	})
+
+	t.Run("empty name never matches", func(t *testing.T) {
+		if matchesFavorite([]string{"Nile"}, " ") {
+			t.Error("empty name should not match")
+		}
+	})
+}
+
 func TestFilterTitle_CombinedAllowedAndBlocked(t *testing.T) {
 	// AllowedLanguages takes precedence — only check blocked if allowed passes
 	f := &config.ContentFilter{

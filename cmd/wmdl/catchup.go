@@ -74,7 +74,7 @@ one week at a time — use catchup to handle all outstanding weeks.`,
 
 				if !s.Reviewed {
 					log.Info().Msgf("Week %d/%d: needs review, running now...", s.Year, s.Week)
-					if _, err := runReviewForWeek(c.Context(), database, cfg, s.Year, s.Week); err != nil {
+					if _, err := runReviewForWeek(c.Context(), database, cfg, s.Year, s.Week, false); err != nil {
 						log.Warn().Err(err).Msg("review failed")
 					}
 					continue

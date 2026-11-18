@@ -13,14 +13,35 @@ func (r *Runner) processMusicItem(ctx context.Context, item ScrapedItem, progYea
 	apiCtx, apiCancel := context.WithTimeout(ctx, 30*time.Second)
 	defer apiCancel()
 
-	if item.Source != "allmusic" && item.Source != "rpcharts" {
-		if HasOverrideGenre(&r.cfg.MediaTypes.Music.Filter.ContentFilter, item.Genres) {
-			r.log.Info().Str("artist", item.ArtistName).Str("album", item.Title).
-				Msg("override genre matched, skipping score filter")
-		} else if !passesMusicFilter(r.cfg.MediaTypes.Music.Filter, item) {
+	var filterStatus model.ReleaseStatus
+	var filterReason string
+
+	musicFilter := r.cfg.MediaTypes.Music.Filter
+	switch {
+	case item.Source == "allmusic" || item.Source == "rpcharts":
+		// These sources are curated, so their score cutoff is not applied.
+		filterStatus, filterReason = model.StatusPending, ""
+	case matchesFavoriteArtist(musicFilter.FavoriteArtists, item.ArtistName):
+		filterStatus, filterReason = model.StatusPending, ""
+		r.log.Info().Str("artist", item.ArtistName).Str("album", item.Title).
+			Msg("favorite artist matched, skipping score filter")
+	case HasOverrideGenre(&musicFilter.ContentFilter, item.Genres):
+		filterStatus, filterReason = model.StatusPending, ""
+		r.log.Info().Str("artist", item.ArtistName).Str("album", item.Title).
+			Msg("override genre matched, skipping score filter")
+	case !passesMusicFilter(musicFilter, item):
+		if !r.cfg.Filtered.Store {
 			r.log.Info().Str("artist", item.ArtistName).Str("album", item.Title).Msg("does not pass filter, skipping")
 			return nil
 		}
+		filterStatus = model.StatusFiltered
+		filterReason = musicFilterReason(musicFilter, item)
+		r.log.Info().Str("artist", item.ArtistName).Str("album", item.Title).Str("reason", filterReason).
+			Msg("does not pass filter, storing as filtered")
+	default:
+		// The item now passes (e.g. cutoffs were lowered since it was
+		// scraped): clear any stale provider-supplied filtered marker.
+		filterStatus, filterReason = model.StatusPending, ""
 	}
 	r.log.Info().Str("artist", item.ArtistName).Str("album", item.Title).Msg("musicbrainz: searching release group")
 
@@ -28,7 +49,7 @@ func (r *Runner) processMusicItem(ctx context.Context, item ScrapedItem, progYea
 		existingRelease, err := r.db.GetAlbumReleaseByAOTYURL(ctx, item.AOTYURL)
 		if err == nil && existingRelease != nil && existingRelease.MBID != "" {
 			existingEvent, err := r.db.GetLatestAlbumReleaseEvent(ctx, existingRelease.ID)
-			if err == nil && existingEvent != nil {
+			if err == nil && existingEvent != nil && existingEvent.Status != model.StatusFiltered {
 				r.log.Info().Str("album", item.Title).Msg("already have this album, skipping")
 				return nil
 			}
@@ -136,9 +157,15 @@ func (r *Runner) processMusicItem(ctx context.Context, item ScrapedItem, progYea
 	}
 
 	if result := FilterMusic(&r.cfg.MediaTypes.Music.Filter.ContentFilter, release); !result.Passed {
+		if !r.cfg.Filtered.Store {
+			r.log.Info().Str("artist", item.ArtistName).Str("album", item.Title).Str("reason", result.Reason).
+				Msg("content filter: skipping")
+			return nil
+		}
+		filterStatus = model.StatusFiltered
+		filterReason = result.Reason
 		r.log.Info().Str("artist", item.ArtistName).Str("album", item.Title).Str("reason", result.Reason).
-			Msg("content filter: skipping")
-		return nil
+			Msg("content filter: storing as filtered")
 	}
 
 	releaseID, err := r.db.UpsertAlbumRelease(ctx, release)
@@ -171,17 +198,26 @@ func (r *Runner) processMusicItem(ctx context.Context, item ScrapedItem, progYea
 				return nil
 			}
 			return nil
+		case model.StatusFiltered:
+			if filterStatus == model.StatusPending {
+				if err := r.db.UpdateAlbumReleaseEventStatusAndFilterReason(ctx, existing.ID, model.StatusPending, ""); err != nil {
+					return fmt.Errorf("promoting filtered album event: %w", err)
+				}
+				r.log.Info().Str("artist", item.ArtistName).Str("album", item.Title).Msg("previously filtered album now passes filters, re-queued")
+			}
+			return nil
 		}
 	}
 
 	evt := &model.AlbumReleaseEvent{
-		ReleaseID:   releaseID,
-		Source:      item.Source,
-		ReleaseDate: item.ReleaseDate,
-		Notes:       item.Notes,
-		Status:      model.StatusPending,
-		ISOYear:     progYear,
-		ISOWeek:     progWeek,
+		ReleaseID:    releaseID,
+		Source:       item.Source,
+		ReleaseDate:  item.ReleaseDate,
+		Notes:        item.Notes,
+		Status:       filterStatus,
+		FilterReason: filterReason,
+		ISOYear:      progYear,
+		ISOWeek:      progWeek,
 	}
 	if _, err := r.db.CreateAlbumReleaseEvent(ctx, evt); err != nil {
 		return fmt.Errorf("saving album release event: %w", err)

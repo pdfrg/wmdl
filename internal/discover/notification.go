@@ -181,9 +181,10 @@ func (r *Runner) sendNotification(ctx context.Context, wantMovie, wantTV, wantAn
 	}
 
 	// Item lists come from the persisted pending events for this week, not the
-	// raw scrape batch: items dropped by quality/content filters, filed under a
-	// different lookback week, or pre-populated for a future week (bookshop)
-	// never become pending events here, so they must not appear below.
+	// raw scrape batch: items filed under a different lookback week or
+	// pre-populated for a future week (bookshop) never become pending events
+	// here, so they must not appear below. Below-cutoff items are persisted as
+	// "filtered" instead and only surface as a footer count.
 	for _, sec := range r.pendingNotificationSections(ctx, progYear, progWeek) {
 		if len(sec.lines) == 0 {
 			continue
@@ -197,6 +198,11 @@ func (r *Runner) sendNotification(ctx context.Context, wantMovie, wantTV, wantAn
 		}
 	}
 
+	if n := r.countFilteredForWeek(ctx, progYear, progWeek); n > 0 {
+		fmt.Fprintf(&sb, "\n\n⊘ %d below-cutoff item%s hidden — press f in `wmdl review` to show",
+			n, map[bool]string{true: "", false: "s"}[n == 1])
+	}
+
 	if err := r.notify.Send("wmdl: New Releases", sb.String(), 5); err != nil {
 		r.log.Warn().Err(err).Msg("notification failed")
 	}
@@ -208,11 +214,27 @@ type notifySection struct {
 	lines   []string
 }
 
+// countFilteredForWeek counts below-cutoff items persisted with the filtered
+// status for a week, across all media families.
+func (r *Runner) countFilteredForWeek(ctx context.Context, year, week int) int {
+	n := 0
+	if events, err := r.db.ListEventsByWeekAndStatus(ctx, year, week, model.StatusFiltered); err == nil {
+		n += len(events)
+	}
+	if albums, err := r.db.ListAlbumReleaseEventsByWeekAndStatus(ctx, year, week, model.StatusFiltered); err == nil {
+		n += len(albums)
+	}
+	if books, err := r.db.ListBookEventsByWeekAndStatus(ctx, year, week, model.StatusFiltered); err == nil {
+		n += len(books)
+	}
+	return n
+}
+
 // pendingNotificationSections renders the per-title lists for a week from the
 // persisted pending events, so the notification matches what `wmdl review`
 // will show. This intentionally ignores the raw scrape batch passed to
-// sendNotification: those items may have been rejected by quality/content
-// filters or filed under a different week.
+// sendNotification: items may have been rejected by filters or filed under a
+// different week.
 func (r *Runner) pendingNotificationSections(ctx context.Context, year, week int) []notifySection {
 	var sections []notifySection
 

@@ -21,11 +21,12 @@ import (
 )
 
 type AOTYProvider struct {
-	targetYear int
-	targetWeek int
-	hasTarget  bool
-	filter     config.MusicFilterConfig
-	allocCtx   context.Context // shared headless-browser allocator; nil disables fetching
+	targetYear    int
+	targetWeek    int
+	hasTarget     bool
+	filter        config.MusicFilterConfig
+	storeFiltered bool
+	allocCtx      context.Context // shared headless-browser allocator; nil disables fetching
 }
 
 func NewAOTYProvider(allocCtx context.Context, filter config.MusicFilterConfig) *AOTYProvider {
@@ -33,6 +34,12 @@ func NewAOTYProvider(allocCtx context.Context, filter config.MusicFilterConfig) 
 		filter:   filter,
 		allocCtx: allocCtx,
 	}
+}
+
+// SetStoreFiltered controls whether items below the score cutoffs are kept
+// (with a filtered marker) instead of discarded during scraping.
+func (p *AOTYProvider) SetStoreFiltered(v bool) {
+	p.storeFiltered = v
 }
 
 func (p *AOTYProvider) Name() string {
@@ -87,15 +94,21 @@ func (p *AOTYProvider) Scrape() ([]ScrapedItem, error) {
 				continue
 			}
 
-			// Discard low-quality items right here — no point keeping them
+			item.MediaType = model.MediaTypeMusic
+			item.Source = "albumoftheyear"
+
 			if !passesMusicFilter(p.filter, item) {
 				// Still count as "kept" so pagination works correctly based on date
 				kept++
+				if !p.storeFiltered {
+					continue
+				}
+				item.Filtered = true
+				item.FilterReason = musicFilterReason(p.filter, item)
+				allItems = append(allItems, item)
 				continue
 			}
 
-			item.MediaType = model.MediaTypeMusic
-			item.Source = "albumoftheyear"
 			allItems = append(allItems, item)
 			kept++
 		}
@@ -563,6 +576,10 @@ func parseAOTYDate(s string) string {
 // Standard types (LP, EP, soundtrack): require score + review count.
 // Special types (live, remix, box set): score only, no review count.
 func passesMusicFilter(ft config.MusicFilterConfig, item ScrapedItem) bool {
+	if matchesFavoriteArtist(ft.FavoriteArtists, item.ArtistName) {
+		return true
+	}
+
 	isStandard := item.AlbumType == model.AlbumTypeLP ||
 		item.AlbumType == model.AlbumTypeEP ||
 		item.AlbumType == model.AlbumTypeSoundtrack
@@ -576,6 +593,14 @@ func passesMusicFilter(ft config.MusicFilterConfig, item ScrapedItem) bool {
 	return (ft.MinCriticScore > 0 && item.AOTYCriticScore >= float64(ft.MinCriticScore)) ||
 		(ft.MinUserScore > 0 && item.AOTYUserScore >= float64(ft.MinUserScore)) ||
 		(ft.IncludeMustHear && item.AOTYMustHear)
+}
+
+// musicFilterReason renders a human-readable explanation for a music item
+// that failed passesMusicFilter.
+func musicFilterReason(ft config.MusicFilterConfig, item ScrapedItem) string {
+	return fmt.Sprintf("below music cutoffs (critic %.0f/%d reviews, user %.0f/%d ratings; min %d/%d, %d/%d)",
+		item.AOTYCriticScore, item.AOTYCriticCount, item.AOTYUserScore, item.AOTYUserCount,
+		ft.MinCriticScore, ft.MinCriticReviews, ft.MinUserScore, ft.MinUserRatings)
 }
 
 // wmdlWeekRange computes the Wed-to-Tue date range for an ISO week.

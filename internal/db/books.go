@@ -414,9 +414,9 @@ func (d *DB) CreateBookReleaseEventTx(ctx context.Context, tx *sql.Tx, e *model.
 
 func (d *DB) createBookReleaseEvent(ctx context.Context, q querier, e *model.BookReleaseEvent) (int64, error) {
 	res, err := q.ExecContext(ctx, `
-		INSERT INTO book_release_events (book_id, source, release_date, format_pref, status, previous_status, notes, iso_year, iso_week, ebook_processed, audiobook_processed)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`, e.BookID, e.Source, e.ReleaseDate, string(e.FormatPref), string(e.Status), string(e.PreviousStatus), e.Notes, e.ISOYear, e.ISOWeek, boolToInt(e.EbookProcessed), boolToInt(e.AudiobookProcessed))
+		INSERT INTO book_release_events (book_id, source, release_date, format_pref, status, previous_status, notes, filter_reason, iso_year, iso_week, ebook_processed, audiobook_processed)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, e.BookID, e.Source, e.ReleaseDate, string(e.FormatPref), string(e.Status), string(e.PreviousStatus), e.Notes, e.FilterReason, e.ISOYear, e.ISOWeek, boolToInt(e.EbookProcessed), boolToInt(e.AudiobookProcessed))
 	if err != nil {
 		return 0, fmt.Errorf("creating book release event: %w", err)
 	}

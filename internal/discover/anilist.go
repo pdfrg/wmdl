@@ -21,12 +21,19 @@ var _ ReleaseProvider = (*AniListProvider)(nil)
 var _ WeekSettable = (*AniListProvider)(nil)
 
 type AniListProvider struct {
-	targetYear int
-	targetWeek int
-	hasTarget  bool
-	cfg        config.AnimeConfig
-	client     *http.Client
-	limiter    *rate.Limiter
+	targetYear    int
+	targetWeek    int
+	hasTarget     bool
+	storeFiltered bool
+	cfg           config.AnimeConfig
+	client        *http.Client
+	limiter       *rate.Limiter
+}
+
+// SetStoreFiltered controls whether below-cutoff anime are kept with a
+// filtered marker instead of being discarded during scraping.
+func (p *AniListProvider) SetStoreFiltered(v bool) {
+	p.storeFiltered = v
 }
 
 var anilistPhaseAQuery = `query ($page: Int, $endGt: FuzzyDateInt, $endLt: FuzzyDateInt) {
@@ -192,14 +199,23 @@ func (p *AniListProvider) scrapePhaseA(weekStart, weekEnd time.Time) ([]ScrapedI
 		}
 
 		for _, m := range media {
-			if m.AverageScore <= 0 || float64(m.AverageScore)/10 < p.cfg.MinScore {
-				continue
+			item := p.toScrapedItem(m, "anilist")
+			score := float64(m.AverageScore) / 10
+			switch {
+			case m.AverageScore <= 0 || score < p.cfg.MinScore:
+				if !p.storeFiltered {
+					continue
+				}
+				item.Filtered = true
+				item.FilterReason = fmt.Sprintf("MAL score %.1f below min %.1f", score, p.cfg.MinScore)
+			case m.Popularity < p.cfg.MinMembers:
+				if !p.storeFiltered {
+					continue
+				}
+				item.Filtered = true
+				item.FilterReason = fmt.Sprintf("%d MAL members below min %d", m.Popularity, p.cfg.MinMembers)
 			}
-			if m.Popularity < p.cfg.MinMembers {
-				continue
-			}
-
-			phaseA = append(phaseA, p.toScrapedItem(m, "anilist"))
+			phaseA = append(phaseA, item)
 		}
 
 		if !hasNext {
@@ -224,18 +240,36 @@ func (p *AniListProvider) scrapePhaseB() ([]ScrapedItem, error) {
 
 	var phaseB []ScrapedItem
 	for _, m := range media {
+		item := p.toScrapedItem(m, "anilist-airing")
 		if m.AverageScore <= 0 {
+			if !p.storeFiltered {
+				continue
+			}
+			item.Filtered = true
+			item.FilterReason = fmt.Sprintf("no MAL score (min %.1f)", p.cfg.PhaseBMinScore)
+			phaseB = append(phaseB, item)
 			continue
 		}
 		minScore := int(p.cfg.PhaseBMinScore * 10)
 		if m.AverageScore < minScore {
+			if p.storeFiltered {
+				item.Filtered = true
+				item.FilterReason = fmt.Sprintf("MAL score %.1f below airing min %.1f", float64(m.AverageScore)/10, p.cfg.PhaseBMinScore)
+				phaseB = append(phaseB, item)
+			}
 			break
 		}
 		if m.Popularity < p.cfg.PhaseBMinMembers {
+			if !p.storeFiltered {
+				continue
+			}
+			item.Filtered = true
+			item.FilterReason = fmt.Sprintf("%d MAL members below airing min %d", m.Popularity, p.cfg.PhaseBMinMembers)
+			phaseB = append(phaseB, item)
 			continue
 		}
 
-		phaseB = append(phaseB, p.toScrapedItem(m, "anilist-airing"))
+		phaseB = append(phaseB, item)
 	}
 
 	return phaseB, nil

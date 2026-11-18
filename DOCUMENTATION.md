@@ -376,14 +376,51 @@ for that media type):
 
 **Music:** `min_critic_score`, `min_critic_reviews`, `min_user_score`, `min_user_ratings`,
 `include_must_hear` (for live/remix/box set releases) — **AOTY only.**
-AllMusic has no comparable scoring filters.
+AllMusic has no comparable scoring filters. `favorite_artists` bypasses the score
+cutoffs entirely (see *Favorites* below).
 
 **Anime:** `min_score`, `min_members` — **AniList/Tenrai/Jikan Phase A** (completed anime) only.
 `phase_b_*` thresholds are for **Phase B** (currently-airing) only.
 `filter_flixpatrol_anime` deduplicates against **FlixPatrol** results.
 
 **Books:** `min_rating`, `min_ratings` — **Goodreads only.** Goodreads Blog, Bookshop,
-and BookMarks have no comparable rating filters.
+and BookMarks have no comparable rating filters. `favorite_authors` bypasses the
+rating cutoffs (see *Favorites* below).
+
+### Favorites
+
+A favorite artist/author should not disappear because an album or book got bad
+reviews. List them under the media type's filter and they always pass the score
+cutoffs (case-insensitive, whole-name match; collaboration credits such as
+`"Artist A / Artist B"` are checked individually):
+
+```yaml
+media_types:
+  music:
+    filter:
+      favorite_artists: ["Nile", "Aesop Rock"]
+  books:
+    filter:
+      favorite_authors: ["Ursula K. Le Guin"]
+```
+
+### Filtered releases (below-cutoff archive)
+
+By default wmdl keeps items that fail a quality/content cutoff instead of
+dropping them. They are stored with status `filtered` and are **not** counted as
+pending, not notified item-by-item, and never processed automatically. In the
+review TUI press `f` to reveal them with the reason they were hidden; approving
+one turns it into a normal approved item. Start with them visible using
+`wmdl review --show-filtered`.
+
+```yaml
+filtered:
+  store: true    # default; false drops below-cutoff items as before
+```
+
+Because storing filtered items still runs enrichment (MusicBrainz, OpenLibrary/
+Hardcover, TMDB/IMDb/RT) for items that would otherwise be skipped, set
+`store: false` if you want to save API calls.
 
 **Physical media lookback:** `media_types.physical_lookback_weeks` (default 0) controls
 how many WMDL atomic weeks back to scan DVD/BluRay release dates. This is independent
@@ -479,10 +516,13 @@ Shows poster art, ratings, genre, and summary.
 ```bash
 wmdl review                        # current pending weeks
 wmdl review --week 2025-W14        # specific week
+wmdl review --show-filtered        # start with below-cutoff items visible
 ```
 
 Keyboard: `j`/`k` to move, `a`/`r` to approve/reject, `enter` to confirm,
-`o` to open details page in browser.
+`f` to toggle below-cutoff (filtered) items, `o` to open details page in browser.
+Filtered items show a `⊘ Filtered: <reason>` banner and never block completion
+unless you explicitly approve or reject them.
 
 Posters render via Kitty image protocol (Kitty, Ghostty, Rio). Other terminals
 show a placeholder.
@@ -804,6 +844,7 @@ media_types:
       min_user_score: 75
       min_user_ratings: 200
       include_must_hear: true   # special releases bypass review-count checks
+      favorite_artists: []      # always pass cutoffs (e.g. ["Nile"])
 ```
 
 ### Library: Lidarr
@@ -904,6 +945,16 @@ determines which seasons qualify.
 
 Ebook format priority: `epub > mobi > azw3 > pdf`
 Audiobook format priority: `m4b > mp3 > flac > aac > opus`
+
+```yaml
+media_types:
+  books:
+    default_format: "both"
+    filter:
+      min_rating: 3.5
+      min_ratings: 100
+      favorite_authors: []   # always pass rating cutoffs
+```
 
 ### Per-Format Processing
 

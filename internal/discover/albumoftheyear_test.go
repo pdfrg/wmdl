@@ -60,6 +60,24 @@ func TestPassesMusicFilter(t *testing.T) {
 			item:   ScrapedItem{AlbumType: model.AlbumTypeSoundtrack},
 			want:   false,
 		},
+		{
+			name:   "favorite artist bypasses cutoffs",
+			filter: config.MusicFilterConfig{FavoriteArtists: []string{"Bad Album Band"}, MinCriticScore: 100, MinCriticReviews: 1000, MinUserScore: 100, MinUserRatings: 1000},
+			item:   ScrapedItem{ArtistName: "Bad Album Band", AlbumType: model.AlbumTypeLP, AOTYCriticScore: 20, AOTYCriticCount: 1},
+			want:   true,
+		},
+		{
+			name:   "favorite artist in collaboration bypasses cutoffs",
+			filter: config.MusicFilterConfig{FavoriteArtists: []string{"Nile"}, MinCriticScore: 100, MinCriticReviews: 1000, MinUserScore: 100, MinUserRatings: 1000},
+			item:   ScrapedItem{ArtistName: "Someone / Nile", AlbumType: model.AlbumTypeLP},
+			want:   true,
+		},
+		{
+			name:   "favorite list is case insensitive and trimmed",
+			filter: config.MusicFilterConfig{FavoriteArtists: []string{"  bad album band "}, MinCriticScore: 100, MinCriticReviews: 1000, MinUserScore: 100, MinUserRatings: 1000},
+			item:   ScrapedItem{ArtistName: "Bad Album Band", AlbumType: model.AlbumTypeLP},
+			want:   true,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

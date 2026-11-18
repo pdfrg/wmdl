@@ -57,7 +57,7 @@ func runDiscoverForWeek(ctx context.Context, database *db.DB, cfg *config.Config
 	return true, nil
 }
 
-func runReviewForWeek(ctx context.Context, database *db.DB, cfg *config.Config, year, week int) (approved int, err error) {
+func runReviewForWeek(ctx context.Context, database *db.DB, cfg *config.Config, year, week int, showFiltered bool) (approved int, err error) {
 	var target *model.WeekState
 
 	if year != 0 && week != 0 {
@@ -123,8 +123,12 @@ func runReviewForWeek(ctx context.Context, database *db.DB, cfg *config.Config, 
 	// Count total approved (including yolo auto-approvals), total decided,
 	// and check for pending across all media types.
 	approved, decided, hasPending := countReviewStatus(events, albumEvents, bookEvents)
+	filteredCount := countFilteredEvents(events, albumEvents, bookEvents)
+	// --show-filtered is an explicit request to inspect below-cutoff items,
+	// so open the TUI even when nothing is pending.
+	reviewFiltered := showFiltered && filteredCount > 0
 
-	if !hasPending {
+	if !hasPending && !reviewFiltered {
 		if !target.Reviewed {
 			if approved > 0 {
 				fmt.Fprintf(os.Stderr, "All %d items auto-approved (yolo mode) for %d-W%02d.\n", approved, year, week)
@@ -141,7 +145,7 @@ func runReviewForWeek(ctx context.Context, database *db.DB, cfg *config.Config, 
 		// session (manually or by yolo). Fall through to re-review menu.
 	}
 
-	if reviewReReviewPrompt(target.Reviewed, hasPending) {
+	if !reviewFiltered && reviewReReviewPrompt(target.Reviewed, hasPending) {
 		fmt.Fprintf(os.Stderr, "All releases for %d-W%02d have already been reviewed.\n", year, week)
 		for {
 			fmt.Fprintf(os.Stderr, "[r] review again  [e] export choices  [q] quit\n")
@@ -156,6 +160,7 @@ func runReviewForWeek(ctx context.Context, database *db.DB, cfg *config.Config, 
 				if err != nil {
 					return 0, err
 				}
+				tui.SetShowFiltered(showFiltered)
 				if err := tui.Run(); err != nil {
 					return 0, err
 				}
@@ -194,6 +199,7 @@ func runReviewForWeek(ctx context.Context, database *db.DB, cfg *config.Config, 
 			if err != nil {
 				return 0, err
 			}
+			tui.SetShowFiltered(showFiltered)
 			if err := tui.Run(); err != nil {
 				return 0, err
 			}
@@ -211,23 +217,25 @@ func runReviewForWeek(ctx context.Context, database *db.DB, cfg *config.Config, 
 		}
 	}
 
+	// Filtered items ride along so the TUI can reveal them with `f`;
+	// they are hidden by default and never block review completion.
 	var pendingEvents []db.EventWithTitle
 	for _, ev := range events {
-		if ev.Event.Status == model.StatusPending {
+		if ev.Event.Status == model.StatusPending || ev.Event.Status == model.StatusFiltered {
 			pendingEvents = append(pendingEvents, ev)
 		}
 	}
 
 	var pendingAlbumEvents []db.EventWithAlbumRelease
 	for _, ev := range albumEvents {
-		if ev.Event.Status == model.StatusPending {
+		if ev.Event.Status == model.StatusPending || ev.Event.Status == model.StatusFiltered {
 			pendingAlbumEvents = append(pendingAlbumEvents, ev)
 		}
 	}
 
 	var pendingBookEvents []db.EventWithBook
 	for _, ev := range bookEvents {
-		if ev.Event.Status == model.StatusPending {
+		if ev.Event.Status == model.StatusPending || ev.Event.Status == model.StatusFiltered {
 			pendingBookEvents = append(pendingBookEvents, ev)
 		}
 	}
@@ -237,6 +245,7 @@ func runReviewForWeek(ctx context.Context, database *db.DB, cfg *config.Config, 
 	if err != nil {
 		return 0, err
 	}
+	tui.SetShowFiltered(showFiltered)
 	if err := tui.Run(); err != nil {
 		return 0, err
 	}
@@ -272,6 +281,27 @@ func printReviewResult(approved, pending, downloaded int) {
 
 // countReviewStatus tallies approved, decided (non-pending), and whether any
 // events are still pending across video, album, and book release events.
+// countFilteredEvents counts below-cutoff events in the week's loaded events.
+func countFilteredEvents(events []db.EventWithTitle, albumEvents []db.EventWithAlbumRelease, bookEvents []db.EventWithBook) int {
+	n := 0
+	for _, ev := range events {
+		if ev.Event.Status == model.StatusFiltered {
+			n++
+		}
+	}
+	for _, ev := range albumEvents {
+		if ev.Event.Status == model.StatusFiltered {
+			n++
+		}
+	}
+	for _, ev := range bookEvents {
+		if ev.Event.Status == model.StatusFiltered {
+			n++
+		}
+	}
+	return n
+}
+
 func countReviewStatus(events []db.EventWithTitle, albumEvents []db.EventWithAlbumRelease, bookEvents []db.EventWithBook) (approved, decided int, hasPending bool) {
 	for _, ev := range events {
 		switch ev.Event.Status {
@@ -280,6 +310,8 @@ func countReviewStatus(events []db.EventWithTitle, albumEvents []db.EventWithAlb
 			decided++
 		case model.StatusPending:
 			hasPending = true
+		case model.StatusFiltered:
+			// Hidden below-cutoff items must not block review completion.
 		default:
 			decided++
 		}
@@ -291,6 +323,7 @@ func countReviewStatus(events []db.EventWithTitle, albumEvents []db.EventWithAlb
 			decided++
 		case model.StatusPending:
 			hasPending = true
+		case model.StatusFiltered:
 		default:
 			decided++
 		}
@@ -302,6 +335,7 @@ func countReviewStatus(events []db.EventWithTitle, albumEvents []db.EventWithAlb
 			decided++
 		case model.StatusPending:
 			hasPending = true
+		case model.StatusFiltered:
 		default:
 			decided++
 		}

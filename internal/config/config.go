@@ -35,6 +35,15 @@ type Config struct {
 	CheckCollections bool             `mapstructure:"check_collections"`
 	CacheTTLHours    int              `mapstructure:"cache_ttl_hours"`
 	IncludeBacklog   bool             `mapstructure:"include_backlog"`
+	Filtered         FilteredConfig   `mapstructure:"filtered"`
+}
+
+// FilteredConfig controls what happens to scraped items below a quality or
+// content cutoff. When Store is true they are persisted with status
+// "filtered" so `wmdl review` can show them on demand; they are never
+// notified, counted as pending, or processed automatically.
+type FilteredConfig struct {
+	Store bool `mapstructure:"store"`
 }
 
 type HooksConfig struct {
@@ -254,11 +263,12 @@ type MusicConfig struct {
 
 type MusicFilterConfig struct {
 	ContentFilter    `mapstructure:",squash"`
-	MinCriticScore   int  `mapstructure:"min_critic_score"`
-	MinCriticReviews int  `mapstructure:"min_critic_reviews"`
-	MinUserScore     int  `mapstructure:"min_user_score"`
-	MinUserRatings   int  `mapstructure:"min_user_ratings"`
-	IncludeMustHear  bool `mapstructure:"include_must_hear"`
+	FavoriteArtists  []string `mapstructure:"favorite_artists"`
+	MinCriticScore   int      `mapstructure:"min_critic_score"`
+	MinCriticReviews int      `mapstructure:"min_critic_reviews"`
+	MinUserScore     int      `mapstructure:"min_user_score"`
+	MinUserRatings   int      `mapstructure:"min_user_ratings"`
+	IncludeMustHear  bool     `mapstructure:"include_must_hear"`
 }
 
 type AnimeConfig struct {
@@ -285,9 +295,10 @@ type BookConfig struct {
 }
 
 type BookFilterConfig struct {
-	ContentFilter `mapstructure:",squash"`
-	MinRating     float64 `mapstructure:"min_rating"`
-	MinRatings    int     `mapstructure:"min_ratings"`
+	ContentFilter   `mapstructure:",squash"`
+	FavoriteAuthors []string `mapstructure:"favorite_authors"`
+	MinRating       float64  `mapstructure:"min_rating"`
+	MinRatings      int      `mapstructure:"min_ratings"`
 }
 
 const configName = "config"
@@ -637,6 +648,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("preferred_release_groups", []string{})
 	v.SetDefault("poster_mode", "auto")
 	v.SetDefault("process_mode", "batch")
+	v.SetDefault("filtered.store", true)
 	v.SetDefault("check_collections", true)
 	v.SetDefault("cache_ttl_hours", 48)
 	v.SetDefault("include_backlog", false)

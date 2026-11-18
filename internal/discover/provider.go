@@ -64,6 +64,11 @@ type ScrapedItem struct {
 	AllMusicRating  float64
 	AllMusicURL     string
 
+	// Filtered marks an item that failed a quality/content cutoff but is still
+	// being persisted (status "filtered") so review can show it on demand.
+	Filtered     bool
+	FilterReason string
+
 	// Anime-specific fields (empty for non-anime)
 	AnimeType     string
 	AnimeEpisodes int
