@@ -911,6 +911,21 @@ corresponding visual indicators (green circle, e-reader, headphones) in the TUI.
 When the same book is found by multiple scrapers, sources are merged — e.g.
 `source` becomes `"goodreads,bookshop"` and notes carry data from both providers.
 
+Book titles are compared with normalization that folds case, accents, dashes and
+apostrophes (both straight `'` and curly ’), so the same book listed by one
+scraper as "Don't Stop Snowing" and by another as "Don’t Stop Snowing" is
+recognized as one book and merged.
+
+### Bookshop Descriptions
+
+Bookshop.org renders its new-books list client-side: each book's blurb
+("annotation") is embedded in an `<astro-island>` props JSON attribute rather
+than a server-rendered annotation div. The scraper pairs each annotation with
+its book's `title` prop and cleans the HTML. If a bookshop book still has no
+description after scraping, enrichment fills the gap: Hardcover is queried
+first, and OpenLibrary is also consulted when Hardcover matched but lacks a
+description (common for brand-new books where Hardcover returns `null`).
+
 ### Bookshop Future-Week Pre-Population
 
 Bookshop.org has no archive URLs for past weeks, so `discover` always scrapes the current

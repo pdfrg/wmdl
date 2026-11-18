@@ -1,9 +1,10 @@
 package discover
 
 import (
-	"github.com/pdfrg/wmdl/internal/db"
+	"strings"
 	"testing"
 
+	"github.com/pdfrg/wmdl/internal/db"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -134,6 +135,9 @@ func TestNormalizeBookKey(t *testing.T) {
 		{"Title; Another Subtitle", "title"},
 		{"Some Book (2026)", "some book"},
 		{"Café Society", "cafe society"},
+		{"Don't Stop Snowing", "dont stop snowing"},
+		{"Don’t Stop Snowing", "dont stop snowing"},
+		{"Rollin’ With the Flowin’", "rollin with the flowin"},
 	}
 	for _, tt := range tests {
 		assert.Equal(t, tt.want, normalizeBookKey(tt.in), "normalizeBookKey(%q)", tt.in)
@@ -200,6 +204,8 @@ func TestSameBookTitle(t *testing.T) {
 			true,
 		},
 		{"different books", "Dune", "Dune Messiah", false},
+		{"curly apostrophe", "Don't Stop Snowing", "Don’t Stop Snowing", true},
+		{"straight vs curly apostrophe", "The Misogynists: A Reckoning", "The Misogynist’s Reckoning", false},
 		{"short prefix rejected", "It", "It Comes", false},
 		{"unrelated", "The Castle", "Crossing the Wine-Dark Sea", false},
 		{"empty", "", "", false},
@@ -217,13 +223,21 @@ func TestDedupeBookItems(t *testing.T) {
 		{Title: "Crossing the Wine-Dark Sea (2026)", ArtistName: "Emily Wilson", Source: "bookshop", Notes: "url=x"},
 		{Title: "Crossing The Wine Dark Sea Journeys Through Ancient Literature", ArtistName: "Emily Wilson", Source: "bookmarks", Notes: "slug=y"},
 		{Title: "The Castle Adventures In A World Of Unraveling Men", ArtistName: "Jon Ronson", Source: "bookmarks"},
+		{Title: "Don't Stop Snowing", ArtistName: "Gabriel Bump", Source: "bookshop", Notes: "ean=9781643753836"},
+		{Title: "Don’t Stop Snowing", ArtistName: "Gabriel Bump", Source: "goodreads_blog"},
 	}
 	got := dedupeBookItems(items)
-	assert.Len(t, got, 2)
+	assert.Len(t, got, 3)
 	for _, item := range got {
 		if item.ArtistName == "Emily Wilson" {
 			assert.Contains(t, item.Source, "bookshop")
 			assert.Contains(t, item.Source, "bookmarks")
+		}
+	}
+	for _, item := range got {
+		if strings.HasPrefix(item.Title, "Don") {
+			assert.Contains(t, item.Source, "bookshop")
+			assert.Contains(t, item.Source, "goodreads_blog")
 		}
 	}
 }

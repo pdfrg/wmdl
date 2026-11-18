@@ -3,6 +3,7 @@ package discover
 import (
 	"testing"
 
+	"github.com/pdfrg/wmdl/internal/testutil"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -51,4 +52,39 @@ func TestParseBookshopAnnotations(t *testing.T) {
 			assert.Equal(t, tt.want, parseBookshopAnnotations(tt.html))
 		})
 	}
+}
+
+func TestParseBookshopAstroAnnotations(t *testing.T) {
+	// Fixture captured from the live new-books page: bookshop.org renders the
+	// list client-side, embedding each book's title and annotation blurb in an
+	// <astro-island> props JSON attribute (HTML-escaped). The legacy
+	// bulleted-lists div markup no longer appears on the page.
+	fixture := testutil.LoadFixture(t, "testdata", "bookshop", "new_books_astro_island.htm")
+
+	descs := parseBookshopAstroAnnotations(string(fixture))
+	assert.Len(t, descs, 17)
+
+	// Sample pairs: titles pair with their own annotation, not a positional
+	// index that could misalign when one book lacks a blurb.
+	assert.Contains(t, descs["Breaducation"], "Just when I thought everything had been said about bread making")
+	assert.Contains(t, descs["Murmuration"], "character arcs pack emotional punches")
+	assert.Contains(t, descs["On the Calculation of Volume (Book V)"], "Solvej Balle")
+
+	// Descriptions are cleaned: no HTML tags remain.
+	for title, d := range descs {
+		assert.NotContains(t, d, "<p>", "title %s", title)
+		assert.NotEmpty(t, d, "title %s", title)
+	}
+}
+
+func TestParseBookshopAstroAnnotationsEmptyPage(t *testing.T) {
+	assert.Empty(t, parseBookshopAstroAnnotations(`<html><body>no islands here</body></html>`))
+	assert.Empty(t, parseBookshopAstroAnnotations(`<astro-island props="{&quot;region&quot;:[0,&quot;us&quot;]}"></astro-island>`))
+}
+
+func TestDecodeJSONString(t *testing.T) {
+	assert.Equal(t, "plain", decodeJSONString("plain"))
+	assert.Equal(t, `quote " and backslash \`, decodeJSONString(`quote \" and backslash \\`))
+	// Invalid JSON body is returned unchanged.
+	assert.Equal(t, "bad\\", decodeJSONString("bad\\"))
 }

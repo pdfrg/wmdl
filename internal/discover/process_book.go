@@ -40,7 +40,12 @@ func (r *Runner) processBookItem(ctx context.Context, item ScrapedItem, progYear
 	}
 
 	var olResult *OLBookResult
-	if hcResult == nil || hcResult.ISBN13 == "" || (hcResult.ReleaseDate == "" && hcResult.ReleaseYear == 0) {
+	// Query OpenLibrary when Hardcover failed entirely OR when the description
+	// is still empty: Hardcover often lacks descriptions for brand-new books
+	// (description: null), and OL may have one from its record.
+	needOL := hcResult == nil || hcResult.ISBN13 == "" || (hcResult.ReleaseDate == "" && hcResult.ReleaseYear == 0) ||
+		(hcResult.Description == "" && item.Overview == "")
+	if needOL {
 		var olErr error
 		olResult, olErr = r.ol.SearchBook(ctx, item.Title, item.ArtistName)
 		if olErr != nil {
@@ -760,6 +765,9 @@ func normalizeBookKey(s string) string {
 	s = bookSubtitleRe.ReplaceAllString(s, "")
 	// Fold hyphens/dashes to spaces so "wine-dark" and "wine dark" match.
 	s = bookDashRe.ReplaceAllString(s, " ")
+	// Apostrophes are dropped so "Don't" matches "Don’t" (curly variant
+	// from goodreads/blog scrapes vs straight quotes from bookshop).
+	s = bookAposRe.ReplaceAllString(s, "")
 	s = strings.TrimSpace(s)
 	t := norm.NFKD.String(s)
 	var out strings.Builder
@@ -775,6 +783,10 @@ func normalizeBookKey(s string) string {
 
 // bookDashRe matches hyphen and dash variants folded to spaces in book keys.
 var bookDashRe = regexp.MustCompile(`[-–—]`)
+
+// bookAposRe matches straight and curly apostrophes/single quotes dropped in
+// book keys.
+var bookAposRe = regexp.MustCompile("['‘’]")
 
 // minBookTitleMatchWords is the minimum word count for the shorter title in
 // a leading-subsequence title match. This keeps trivial single-word titles

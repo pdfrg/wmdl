@@ -2,8 +2,10 @@ package discover
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -187,20 +189,31 @@ func (p *BookshopProvider) Scrape() ([]ScrapedItem, error) {
 		}
 	}
 
-	// Extract descriptions. The annotations are now embedded in Astro component
-	// props as JSON. Try the old selector first; if the page structure has changed,
-	// descriptions gracefully fall back to empty (Hardcover enrichment fills them in).
-	annMatches := parseBookshopAnnotations(html)
-	for i, desc := range annMatches {
-		if i >= len(books) {
-			break
+	// Extract descriptions. Annotations are embedded in Astro component
+	// props as JSON (paired positionally with each book's "title" prop).
+	// The legacy <div class="bulleted-lists..."> markup is kept as a
+	// fallback in case bookshop.org reverts to server-rendered annotations.
+	astroDescs := parseBookshopAstroAnnotations(html)
+	if len(astroDescs) > 0 {
+		for title, desc := range astroDescs {
+			if e, ok := bookMap[title]; ok {
+				e.Desc = desc
+				bookMap[title] = e
+			}
 		}
-		if desc == "" {
-			continue
-		}
-		if e, ok := bookMap[books[i].Title]; ok {
-			e.Desc = desc
-			bookMap[books[i].Title] = e
+	} else {
+		annMatches := parseBookshopAnnotations(html)
+		for i, desc := range annMatches {
+			if i >= len(books) {
+				break
+			}
+			if desc == "" {
+				continue
+			}
+			if e, ok := bookMap[books[i].Title]; ok {
+				e.Desc = desc
+				bookMap[books[i].Title] = e
+			}
 		}
 	}
 
@@ -241,6 +254,72 @@ func parseBookshopAnnotations(html string) []string {
 	descs := make([]string, 0, len(matches))
 	for _, m := range matches {
 		descs = append(descs, cleanBookDescription(m[1]))
+	}
+	return descs
+}
+
+var (
+	// bookshopIslandRe captures each <astro-island ...> tag; book data lives in
+	// its HTML-escaped props="{...}" attribute.
+	bookshopIslandRe = regexp.MustCompile(`<astro-island[^>]*>`)
+	bookshopPropsRe  = regexp.MustCompile(`(?s)props="([^"]*)"`)
+	// A JSON string value, possibly containing escaped quotes/backslashes.
+	jsonStrVal           = `(?:[^"\\]|\\.)*`
+	bookshopAstroTitleRe = regexp.MustCompile(`(?s)"title":\[0,"(` + jsonStrVal + `)"\]`)
+	bookshopAstroAnnoRe  = regexp.MustCompile(`(?s)"annotation":\[0,"(` + jsonStrVal + `)"\]`)
+)
+
+// decodeJSONString decodes a raw JSON string body (without surrounding
+// quotes) into its unescaped value. On any error the input is returned as-is.
+func decodeJSONString(s string) string {
+	var out string
+	if err := json.Unmarshal([]byte(`"`+s+`"`), &out); err != nil {
+		return s
+	}
+	return out
+}
+
+// parseBookshopAstroAnnotations extracts book descriptions from the Astro
+// component props embedded in the new-books page. Bookshop.org renders the
+// list client-side: each <astro-island> carries an HTML-escaped JSON props
+// attribute holding one object per book with "title" and "annotation"
+// string props. Each annotation is paired with the nearest preceding title
+// prop (they belong to the same book object), and the resulting map keys are
+// the exact page titles used for lookup in the scrape book map.
+func parseBookshopAstroAnnotations(pageHTML string) map[string]string {
+	descs := make(map[string]string)
+	for _, isl := range bookshopIslandRe.FindAllString(pageHTML, -1) {
+		pm := bookshopPropsRe.FindStringSubmatch(isl)
+		if pm == nil {
+			continue
+		}
+		props := htmlUnescape(pm[1])
+
+		type propHit struct {
+			pos   int
+			value string
+		}
+		var titles, annos []propHit
+		for _, tm := range bookshopAstroTitleRe.FindAllStringSubmatchIndex(props, -1) {
+			titles = append(titles, propHit{tm[0], decodeJSONString(props[tm[2]:tm[3]])})
+		}
+		for _, am := range bookshopAstroAnnoRe.FindAllStringSubmatchIndex(props, -1) {
+			annos = append(annos, propHit{am[0], decodeJSONString(props[am[2]:am[3]])})
+		}
+		if len(titles) == 0 {
+			continue
+		}
+		for _, a := range annos {
+			// Find the nearest title preceding this annotation (same book object).
+			i := sort.Search(len(titles), func(j int) bool { return titles[j].pos > a.pos }) - 1
+			if i < 0 {
+				continue // annotation before any title: not a book entry
+			}
+			desc := cleanBookDescription(a.value)
+			if desc != "" {
+				descs[titles[i].value] = desc
+			}
+		}
 	}
 	return descs
 }
